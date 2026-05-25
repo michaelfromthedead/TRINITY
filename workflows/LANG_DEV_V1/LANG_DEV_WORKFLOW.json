@@ -1,0 +1,573 @@
+{
+  "version": "0.2.0",
+  "name": "LANG_DEV_WORKFLOW",
+  "description": "Monolithic serial workflow for executing the 4-phase, 20-step language-development methodology documented in LANGS_DEVELOPMENT. Deconstructs a target programming library into primitives/objects/types (Phase 1), designs atoms/grammar/rulesets (Phase 2), implements a lexer/validator/parser/typer/classifier/solver compiler pipeline (Phase 3), and builds runtime support — executor/optimizer/error-reporter/debugger (Phase 4). v0.2.0 uses per-step worker specialization (20 distinct WORKER_STEP docs, one per phase) rather than v0.1.0's generic STEP_EXECUTOR. Phase assignments + dependencies + completion criteria derived from RDC-consolidated knowledge in LANGS_DEVELOPMENT/LANGS_DEV_RDC/. Status: v0.2.0 — expanded per-step workers post-RDC; 8 known_tbds from v0.1.0 partially resolved (boss_levels integrated into Phase 4; two-STEP-5 conflict resolved via COURT SYNTHESIS). Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrases": [
+      "LANG_DEV_WORKFLOW",
+      "langdev",
+      "language development",
+      "deconstruct library",
+      "run lang dev"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/LANG_DEV/WORKER_STEP_QA.md (shared QA pattern)",
+      "QUEEN verifies that the configured STEP source directory exists (default: LANGS_DEVELOPMENT/) and contains the 20 expected source docs (16 STEP files + 4 boss_level files)",
+      "QUEEN verifies that the RDC-consolidated knowledge exists at <step_source_dir>/LANGS_DEV_RDC/ (MASTER.md, PHASE_*_ARCH.md, PHASE_*_TODO.md)",
+      "QUEEN reports: 'LANG_DEV_WORKFLOW v0.2.0 mode engaged. STEP source: <path>. RDC consolidated: <path>. Target library: <not yet specified>. Ready. Point me to the target library to deconstruct.'",
+      "QUEEN waits for explicit human direction specifying the target library path and workspace output directory"
+    ],
+    "parameters_required": {
+      "target_library": "absolute path to the library/codebase to deconstruct (e.g., /path/to/pandas)",
+      "workspace_dir": "absolute path to a directory where intermediate per-step outputs will land (created if absent)",
+      "step_source_dir": "absolute path to the directory containing the 20 source docs. Default: LANGS_DEVELOPMENT/ at project root.",
+      "rdc_consolidated_dir": "absolute path to RDC-consolidated knowledge. Default: <step_source_dir>/LANGS_DEV_RDC/."
+    }
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "parallel-altitude to SDLC, RDC, RECON, BOOK, ORGANIZE",
+    "rdc_coupling": "LANG_DEV v0.2.0 CONSUMES RDC outputs (MASTER.md, PHASE_*_ARCH.md, PHASE_*_TODO.md) at engagement. RDC should have been run on the methodology source docs (LANGS_DEVELOPMENT) before LANG_DEV engages. v0.2.0 workspace workflow: step workers read source docs AND PHASE_N_ARCH + relevant T-XX.X from PHASE_N_TODO.",
+    "sdlc_coupling": "After LANG_DEV produces implementation artefacts (lexer.py, parser.py, etc. in Phase 3), SDLC could take over for iterative refinement — handoff is manual. Alternatively, the implementation STEPs (7-11) could themselves be dispatched through SDLC — that's a workflow-composition decision per invocation.",
+    "recon_coupling": "Before engaging LANG_DEV on a new target library, RECON can characterize the library. Manual handoff.",
+    "organize_coupling": "None. LANG_DEV operates on domain artefacts, not project structure.",
+    "does_not_auto_trigger": ["SDLC_WORKFLOW", "RDC_WORKFLOW", "RECON_WORKFLOW", "ORGANIZE_WORKFLOW"]
+  },
+
+  "source_material": {
+    "description": "The 20 source docs that specify the methodology this workflow executes, PLUS the RDC-consolidated knowledge that distills them. Each source STEP doc is the authoritative spec for one phase; PHASE_N_ARCH and PHASE_N_TODO provide group-level architectural context and actionable task specs. Workers reference all three.",
+    "canonical_locations": {
+      "source_docs": "LANGS_DEVELOPMENT/ at project root (or configured via step_source_dir)",
+      "rdc_consolidated": "LANGS_DEVELOPMENT/LANGS_DEV_RDC/ (or configured via rdc_consolidated_dir)"
+    },
+    "expected_source_docs": [
+      "STEP 1 - DECONSTRUCTION OPS.md",
+      "STEP 1.1 - RECOVER OPS.md",
+      "STEP 2 - DECONSTRUCTION OBJS.md",
+      "STEP 3 - DECONSTRUCTION TYPES.md",
+      "STEP 4 - ATOMICS.md",
+      "STEP 5 - DECISIONS SCHEMA.md",
+      "STEP 5 - BAG GRAMMAR.md",
+      "STEP 6 - RULESETS AND DEFAULTS.md",
+      "STEP 6.1 - THE_CONUNDRUM.md",
+      "STEP 6.2 - PRE LEXER.md",
+      "STEP 7 - LEXER.md",
+      "STEP 7.1 - VALIDATOR.md",
+      "STEP 8 - PARSER.md",
+      "STEP 9 - TYPER.md",
+      "STEP 10 - CLASSIFIER.md",
+      "STEP 11 - SOLVER.md",
+      "boss_level_1_executor_rules.md",
+      "boss_level_2_optimizer_rules.md",
+      "boss_level_3_error_reporter_rules.md",
+      "boss_level_4_debugger_rules.md"
+    ],
+    "expected_rdc_docs": [
+      "MASTER.md",
+      "PEDAGOGY.md",
+      "INVENTORY.md",
+      "EVALUATIONS.md",
+      "INPROGRESS.md (with COURT #1 ruling)",
+      "CLARIFICATION.md",
+      "PROJECT.md",
+      "PHASE_01_DECONSTRUCTION_ARCH.md",
+      "PHASE_01_DECONSTRUCTION_TODO.md",
+      "PHASE_02_DESIGN_ARCH.md",
+      "PHASE_02_DESIGN_TODO.md",
+      "PHASE_03_IMPLEMENTATION_ARCH.md",
+      "PHASE_03_IMPLEMENTATION_TODO.md",
+      "PHASE_04_RUNTIME_ARCH.md",
+      "PHASE_04_RUNTIME_TODO.md"
+    ],
+    "two_step_5_resolution": "COURT #1 (2026-04-18) ruled SYNTHESIS. STEP_05A = DECISIONS_SCHEMA (format layer, precedes). STEP_05B = BAG_GRAMMAR (operator layer, follows). Both required. See LANGS_DEV_RDC/INPROGRESS.md for full COURT transcript.",
+    "read_discipline": "Per-step workers perform FULL reads of: their assigned source STEP doc, their phase group's PHASE_N_ARCH, the specific task from PHASE_N_TODO, and their own worker doc. No partial-scan. Budget via sequential execution, not skimming."
+  },
+
+  "phase_grouping": {
+    "description": "20 phases in 4 domain-concern groups. Groups are annotations for reporting and worker context; workflow execution is monolithic serial. Each group maps to one RDC PHASE_*_ARCH + PHASE_*_TODO pair.",
+    "groups": {
+      "PHASE_01_DECONSTRUCTION": {
+        "rdc_arch": "PHASE_01_DECONSTRUCTION_ARCH.md",
+        "rdc_todo": "PHASE_01_DECONSTRUCTION_TODO.md",
+        "steps": ["STEP_01", "STEP_01_01", "STEP_02", "STEP_03"],
+        "concern": "Understand the target library: primitives (verbs), objects (nouns), type signatures (grammar)."
+      },
+      "PHASE_02_DESIGN": {
+        "rdc_arch": "PHASE_02_DESIGN_ARCH.md",
+        "rdc_todo": "PHASE_02_DESIGN_TODO.md",
+        "steps": ["STEP_04", "STEP_05A", "STEP_05B", "STEP_06", "STEP_06_01", "STEP_06_02"],
+        "concern": "Design atoms with typed ports, bag grammar operators, decisions schema, ruleset defaults, minimal token inventory."
+      },
+      "PHASE_03_IMPLEMENTATION": {
+        "rdc_arch": "PHASE_03_IMPLEMENTATION_ARCH.md",
+        "rdc_todo": "PHASE_03_IMPLEMENTATION_TODO.md",
+        "steps": ["STEP_07", "STEP_07_01", "STEP_08", "STEP_09", "STEP_10", "STEP_11"],
+        "concern": "Implement the compiler pipeline: lexer, validator, parser, typer, classifier, solver."
+      },
+      "PHASE_04_RUNTIME": {
+        "rdc_arch": "PHASE_04_RUNTIME_ARCH.md",
+        "rdc_todo": "PHASE_04_RUNTIME_TODO.md",
+        "steps": ["STEP_BL01", "STEP_BL02", "STEP_BL03", "STEP_BL04"],
+        "concern": "Build runtime support: executor, optimizer, error reporter, debugger."
+      }
+    }
+  },
+
+  "phases_serial_order": [
+    "STEP_01",
+    "STEP_01_01",
+    "STEP_02",
+    "STEP_03",
+    "STEP_04",
+    "STEP_05A",
+    "STEP_05B",
+    "STEP_06",
+    "STEP_06_01",
+    "STEP_06_02",
+    "STEP_07",
+    "STEP_07_01",
+    "STEP_08",
+    "STEP_09",
+    "STEP_10",
+    "STEP_11",
+    "STEP_BL01",
+    "STEP_BL02",
+    "STEP_BL03",
+    "STEP_BL04"
+  ],
+
+  "phase_map": {
+    "STEP_01": {
+      "title": "DECONSTRUCTION_OPS",
+      "group": "PHASE_01_DECONSTRUCTION",
+      "source_doc": "STEP 1 - DECONSTRUCTION OPS.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_01_DECONSTRUCTION_OPS.md",
+      "task_ref": "T-01.1",
+      "context_docs": ["context.md"]
+    },
+    "STEP_01_01": {
+      "title": "RECOVER_OPS",
+      "group": "PHASE_01_DECONSTRUCTION",
+      "source_doc": "STEP 1.1 - RECOVER OPS.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_01_01_RECOVER_OPS.md",
+      "task_ref": "T-01.1.1",
+      "substep_of": "STEP_01",
+      "conditional": "runs only if STEP_01 cannot reach completion criteria"
+    },
+    "STEP_02": {
+      "title": "DECONSTRUCTION_OBJS",
+      "group": "PHASE_01_DECONSTRUCTION",
+      "source_doc": "STEP 2 - DECONSTRUCTION OBJS.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_02_DECONSTRUCTION_OBJS.md",
+      "task_ref": "T-01.2"
+    },
+    "STEP_03": {
+      "title": "DECONSTRUCTION_TYPES",
+      "group": "PHASE_01_DECONSTRUCTION",
+      "source_doc": "STEP 3 - DECONSTRUCTION TYPES.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_03_DECONSTRUCTION_TYPES.md",
+      "task_ref": "T-01.3"
+    },
+    "STEP_04": {
+      "title": "ATOMICS",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 4 - ATOMICS.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_04_ATOMICS.md",
+      "task_ref": "T-02.1"
+    },
+    "STEP_05A": {
+      "title": "DECISIONS_SCHEMA",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 5 - DECISIONS SCHEMA.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_05A_DECISIONS_SCHEMA.md",
+      "task_ref": "T-02.2",
+      "court_ruling": "COURT #1 (SYNTHESIS): serial sub-phase before STEP_05B"
+    },
+    "STEP_05B": {
+      "title": "BAG_GRAMMAR",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 5 - BAG GRAMMAR.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_05B_BAG_GRAMMAR.md",
+      "task_ref": "T-02.3",
+      "court_ruling": "COURT #1 (SYNTHESIS): serial sub-phase after STEP_05A"
+    },
+    "STEP_06": {
+      "title": "RULESETS",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 6 - RULESETS AND DEFAULTS.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_06_RULESETS.md",
+      "task_ref": "T-02.4"
+    },
+    "STEP_06_01": {
+      "title": "CONUNDRUM",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 6.1 - THE_CONUNDRUM.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_06_01_CONUNDRUM.md",
+      "task_ref": "T-02.4.1",
+      "substep_of": "STEP_06"
+    },
+    "STEP_06_02": {
+      "title": "PRE_LEXER",
+      "group": "PHASE_02_DESIGN",
+      "source_doc": "STEP 6.2 - PRE LEXER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_06_02_PRE_LEXER.md",
+      "task_ref": "T-02.4.2",
+      "substep_of": "STEP_06"
+    },
+    "STEP_07": {
+      "title": "LEXER",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 7 - LEXER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_07_LEXER.md",
+      "task_ref": "T-03.1"
+    },
+    "STEP_07_01": {
+      "title": "VALIDATOR",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 7.1 - VALIDATOR.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_07_01_VALIDATOR.md",
+      "task_ref": "T-03.1.1",
+      "substep_of": "STEP_07"
+    },
+    "STEP_08": {
+      "title": "PARSER",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 8 - PARSER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_08_PARSER.md",
+      "task_ref": "T-03.2"
+    },
+    "STEP_09": {
+      "title": "TYPER",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 9 - TYPER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_09_TYPER.md",
+      "task_ref": "T-03.3"
+    },
+    "STEP_10": {
+      "title": "CLASSIFIER",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 10 - CLASSIFIER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_10_CLASSIFIER.md",
+      "task_ref": "T-03.4"
+    },
+    "STEP_11": {
+      "title": "SOLVER",
+      "group": "PHASE_03_IMPLEMENTATION",
+      "source_doc": "STEP 11 - SOLVER.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_11_SOLVER.md",
+      "task_ref": "T-03.5"
+    },
+    "STEP_BL01": {
+      "title": "EXECUTOR",
+      "group": "PHASE_04_RUNTIME",
+      "source_doc": "boss_level_1_executor_rules.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_BL01_EXECUTOR.md",
+      "task_ref": "T-04.1"
+    },
+    "STEP_BL02": {
+      "title": "OPTIMIZER",
+      "group": "PHASE_04_RUNTIME",
+      "source_doc": "boss_level_2_optimizer_rules.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_BL02_OPTIMIZER.md",
+      "task_ref": "T-04.2"
+    },
+    "STEP_BL03": {
+      "title": "ERROR_REPORTER",
+      "group": "PHASE_04_RUNTIME",
+      "source_doc": "boss_level_3_error_reporter_rules.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_BL03_ERROR_REPORTER.md",
+      "task_ref": "T-04.3"
+    },
+    "STEP_BL04": {
+      "title": "DEBUGGER",
+      "group": "PHASE_04_RUNTIME",
+      "source_doc": "boss_level_4_debugger_rules.md",
+      "worker_doc": "workflows/LANG_DEV/WORKER_STEP_BL04_DEBUGGER.md",
+      "task_ref": "T-04.4"
+    }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in main conversation during LANG_DEV_WORKFLOW. Iterates through 20 serial phases, spawning one per-step worker + one STEP_QA per phase. v0.2.0 change from v0.1.0: spawns WORKER_STEP_<N> (per-step specialized) instead of generic STEP_EXECUTOR. Each per-step worker doc encodes that step's domain-specific discipline distilled from the source STEP doc + PHASE_N_ARCH + PHASE_N_TODO.",
+      "responsibilities": [
+        "verify step_source_dir contains all 20 source docs",
+        "verify rdc_consolidated_dir contains MASTER + PHASE_*_ARCH + PHASE_*_TODO",
+        "verify target_library path exists",
+        "create workspace_dir; initialize workspace_manifest.json",
+        "per-phase iteration: resolve per-step worker doc from phase_map, assemble context packet (phase_id, phase_group, worker_doc, source_doc, PHASE_ARCH, task_ref, prior outputs), spawn per-step worker, receive outputs, spawn STEP_QA, collect verdict",
+        "handle conditional phases (STEP_01_01 runs only if STEP_01 stuck)",
+        "on STEP_QA PASS: append to manifest, advance",
+        "on STEP_QA FAIL: re-spawn per-step worker with findings as correction directive; retry_counter++",
+        "on retry_limit: escalate",
+        "commit after each phase or at phase-group boundary",
+        "NEVER modify source docs or RDC-consolidated docs",
+        "NEVER skip phases"
+      ],
+      "does_not": [
+        "modify source docs (read-only)",
+        "parallelize phases (user directive: monolithic serial)",
+        "bypass STEP_QA",
+        "auto-trigger other workflows"
+      ]
+    },
+    "STEP_EXECUTOR_BASE": {
+      "type": "worker_base_role",
+      "doc": "per-phase: see phase_map[<phase_id>].worker_doc",
+      "context_access": "full on target_library (read-only), full on workspace_dir (read+write for own step outputs), full on assigned source STEP doc + PHASE_ARCH + PHASE_TODO (read-only)",
+      "description": "Base pattern for all 20 per-step workers. Each phase has its own worker doc (per phase_map) that specializes this pattern with phase-specific inputs, outputs, completion criteria, and discipline. Phase workers share the base read-first discipline (WORKER.md → WORKER_PROTOCOL.md → per-step worker doc → source STEP doc → PHASE_ARCH → relevant T-XX.X from PHASE_TODO), then execute what their phase prescribes.",
+      "inputs_base": [
+        "phase_id (e.g., STEP_04)",
+        "phase_group (e.g., PHASE_02_DESIGN)",
+        "worker_doc absolute path (from phase_map)",
+        "source_doc absolute path (from phase_map)",
+        "phase_arch absolute path (LANGS_DEV_RDC/PHASE_N_<GROUP>_ARCH.md)",
+        "phase_todo absolute path + specific task_ref (e.g., T-02.2)",
+        "target_library absolute path",
+        "workspace_dir + workspace_manifest (current state)",
+        "prior_retry_findings (null on first attempt)"
+      ],
+      "produces_base": [
+        "concrete output files in workspace_dir/<phase_id>/",
+        "workspace manifest entry for this phase",
+        "structured completion report at end of agent response"
+      ],
+      "discipline_base": [
+        "full-read all assigned docs (source STEP + phase_arch + task + own worker doc)",
+        "execute what the worker doc + PHASE_TODO task_ref prescribe",
+        "no scope creep into later phases",
+        "no fabrication",
+        "honest ambiguity reporting",
+        "no auto-recursion",
+        "read-only on source docs"
+      ],
+      "triggered_by": ["QUEEN at each phase entry", "QUEEN on STEP_QA FAIL retry"]
+    },
+    "STEP_QA": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV/WORKER_STEP_QA.md",
+      "context_access": "full on workspace_dir (read-only), full on assigned source STEP doc + PHASE_ARCH + PHASE_TODO task (read-only)",
+      "description": "Shared per-phase QA worker. Same role across all 20 phases. Lightweight QA reads the source STEP doc + worker output + PHASE_TODO task's acceptance criteria. Judges PASS/FAIL per declared criteria. Does not invent completion criteria.",
+      "inputs": [
+        "phase_id",
+        "source_doc absolute path",
+        "phase_arch absolute path",
+        "phase_todo absolute path + task_ref",
+        "worker outputs (paths + completion report)",
+        "workspace_dir"
+      ],
+      "produces": [
+        "PASS / PASS-with-warnings / FAIL verdict",
+        "structured findings array per WORKER_STEP_QA.md spec"
+      ],
+      "triggered_by": ["QUEEN after each per-step worker completion"]
+    }
+  },
+
+  "units": {
+    "STEP_UNIT": {
+      "description": "One phase's atomic execution: per-step worker → STEP_QA. Runs once per phase (or up to retry_limit times on FAIL).",
+      "workers": ["per-step worker (per phase_map)", "STEP_QA"],
+      "execution": "sequential",
+      "atomic": true,
+      "retry_semantics": "on FAIL, per-step worker re-spawned with STEP_QA findings as correction directive; STEP_QA re-runs. At retry_counter == 2, phase escalates."
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify step_source_dir has all 20 source docs per expected_source_docs",
+        "verify rdc_consolidated_dir has MASTER + 4 PHASE_ARCH + 4 PHASE_TODO files",
+        "verify target_library_path exists",
+        "create workspace_dir if absent; init workspace_manifest.json",
+        "initialize or append to INPROGRESS.md at project root",
+        "report to user: source path, RDC path, target path, workspace, 20-phase plan, ready to proceed"
+      ]
+    },
+    "per_phase": {
+      "performer": "QUEEN spawns STEP_UNIT",
+      "type": "iterative_sequential",
+      "per_iteration": [
+        "QUEEN resolves per-step worker from phase_map[phase_id].worker_doc",
+        "QUEEN assembles context packet (phase_id, worker_doc, source_doc, phase_arch, phase_todo + task_ref, target_library, workspace_dir, workspace_manifest, prior_retry_findings)",
+        "QUEEN spawns per-step worker (the specialized WORKER_STEP_<N>.md)",
+        "Per-step worker returns: outputs_paths, completion_report",
+        "QUEEN spawns STEP_QA with (phase_id, source_doc, phase_arch, phase_todo + task_ref, worker outputs, workspace_dir)",
+        "STEP_QA returns: PASS | PASS-with-warnings | FAIL + findings",
+        "on PASS: QUEEN appends outputs to workspace_manifest, writes phase-complete entry to INPROGRESS.md, advances",
+        "on PASS-with-warnings: same as PASS, but warnings logged prominently for human review at completion",
+        "on FAIL + retry_counter < 2: QUEEN re-spawns per-step worker with findings as prior_retry_findings; retry_counter++; loop to STEP_QA",
+        "on FAIL + retry_counter == 2: PHASE_ESCALATE; pauses workflow"
+      ]
+    },
+    "conditional_phases": {
+      "STEP_01_01": "runs only if STEP_01's STEP_QA FAILed or STEP_01 itself emitted RECOVERY_NEEDED signal in its completion report; otherwise skipped"
+    },
+    "finalize": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "after STEP_BL04 PASS: QUEEN writes final workspace_manifest summary",
+        "QUEEN writes completion entry to INPROGRESS.md with per-group statistics",
+        "QUEEN emits CLEAN_RUN verdict",
+        "QUEEN reports final deliverables: DSL for target_library is complete"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: verify inputs + initialize workspace",
+      "PER_PHASE × 20: per-step worker → STEP_QA → (advance | retry | escalate) through phases_serial_order",
+      "FINALIZE: summary, manifest close, verdict emission"
+    ]
+  },
+
+  "verdicts": {
+    "per_phase_verdicts": {
+      "PHASE_GREEN_LIGHT": "STEP_QA PASS; QUEEN advances to next phase",
+      "PHASE_PASS_WITH_WARNINGS": "STEP_QA PASS with medium-severity findings; advance but surface to human",
+      "PHASE_RETRY": "STEP_QA FAIL with retries remaining; re-spawn per-step worker",
+      "PHASE_ESCALATE": "STEP_QA FAIL + retry_counter at limit; pause and escalate"
+    },
+    "workflow_verdicts": {
+      "CLEAN_RUN": "all 20 phases PASS. Full pipeline output in workspace_dir.",
+      "CLEAN_RUN_WITH_WARNINGS": "all 20 phases PASS but one or more emitted warnings. Human review recommended.",
+      "PARTIAL_RUN": "human halted mid-pipeline after some phases. State committed through last completed phase.",
+      "ESCALATED": "a phase exhausted retries. Workflow paused.",
+      "ABORTED": "human aborted entirely."
+    }
+  },
+
+  "loop_limits": {
+    "per_phase_retry_limit": 2,
+    "counter_semantics": {
+      "retry_counter": "per-phase counter, resets at each phase entry. At 2, phase escalates.",
+      "no_global_retry_budget": "phases do not share retry budget."
+    }
+  },
+
+  "hard_rules": {
+    "monolithic_serial": "phases execute strictly in phases_serial_order. No parallelism. Per user directive.",
+    "per_step_worker_specialization": "each phase spawns its own WORKER_STEP_<N>.md (not generic STEP_EXECUTOR). v0.2.0 invariant.",
+    "source_doc_authority": "each source STEP doc is authoritative for its phase.",
+    "rdc_consolidated_reference": "per-step workers reference the RDC-consolidated PHASE_N_ARCH + PHASE_N_TODO for context beyond the raw STEP doc.",
+    "no_source_modification": "source docs and RDC docs are read-only. Methodology changes happen outside this workflow.",
+    "no_scope_creep_across_phases": "phase N's worker does not backfill phase N-1 or look ahead to phase N+1.",
+    "full_read_or_skip": "every assigned doc (worker doc + source + PHASE_ARCH + task) read fully.",
+    "no_fabrication": "outputs trace to analysis + prior outputs + explicit doc instructions.",
+    "retry_bounded": "per_phase_retry_limit = 2.",
+    "no_phase_skip": "a phase must PASS before the next phase begins.",
+    "conditional_phase_discipline": "STEP_01_01 is the only conditional phase in v0.2.0; runs only on STEP_01 recovery-needed signal.",
+    "no_auto_workflow_trigger": "never auto-triggers RDC, RECON, SDLC, BOOK, ORGANIZE.",
+    "no_workflow_mixing": "while LANG_DEV is active, do not interleave with another active workflow.",
+    "workspace_discipline": "outputs in workspace_dir/<phase_id>/; manifest is single source of truth.",
+    "never_no_verify": "never bypass pre-commit hooks.",
+    "inprogress_prepend_only": "INPROGRESS.md prepend-only except checkboxes."
+  },
+
+  "document_conventions": {
+    "workspace_manifest": {
+      "path": "<workspace_dir>/workspace_manifest.json",
+      "maintained_by": "QUEEN + per-step worker appends entry per phase",
+      "schema_fields": {
+        "workflow_version": "string (should be '0.2.0' or later)",
+        "target_library": "string (abs path)",
+        "started": "ISO timestamp",
+        "phases": "array of { phase_id, title, group, status, retry_count, outputs, started, finished, warnings[] }",
+        "current_phase": "phase_id",
+        "verdict": "string (filled on workflow completion)"
+      }
+    },
+    "inprogress": {
+      "path": "<project_root>/INPROGRESS.md",
+      "update_mode": "prepend_only_except_checkboxes",
+      "entries": "per-phase completion + per-phase QA verdict + retry markers + escalation markers + final completion"
+    },
+    "commit_cadence": "v0.2.0: commit after each phase-group completes (4 commits total: post-DECONSTRUCTION, post-DESIGN, post-IMPLEMENTATION, post-RUNTIME). Rationale: group-level atomicity gives meaningful review units."
+  },
+
+  "known_tbds": {
+    "description": "TBDs remaining in v0.2.0. Several v0.1.0 TBDs resolved via RDC consolidation.",
+    "resolved_from_v0_1_0": [
+      "tbd-01 boss-level-integration: RESOLVED. Boss_levels integrated as PHASE_04_RUNTIME (4 phases: STEP_BL01-04).",
+      "tbd-02 two-step-5-semantics: RESOLVED via COURT #1 (SYNTHESIS). STEP_05A = DECISIONS_SCHEMA first, STEP_05B = BAG_GRAMMAR second.",
+      "tbd-04 qa-depth: PARTIALLY RESOLVED. v0.2.0 uses lightweight STEP_QA per phase with retry budget 2; upgrade to BOOK_EDITORIAL-style multi-axis if quality issues emerge."
+    ],
+    "still_open": [
+      {
+        "id": "tbd-03-cross-step-state-format",
+        "question": "Exact file formats for per-phase outputs (decisions.json, primitives_catalog.json, etc.). Left to per-step worker judgment guided by source STEP docs + PHASE_N_TODO acceptance commands.",
+        "evidence": "PHASE_N_TODO docs specify acceptance commands that implicitly constrain formats.",
+        "resolution_path": "first live run exercises the formats; adjust workers if conflicts arise."
+      },
+      {
+        "id": "tbd-05-target-artifact",
+        "question": "After Phase 4, what is THE deliverable? A specification doc + source tree + test suite? A published package?",
+        "evidence": "PHASE_04_TODO's final integration test shows 'the DSL is runnable' but doesn't prescribe packaging.",
+        "resolution_path": "domain-specific. Downstream of LANG_DEV_WORKFLOW."
+      },
+      {
+        "id": "tbd-06-retry-semantics",
+        "question": "Is retry_limit = 2 right for all 20 phases? STEP_11 SOLVER may need more; STEP_06_01 CONUNDRUM may need less.",
+        "evidence": "Based on SDLC FIX pattern. May need per-phase tuning.",
+        "resolution_path": "observe which phases consume retries during first runs; adjust per-phase."
+      },
+      {
+        "id": "tbd-07-target-library-scope",
+        "question": "How does a per-step worker bound its reading of target_library? Pandas is 100K+ LoC.",
+        "evidence": "Source STEP docs assume focused analysis but don't specify scope.",
+        "resolution_path": "add bounded-scope heuristics in v0.3.0 based on first-run experience."
+      },
+      {
+        "id": "tbd-08-workflow-self-applicability",
+        "question": "Could LANG_DEV_WORKFLOW deconstruct its own source material as a target?",
+        "evidence": "Meta-question. Not blocking.",
+        "resolution_path": "thought experiment."
+      },
+      {
+        "id": "tbd-09-nexus-reports-prerequisite",
+        "question": "Nexus reports (GRAVITY, VERBS, TIERS, etc.) are upstream inputs but the workflow doesn't own their production.",
+        "evidence": "PROJECT.md §Required inputs lists nexus reports; pandas_nexus/ and output_dir/ are examples.",
+        "resolution_path": "document the nexus-analysis upstream process; potentially a separate workflow (NEXUS_ANALYSIS_WORKFLOW)."
+      }
+    ]
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "step_qa": "workflows/LANG_DEV/WORKER_STEP_QA.md",
+    "per_step_workers": "see phase_map[<phase_id>].worker_doc for each of 20 phase-specific worker docs"
+  },
+
+  "notes": {
+    "v0_2_0_from_v0_1_0": "v0.2.0 addresses the user critique that v0.1.0 was too shallow (3 files for an 11-phase heavy pipeline). v0.2.0 has 22 files: refactored JSON (this file), 20 per-step worker docs (one per phase), 1 shared WORKER_STEP_QA.md. Plus v0.1.0 files kept as .v0.1.0 suffix for historical reference.",
+    "rdc_prerequisite_note": "v0.2.0 assumes RDC has been run on LANGS_DEVELOPMENT producing LANGS_DEV_RDC/. If RDC outputs absent, workflow still runs but per-step workers lose context beyond raw source docs. Recommend running RDC first.",
+    "boss_level_integration_note": "boss_levels 1-4 are now first-class phases (STEP_BL01-04) in PHASE_04_RUNTIME group. They consume ExecutionPlan from STEP_11 SOLVER and build runtime around it.",
+    "per_step_specialization_value": "Each per-step worker doc can encode phase-specific discipline: lexer's span-tracking rules, parser's precedence-climbing pattern, solver's shuffle test requirement, etc. Generic STEP_EXECUTOR could not carry this domain knowledge.",
+    "historical_v0_1_0_files": "workflows/LANG_DEV/LANG_DEV_WORKFLOW.v0.1.0.json, WORKER_STEP_EXECUTOR.v0.1.0.md, WORKER_STEP_QA.v0.1.0.md remain for reference. They document the shallow-first-pass we corrected with v0.2.0."
+  },
+
+  "changelog": [
+    {
+      "version": "0.2.0",
+      "date": "2026-04-18",
+      "note": "Per-step worker expansion post-RDC. 20 distinct WORKER_STEP_<N>.md docs (one per phase) replace v0.1.0's generic STEP_EXECUTOR. Phase count expanded from 16 to 20 (boss_levels 1-4 integrated as PHASE_04_RUNTIME). Two-STEP-5 conflict resolved via COURT #1 SYNTHESIS (STEP_05A = DECISIONS_SCHEMA first, STEP_05B = BAG_GRAMMAR second). workspace_manifest schema extended with `group` field. known_tbds count reduced from 8 to 6 (tbd-01 and tbd-02 resolved; tbd-04 partially resolved)."
+    },
+    {
+      "version": "0.1.0-DRAFT",
+      "date": "2026-04-18",
+      "note": "Initial synthesis from LANGS_DEVELOPMENT corpus. 16 phases serial (11 steps + 5 substeps), generic STEP_EXECUTOR + STEP_QA pattern, reference model (points to STEP source docs). Critiqued as too shallow. Superseded by v0.2.0 after RDC consolidation produced phase-group context and per-task specs. Historical files: *.v0.1.0.*."
+    }
+  ]
+}

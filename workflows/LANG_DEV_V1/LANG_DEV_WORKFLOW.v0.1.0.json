@@ -1,0 +1,402 @@
+{
+  "version": "0.1.0-DRAFT",
+  "name": "LANG_DEV_WORKFLOW",
+  "description": "Monolithic serial workflow for executing the 11-step (+ substeps) language-development methodology documented in LANGS_DEVELOPMENT. Deconstructs a target programming library into primitives/objects/types, designs atomics and bag-grammar, implements a lexer/validator/parser/typer/classifier/solver pipeline. The workflow itself does not re-document the methodology — it ORCHESTRATES execution against existing STEP docs that serve as per-phase specifications. The STEP docs are the domain-knowledge; the workflow provides the execution pattern (sequential phases, per-step executor + QA, bounded retries, escalation). Status: v0.1.0-DRAFT — synthesized from LANGS_DEVELOPMENT corpus; several design questions explicitly deferred as known_tbds; answers emerge by running it. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrases": [
+      "LANG_DEV_WORKFLOW",
+      "langdev",
+      "language development",
+      "deconstruct library",
+      "run lang dev"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/LANG_DEV/WORKER_STEP_EXECUTOR.md and workflows/LANG_DEV/WORKER_STEP_QA.md",
+      "QUEEN verifies that the configured STEP source directory exists and contains the expected 16 STEP files (1, 1.1, 2, 3, 4, 5A, 5B, 6, 6.1, 6.2, 7, 7.1, 8, 9, 10, 11)",
+      "QUEEN reports: 'LANG_DEV_WORKFLOW mode engaged. STEP source: <path>. Target library: <not yet specified>. Ready. Point me to the target library to deconstruct.'",
+      "QUEEN waits for explicit human direction specifying the target library path and workspace output directory"
+    ],
+    "parameters_required": {
+      "target_library": "absolute path to the library/codebase to deconstruct (e.g., /path/to/pandas, /path/to/requests)",
+      "workspace_dir": "absolute path to a directory where intermediate per-step outputs will land (created if absent)",
+      "step_source_dir": "absolute path to the directory containing the 16 STEP_*.md docs. Default: LANG_DEV_STEPS/ at project root. Overridable per invocation."
+    }
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "parallel-altitude to SDLC, RDC, RECON, BOOK, ORGANIZE",
+    "rdc_coupling": "RDC could have been used to consolidate the 16 STEP docs before this workflow was designed — but since the STEP docs already express a linear process, direct synthesis was simpler. Future versions may call RDC if STEP docs need re-consolidation.",
+    "sdlc_coupling": "After LANG_DEV produces implementation artefacts (lexer.py, parser.py, etc.), SDLC could take over for iterative refinement — handoff is manual. Alternatively, the implementation STEPs (7-11) could themselves be dispatched through SDLC — known_tbd.",
+    "recon_coupling": "Before engaging LANG_DEV on a new target library, RECON can characterize the library. Manual handoff.",
+    "organize_coupling": "None. LANG_DEV operates on domain artefacts, not project structure.",
+    "does_not_auto_trigger": ["SDLC_WORKFLOW", "RDC_WORKFLOW", "RECON_WORKFLOW", "ORGANIZE_WORKFLOW"]
+  },
+
+  "source_material": {
+    "description": "The 16 STEP docs that specify the methodology this workflow executes. Each STEP doc is the authoritative specification for one phase of the pipeline. The workflow's worker docs do NOT duplicate these — they reference them. If a STEP doc is missing or malformed at engagement, the workflow ESCALATEs.",
+    "canonical_location": "LANG_DEV_STEPS/ at project root (configurable via step_source_dir parameter)",
+    "expected_files": [
+      "STEP 1 - DECONSTRUCTION OPS.md",
+      "STEP 1.1 - RECOVER OPS.md",
+      "STEP 2 - DECONSTRUCTION OBJS.md",
+      "STEP 3 - DECONSTRUCTION TYPES.md",
+      "STEP 4 - ATOMICS.md",
+      "STEP 5 - BAG GRAMMAR.md",
+      "STEP 5 - DECISIONS SCHEMA.md",
+      "STEP 6 - RULESETS AND DEFAULTS.md",
+      "STEP 6.1 - THE_CONUNDRUM.md",
+      "STEP 6.2 - PRE LEXER.md",
+      "STEP 7 - LEXER.md",
+      "STEP 7.1 - VALIDATOR.md",
+      "STEP 8 - PARSER.md",
+      "STEP 9 - TYPER.md",
+      "STEP 10 - CLASSIFIER.md",
+      "STEP 11 - SOLVER.md"
+    ],
+    "two_step_5_note": "STEP 5 exists as two files (BAG GRAMMAR, DECISIONS SCHEMA) — handled as sequential sub-phases 5A and 5B in the state machine. Whether this matches authorial intent is a known_tbd; surface any issues during first live run.",
+    "read_discipline": "STEP_EXECUTOR workers perform FULL reads of their assigned STEP doc. No partial-scan. Budget is achieved by sequential execution, not by skimming."
+  },
+
+  "phase_grouping": {
+    "description": "The 16 phases naturally cluster into 4 domain-concerns. The workflow executes serially (per user directive — monolithic serial); groupings are annotations, not parallelism opportunities. Used for reporting and progress summaries only.",
+    "groups": {
+      "ANALYSIS": {
+        "phases": ["STEP_01", "STEP_01_01", "STEP_02", "STEP_03"],
+        "concern": "Decompose the target library into primitives, objects, and type signatures."
+      },
+      "DESIGN": {
+        "phases": ["STEP_04", "STEP_05A", "STEP_05B", "STEP_06", "STEP_06_01", "STEP_06_02"],
+        "concern": "Design atomics with typed ports, bag grammar abstractions, decisions schema, default rulesets, and minimal token inventory."
+      },
+      "IMPLEMENTATION": {
+        "phases": ["STEP_07", "STEP_07_01", "STEP_08", "STEP_09", "STEP_10", "STEP_11"],
+        "concern": "Implement the language pipeline: lexer, validator, parser, typer, classifier, solver."
+      }
+    }
+  },
+
+  "phases_serial_order": [
+    "STEP_01",
+    "STEP_01_01",
+    "STEP_02",
+    "STEP_03",
+    "STEP_04",
+    "STEP_05A",
+    "STEP_05B",
+    "STEP_06",
+    "STEP_06_01",
+    "STEP_06_02",
+    "STEP_07",
+    "STEP_07_01",
+    "STEP_08",
+    "STEP_09",
+    "STEP_10",
+    "STEP_11"
+  ],
+
+  "phase_map": {
+    "STEP_01": { "source_doc": "STEP 1 - DECONSTRUCTION OPS.md", "title": "DECONSTRUCTION OPS", "group": "ANALYSIS" },
+    "STEP_01_01": { "source_doc": "STEP 1.1 - RECOVER OPS.md", "title": "RECOVER OPS", "group": "ANALYSIS", "substep_of": "STEP_01" },
+    "STEP_02": { "source_doc": "STEP 2 - DECONSTRUCTION OBJS.md", "title": "DECONSTRUCTION OBJS", "group": "ANALYSIS" },
+    "STEP_03": { "source_doc": "STEP 3 - DECONSTRUCTION TYPES.md", "title": "DECONSTRUCTION TYPES", "group": "ANALYSIS" },
+    "STEP_04": { "source_doc": "STEP 4 - ATOMICS.md", "title": "ATOMICS", "group": "DESIGN" },
+    "STEP_05A": { "source_doc": "STEP 5 - BAG GRAMMAR.md", "title": "BAG GRAMMAR", "group": "DESIGN", "naming_note": "one of two STEP 5 files; treated as sub-phase 5A" },
+    "STEP_05B": { "source_doc": "STEP 5 - DECISIONS SCHEMA.md", "title": "DECISIONS SCHEMA", "group": "DESIGN", "naming_note": "one of two STEP 5 files; treated as sub-phase 5B" },
+    "STEP_06": { "source_doc": "STEP 6 - RULESETS AND DEFAULTS.md", "title": "RULESETS AND DEFAULTS", "group": "DESIGN" },
+    "STEP_06_01": { "source_doc": "STEP 6.1 - THE_CONUNDRUM.md", "title": "THE CONUNDRUM", "group": "DESIGN", "substep_of": "STEP_06" },
+    "STEP_06_02": { "source_doc": "STEP 6.2 - PRE LEXER.md", "title": "PRE LEXER", "group": "DESIGN", "substep_of": "STEP_06" },
+    "STEP_07": { "source_doc": "STEP 7 - LEXER.md", "title": "LEXER", "group": "IMPLEMENTATION" },
+    "STEP_07_01": { "source_doc": "STEP 7.1 - VALIDATOR.md", "title": "VALIDATOR", "group": "IMPLEMENTATION", "substep_of": "STEP_07" },
+    "STEP_08": { "source_doc": "STEP 8 - PARSER.md", "title": "PARSER", "group": "IMPLEMENTATION" },
+    "STEP_09": { "source_doc": "STEP 9 - TYPER.md", "title": "TYPER", "group": "IMPLEMENTATION" },
+    "STEP_10": { "source_doc": "STEP 10 - CLASSIFIER.md", "title": "CLASSIFIER", "group": "IMPLEMENTATION" },
+    "STEP_11": { "source_doc": "STEP 11 - SOLVER.md", "title": "SOLVER", "group": "IMPLEMENTATION" }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in main conversation during LANG_DEV_WORKFLOW. Iterates through the 16-phase serial sequence, spawning STEP_EXECUTOR + STEP_QA per phase, tracking per-phase verdicts, managing the workspace output directory, handling retries and escalation.",
+      "responsibilities": [
+        "verify step_source_dir contains all 16 expected STEP docs at engagement",
+        "verify target_library path exists and is readable",
+        "create workspace_dir if absent; initialize workspace manifest",
+        "per-phase iteration: assemble STEP context packet, spawn STEP_EXECUTOR, receive outputs, spawn STEP_QA, collect verdict",
+        "on STEP_QA PASS: append outputs to workspace manifest, advance to next phase",
+        "on STEP_QA FAIL: spawn STEP_EXECUTOR again with findings as correction directive; retry_counter++",
+        "on retry_counter >= 2 (limit): emit ESCALATE for that phase; pause workflow",
+        "maintain INPROGRESS.md with per-phase progress entries (prepend-only except checkboxes)",
+        "on final phase GREEN_LIGHT: emit CLEAN_RUN verdict with summary",
+        "NEVER skip phases, NEVER override STEP_QA verdicts",
+        "NEVER modify STEP source docs"
+      ],
+      "does_not": [
+        "modify STEP source docs (they are authoritative specifications)",
+        "parallelize phases (user directive: monolithic serial)",
+        "invoke boss_level roles (boss_levels are a known_tbd — not integrated in v0.1.0-DRAFT)",
+        "auto-trigger other workflows"
+      ]
+    },
+    "STEP_EXECUTOR": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV/WORKER_STEP_EXECUTOR.md",
+      "context_access": "full on target_library (read-only), full on workspace_dir (read+write for own step outputs), full on assigned STEP doc (read-only)",
+      "description": "Executes one phase of the pipeline per spawn. Reads the assigned STEP source doc fully, reads prior-step outputs from the workspace manifest, performs the work the STEP doc prescribes (analysis, design, or implementation), writes outputs to workspace_dir, returns a structured completion report. Generic pattern — per-step domain knowledge lives in the STEP source doc, not in this worker's role doc.",
+      "inputs": [
+        "phase_id (e.g., STEP_04)",
+        "step_source_doc_path (absolute path to the assigned STEP doc)",
+        "target_library_path",
+        "workspace_dir (absolute)",
+        "workspace_manifest (summary of prior-phase outputs with paths)",
+        "prior_retry_findings (optional; present if this is a retry spawn — contains STEP_QA's FAIL findings to address)"
+      ],
+      "produces": [
+        "concrete output files per the STEP doc's declared output shape (e.g., primitives.json for STEP_01, atoms catalog for STEP_04, lexer.py for STEP_07)",
+        "workspace manifest entry for this phase",
+        "structured completion report at end of agent response"
+      ],
+      "discipline": [
+        "full-read the assigned STEP doc before doing anything else",
+        "full-read prior-phase outputs referenced by the STEP doc's 'inputs' section",
+        "do exactly what the STEP doc prescribes — no scope creep into later steps",
+        "emit outputs in the exact shape the STEP doc declares",
+        "no fabrication — every output entry traces to analysis of target_library or prior outputs",
+        "honest ambiguity — if STEP doc is unclear, emit the output with rationale + flag the ambiguity in the completion report rather than guessing",
+        "no auto-recursion (does not spawn sub-workers)"
+      ],
+      "triggered_by": ["QUEEN at each phase entry", "QUEEN on STEP_QA FAIL retry"]
+    },
+    "STEP_QA": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV/WORKER_STEP_QA.md",
+      "context_access": "full on workspace_dir (read-only), full on assigned STEP doc (read-only), full on target_library (read-only for verification)",
+      "description": "Lightweight per-phase QA. Reads the STEP doc's declared completion criteria + the EXECUTOR's outputs. Judges PASS/FAIL per the STEP doc's own rules. Does not perform the work itself; does not second-guess domain judgments the STEP doc doesn't prescribe; does not expand scope. Same-doc-authority model: STEP_QA's authority is bounded by what the STEP doc actually says.",
+      "inputs": [
+        "phase_id",
+        "step_source_doc_path",
+        "executor_outputs (paths + completion report)",
+        "workspace_dir"
+      ],
+      "produces": [
+        "PASS / FAIL verdict with structured findings array",
+        "each finding: severity (Critical/High/Medium/Low) + completion criterion violated + specific evidence"
+      ],
+      "discipline": [
+        "PASS requires: all declared outputs present, all STEP doc completion criteria met, no fabrication detected",
+        "FAIL if any Critical finding; Medium/High findings → PASS with warnings unless numerous",
+        "bounded scope — only check what the STEP doc prescribes; do not invent completion criteria",
+        "no fabrication of findings — every finding cites the specific STEP-doc line and the specific executor-output location"
+      ],
+      "triggered_by": ["QUEEN after each STEP_EXECUTOR completion"]
+    }
+  },
+
+  "units": {
+    "STEP_UNIT": {
+      "description": "One phase's atomic execution: STEP_EXECUTOR → STEP_QA. Runs once per phase (or up to retry_limit times on FAIL). Sequential, atomic.",
+      "workers": ["STEP_EXECUTOR", "STEP_QA"],
+      "execution": "sequential",
+      "atomic": true,
+      "retry_semantics": "on FAIL, STEP_EXECUTOR re-spawned with findings; STEP_QA re-runs. At retry_counter == 2, escalate this phase."
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify step_source_dir exists and contains all 16 expected STEP files (names must match phase_map.source_doc values)",
+        "if any STEP doc missing: ESCALATE with list of missing files; do not proceed",
+        "verify target_library_path exists and is readable",
+        "if target_library missing: ESCALATE",
+        "create workspace_dir if absent; initialize empty workspace_manifest.json at workspace_dir/workspace_manifest.json",
+        "initialize or append to INPROGRESS.md at project root with LANG_DEV_WORKFLOW engagement entry",
+        "report to user: source path, target path, workspace path, total phase count (16), ready to proceed"
+      ]
+    },
+    "per_phase": {
+      "performer": "QUEEN spawns STEP_UNIT",
+      "type": "iterative_sequential",
+      "description": "For each phase_id in phases_serial_order (16 iterations): assemble context packet, spawn STEP_EXECUTOR, receive outputs, spawn STEP_QA, collect verdict, handle retry/advance/escalate.",
+      "per_iteration": [
+        "QUEEN assembles STEP_EXECUTOR context packet: phase_id, step_source_doc_path (absolute, resolved via phase_map), target_library_path, workspace_dir, workspace_manifest (current state), prior_retry_findings (null on first attempt)",
+        "QUEEN spawns STEP_EXECUTOR",
+        "STEP_EXECUTOR returns: outputs_paths, completion_report",
+        "QUEEN assembles STEP_QA context packet: phase_id, step_source_doc_path, executor_outputs, workspace_dir",
+        "QUEEN spawns STEP_QA",
+        "STEP_QA returns: PASS or FAIL + findings",
+        "on PASS: QUEEN appends outputs to workspace_manifest, writes phase-complete entry to INPROGRESS.md, advances to next phase",
+        "on FAIL + retry_counter < 2: QUEEN re-spawns STEP_EXECUTOR with findings as prior_retry_findings; retry_counter++; loop back to STEP_QA",
+        "on FAIL + retry_counter == 2: QUEEN emits PHASE_ESCALATE; pauses workflow; reports to human"
+      ]
+    },
+    "finalize": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "after STEP_11 completes with PASS: QUEEN writes final workspace_manifest summary",
+        "QUEEN writes completion entry to INPROGRESS.md with per-group statistics (ANALYSIS/DESIGN/IMPLEMENTATION phase counts + retry totals)",
+        "QUEEN emits CLEAN_RUN verdict",
+        "QUEEN reports: 'LANG_DEV_WORKFLOW complete. All 16 phases passed. Outputs in <workspace_dir>. Review before any downstream action.'"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: verify inputs + initialize workspace",
+      "PER_PHASE × 16: STEP_EXECUTOR → STEP_QA → (advance | retry | escalate) iteratively through phases_serial_order",
+      "FINALIZE: summary, manifest close, verdict emission"
+    ]
+  },
+
+  "verdicts": {
+    "per_phase_verdicts": {
+      "PHASE_GREEN_LIGHT": "STEP_QA PASS; QUEEN advances to next phase",
+      "PHASE_RETRY": "STEP_QA FAIL with retries remaining; re-spawn STEP_EXECUTOR with findings",
+      "PHASE_ESCALATE": "STEP_QA FAIL + retry_counter at limit; pause and escalate to human"
+    },
+    "workflow_verdicts": {
+      "CLEAN_RUN": "all 16 phases PASS-ed (possibly with retries within bounds). Full pipeline output available in workspace_dir.",
+      "PARTIAL_RUN": "workflow halted by human mid-pipeline after some phases completed. Completed phases' outputs preserved; workspace_manifest reflects state-as-of-halt.",
+      "ESCALATED": "a phase exhausted retries and escalated. Workflow paused. Human resolves and resumes (or aborts).",
+      "ABORTED": "human aborts entirely before any phase completes or during escalation."
+    }
+  },
+
+  "loop_limits": {
+    "per_phase_retry_limit": 2,
+    "counter_semantics": {
+      "retry_counter": "per-phase counter. Resets to 0 at each phase entry. Increments on STEP_QA FAIL. At 2, phase escalates.",
+      "no_global_retry_budget": "phases do not share a global retry budget — a phase with 2 retries does not reduce later phases' retry budget"
+    },
+    "rationale": "v0.1.0-DRAFT is conservative. Retry limit of 2 keeps cycles bounded while giving one correction chance. Adjust after observing real failure modes."
+  },
+
+  "hard_rules": {
+    "monolithic_serial": "phases execute strictly in phases_serial_order. No parallelism across phases. Per user directive.",
+    "step_doc_authority": "each STEP source doc is authoritative for that phase. STEP_EXECUTOR and STEP_QA do not substitute their own aesthetic judgment for what the doc prescribes.",
+    "no_step_doc_modification": "the 16 STEP source docs are read-only at all times. If the methodology itself needs to change, the human edits the STEP docs outside this workflow.",
+    "no_scope_creep_across_phases": "STEP_EXECUTOR for phase N does not look ahead or backfill work from phase N-1. Each phase stays in its lane.",
+    "full_read_or_skip": "STEP_EXECUTOR reads each assigned STEP doc fully. Never partial-scan.",
+    "no_fabrication": "every output entry traces to analysis of target_library or prior-phase outputs; every STEP_QA finding cites specific STEP-doc lines + executor-output locations.",
+    "retry_bounded": "per_phase_retry_limit = 2. Never exceeded.",
+    "no_phase_skip": "a phase must PASS before the next phase begins. No skipping.",
+    "no_auto_workflow_trigger": "LANG_DEV never auto-triggers RDC, RECON, SDLC, BOOK, or ORGANIZE workflows.",
+    "no_workflow_mixing": "while LANG_DEV is active, do not interleave with another active workflow.",
+    "boss_level_roles_not_integrated": "the 4 boss_level_*_rules.md docs are NOT workers in this workflow. They may belong to a downstream runtime-execution workflow (not yet designed). See known_tbds.",
+    "workspace_discipline": "intermediate outputs land in workspace_dir (not in target_library, not in STEP source dir). workspace_manifest.json is the single-source-of-truth for what-is-where.",
+    "never_no_verify": "never use git commit --no-verify to bypass hooks. Fix underlying issues.",
+    "inprogress_prepend_only": "INPROGRESS.md entries are prepend-only except checkbox toggles."
+  },
+
+  "document_conventions": {
+    "workspace_manifest": {
+      "path": "<workspace_dir>/workspace_manifest.json",
+      "maintained_by": "QUEEN + STEP_EXECUTOR appends its manifest entry on each phase",
+      "schema_fields": {
+        "workflow_version": "string",
+        "target_library": "string (abs path)",
+        "started": "ISO timestamp",
+        "phases": "array of { phase_id, title, status (pending|running|pass|fail|escalated), retry_count, outputs (array of paths), started, finished }",
+        "current_phase": "phase_id",
+        "verdict": "string (filled on workflow completion)"
+      }
+    },
+    "inprogress": {
+      "path": "<project_root>/INPROGRESS.md",
+      "update_mode": "prepend_only_except_checkboxes",
+      "entries_written": [
+        "engagement start (phase-pending checkbox list)",
+        "per-phase entry on each EXECUTOR completion",
+        "per-phase verdict on each QA completion",
+        "retry markers with findings summary",
+        "escalation markers with blocker",
+        "final completion entry with summary"
+      ]
+    },
+    "no_commits_per_phase": "v0.1.0-DRAFT does not auto-commit per phase. Workspace accumulates; final GREEN_LIGHT may be followed by a single commit covering all outputs (or not — human decides). Revisable in future versions."
+  },
+
+  "known_tbds": {
+    "description": "Explicit design gaps in v0.1.0-DRAFT. Answers emerge by running and observing.",
+    "items": [
+      {
+        "id": "tbd-01-boss-level-integration",
+        "question": "How do the 4 boss_level_*_rules.md docs relate to this workflow?",
+        "evidence": "Their content suggests they govern RUNTIME execution of programs written in the produced language (executor, optimizer, error_reporter, debugger) — not steps of the building process. Excluded from v0.1.0-DRAFT.",
+        "candidates": ["separate LANG_RUNTIME_WORKFLOW (consumes LANG_DEV outputs)", "post-pipeline finalization phase of this workflow", "ambient roles spawned alongside every step"]
+      },
+      {
+        "id": "tbd-02-two-step-5-semantics",
+        "question": "Are STEP 5 - BAG GRAMMAR and STEP 5 - DECISIONS SCHEMA the same step with different content, sequential sub-phases, or a genuine naming collision?",
+        "evidence": "Both are labeled STEP 5. Extraction treated them as 5A/5B serial. Authorial intent unverified.",
+        "resolution_path": "first live run of the workflow will exercise both and surface if the order (5A→5B) is wrong or if they conflict"
+      },
+      {
+        "id": "tbd-03-cross-step-state-format",
+        "question": "What exact file format do prior-phase outputs take, and how does each phase's STEP_EXECUTOR know what to consume?",
+        "evidence": "STEP docs specify outputs informally. workspace_manifest.json abstracts this but the concrete schemas per phase are not hardcoded.",
+        "resolution_path": "let STEP_EXECUTOR emit whatever the STEP doc prescribes; manifest entries record paths; later phases read the files paths from the manifest"
+      },
+      {
+        "id": "tbd-04-qa-depth",
+        "question": "Is lightweight per-phase QA sufficient, or does the process warrant BOOK_EDITORIAL-style multi-axis junior/senior passes?",
+        "evidence": "v0.1.0-DRAFT uses lightweight (one QA worker, PASS/FAIL). Upgrade if quality issues emerge.",
+        "resolution_path": "measure on first run: do STEP_QA FAILs correlate with real issues, or are they missing things?"
+      },
+      {
+        "id": "tbd-05-target-artifact",
+        "question": "What is the FINAL deliverable of the whole workflow? A specification doc? Source code? A runnable language? All of the above?",
+        "evidence": "STEP docs produce artefacts along the way (primitives, atoms, decisions schema, lexer.py, parser.py, etc.) but no STEP doc says 'this is the end result.'",
+        "resolution_path": "after all 16 phases complete, the workspace contains a collection. Downstream decision: curate which subset is 'the deliverable.'"
+      },
+      {
+        "id": "tbd-06-retry-semantics",
+        "question": "Is retry_limit = 2 the right number?",
+        "evidence": "Matches SDLC's FIX cycle pattern. May be too strict for complex phases like STEP_11 SOLVER.",
+        "resolution_path": "observe which phases consume retries; adjust per-phase if patterns emerge (e.g., STEP_11 gets retry_limit = 3)"
+      },
+      {
+        "id": "tbd-07-target-library-scope",
+        "question": "How does STEP_EXECUTOR bound what of target_library it reads? Large libraries (pandas is 100K+ LoC) cannot be fully read per phase.",
+        "evidence": "STEP docs implicitly assume focused analysis, but don't specify scope boundaries.",
+        "resolution_path": "STEP_EXECUTOR may need to sample/scope target_library per phase; add bounded-scope heuristics in v0.2.0"
+      },
+      {
+        "id": "tbd-08-workflow-self-applicability",
+        "question": "Could this workflow deconstruct its own source material (the STEP docs + workflow JSONs) as a target?",
+        "evidence": "Meta-question. Not blocking v0.1.0-DRAFT.",
+        "resolution_path": "thought experiment for later"
+      }
+    ]
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "step_executor": "workflows/LANG_DEV/WORKER_STEP_EXECUTOR.md",
+    "step_qa": "workflows/LANG_DEV/WORKER_STEP_QA.md"
+  },
+
+  "notes": {
+    "synthesis_note": "This workflow was itself synthesized from 22 source docs (16 STEPs + 4 boss_levels + context + CREATOR_NOTES) in /home/user/dev/USER/PROJECTS/LANGS_DEVELOPMENT/. The synthesis exercise is part of the meta-goal of eventually codifying a workflow-synthesis-workflow. What was learned here informs that future meta-workflow.",
+    "reference_pattern_note": "The workflow uses a REFERENCE pattern (workers point to source STEP docs) rather than a DUPLICATION pattern (worker docs re-explain each step). This keeps the workflow thin and lets the STEP docs evolve independently. Tradeoff: the workflow requires the STEP docs to be present at engagement.",
+    "altitude_note": "LANG_DEV operates at execution-of-methodology altitude. It takes a documented process (STEP docs) + a target (library) + a workspace and runs the process on the target. It does not itself BUILD the methodology (that's the STEP docs' job).",
+    "draft_status_note": "v0.1.0-DRAFT means: structural pattern defined, workflow has not yet been exercised. Expect several known_tbds to sharpen after the first live run. Update this JSON (version bump + prepend-only changelog) as answers arrive."
+  },
+
+  "changelog": [
+    {
+      "version": "0.1.0-DRAFT",
+      "date": "2026-04-18",
+      "note": "Initial synthesis from LANGS_DEVELOPMENT corpus. 16 phases serial (11 steps + 5 substeps), generic STEP_EXECUTOR + STEP_QA pattern, reference model (points to STEP source docs), 8 known_tbds logged for learning from first live run. boss_level roles deliberately excluded pending clarification (tbd-01)."
+    }
+  ]
+}

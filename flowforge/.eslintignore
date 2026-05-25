@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Rust/Tauri
+**/src-tauri/target/
+**/*.rs
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Cache
+.turbo/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# Generated files
+*.generated.ts
+*.generated.js
+*.d.ts
+
+# Config files (they use their own configs)
+*.config.js
+*.config.ts
+*.config.cjs
+*.config.mjs
+commitlint.config.js
+
+# Lock files
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Test fixtures
+**/fixtures/**
+**/snapshots/**
+
+# Documentation
+docs/
+*.md
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

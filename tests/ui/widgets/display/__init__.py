@@ -1,0 +1,1 @@
+"""Display widgets tests package."""

@@ -1,0 +1,560 @@
+/**
+ * FlowForge Component Styles
+ * Common UI components used throughout the application
+ */
+
+/* ========================================
+ * PrimeVue Splitter (unstyled mode)
+ * Replicates @primeuix/styles/splitter structural CSS
+ * Required for layout to function since PrimeVue unstyled=true
+ * ======================================== */
+
+.p-splitter {
+  display: flex;
+  flex-wrap: nowrap;
+}
+
+.p-splitter-vertical {
+  flex-direction: column;
+}
+
+.p-splitterpanel {
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.p-splitterpanel-nested {
+  display: flex;
+}
+
+.p-splitterpanel .p-splitter {
+  flex-grow: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 0 none;
+}
+
+.p-splitter-gutter {
+  flex-grow: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  background-color: var(--flowforge-border, #3a3a4a);
+}
+
+.p-splitter-horizontal > .p-splitter-gutter {
+  cursor: col-resize;
+}
+
+.p-splitter-vertical > .p-splitter-gutter {
+  cursor: row-resize;
+}
+
+.p-splitter-gutter-handle {
+  border-radius: 4px;
+}
+
+.p-splitter-horizontal > .p-splitter-gutter > .p-splitter-gutter-handle {
+  height: 24px;
+  width: 100%;
+}
+
+.p-splitter-vertical > .p-splitter-gutter > .p-splitter-gutter-handle {
+  width: 24px;
+  height: 100%;
+}
+
+.p-splitter-gutter:hover {
+  background-color: var(--flowforge-primary, #6366f1);
+}
+
+/* ========================================
+ * Panel Component
+ * ======================================== */
+
+.ff-panel {
+  background-color: var(--flowforge-panel-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ff-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background-color: var(--flowforge-panel-secondary);
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-panel-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--flowforge-text-bright);
+}
+
+.ff-panel-content {
+  padding: 1rem;
+}
+
+/* ========================================
+ * Toolbar Component
+ * ======================================== */
+
+.ff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background-color: var(--flowforge-panel-bg);
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ff-toolbar-separator {
+  width: 1px;
+  height: 1.5rem;
+  background-color: var(--flowforge-border);
+  margin: 0 0.5rem;
+}
+
+.ff-toolbar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--flowforge-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ff-toolbar-button:hover {
+  background-color: var(--flowforge-hover-bg);
+  color: var(--flowforge-text);
+}
+
+.ff-toolbar-button:active {
+  background-color: var(--flowforge-active-bg);
+}
+
+.ff-toolbar-button.active {
+  background-color: var(--flowforge-selected-bg);
+  color: var(--flowforge-primary);
+}
+
+/* ========================================
+ * Sidebar Component
+ * ======================================== */
+
+.ff-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  background-color: var(--flowforge-panel-bg);
+  border-right: 1px solid var(--flowforge-border);
+  overflow: hidden;
+}
+
+.ff-sidebar-header {
+  padding: 1rem;
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.ff-sidebar-section {
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-sidebar-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--flowforge-text-muted);
+  cursor: pointer;
+}
+
+.ff-sidebar-section-title:hover {
+  color: var(--flowforge-text-secondary);
+}
+
+/* ========================================
+ * Node List Item
+ * ======================================== */
+
+.ff-node-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.ff-node-list-item:hover {
+  background-color: var(--flowforge-hover-bg);
+}
+
+.ff-node-list-item-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.ff-node-list-item-icon.component {
+  background-color: var(--flowforge-node-component-bg);
+  color: var(--flowforge-node-component);
+}
+
+.ff-node-list-item-icon.system {
+  background-color: var(--flowforge-node-system-bg);
+  color: var(--flowforge-node-system);
+}
+
+.ff-node-list-item-icon.resource {
+  background-color: var(--flowforge-node-resource-bg);
+  color: var(--flowforge-node-resource);
+}
+
+.ff-node-list-item-icon.event {
+  background-color: var(--flowforge-node-event-bg);
+  color: var(--flowforge-node-event);
+}
+
+.ff-node-list-item-name {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--flowforge-text);
+}
+
+/* ========================================
+ * Tab Component
+ * ======================================== */
+
+.ff-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-tab {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--flowforge-text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ff-tab:hover {
+  color: var(--flowforge-text);
+}
+
+.ff-tab.active {
+  color: var(--flowforge-primary);
+  border-bottom-color: var(--flowforge-primary);
+}
+
+.ff-tab-content {
+  padding: 1rem;
+}
+
+/* ========================================
+ * Property Editor
+ * ======================================== */
+
+.ff-property-row {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-property-row:last-child {
+  border-bottom: none;
+}
+
+.ff-property-label {
+  width: 40%;
+  font-size: 0.875rem;
+  color: var(--flowforge-text-secondary);
+}
+
+.ff-property-value {
+  flex: 1;
+}
+
+.ff-property-value input,
+.ff-property-value select {
+  width: 100%;
+}
+
+/* ========================================
+ * Dropdown/Select
+ * ======================================== */
+
+.ff-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.ff-dropdown-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--flowforge-input-bg);
+  border: 1px solid var(--flowforge-input-border);
+  border-radius: 4px;
+  color: var(--flowforge-text);
+  cursor: pointer;
+}
+
+.ff-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 100%;
+  margin-top: 4px;
+  background-color: var(--flowforge-menu-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 6px;
+  box-shadow: var(--flowforge-shadow-lg);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.ff-dropdown-item {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--flowforge-text);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.ff-dropdown-item:hover {
+  background-color: var(--flowforge-menu-hover);
+}
+
+.ff-dropdown-item.selected {
+  background-color: var(--flowforge-selected-bg);
+  color: var(--flowforge-primary);
+}
+
+/* ========================================
+ * Tooltip
+ * ======================================== */
+
+.ff-tooltip {
+  position: absolute;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  background-color: var(--flowforge-surface-elevated);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 4px;
+  box-shadow: var(--flowforge-shadow-md);
+  color: var(--flowforge-text);
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+/* ========================================
+ * Badge
+ * ======================================== */
+
+.ff-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  background-color: var(--flowforge-surface);
+  color: var(--flowforge-text-secondary);
+}
+
+.ff-badge.primary {
+  background-color: var(--flowforge-primary);
+  color: white;
+}
+
+.ff-badge.success {
+  background-color: var(--flowforge-success);
+  color: white;
+}
+
+.ff-badge.warning {
+  background-color: var(--flowforge-warning);
+  color: black;
+}
+
+.ff-badge.danger {
+  background-color: var(--flowforge-danger);
+  color: white;
+}
+
+/* ========================================
+ * Modal/Dialog
+ * ======================================== */
+
+.ff-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.ff-modal {
+  background-color: var(--flowforge-panel-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 8px;
+  box-shadow: var(--flowforge-shadow-lg);
+  min-width: 400px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.ff-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem;
+  border-bottom: 1px solid var(--flowforge-border);
+}
+
+.ff-modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--flowforge-text-bright);
+}
+
+.ff-modal-close {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--flowforge-text-muted);
+  cursor: pointer;
+}
+
+.ff-modal-close:hover {
+  color: var(--flowforge-text);
+}
+
+.ff-modal-content {
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.ff-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-top: 1px solid var(--flowforge-border);
+}
+
+/* ========================================
+ * Loading Spinner
+ * ======================================== */
+
+.ff-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--flowforge-border);
+  border-top-color: var(--flowforge-primary);
+  border-radius: 50%;
+  animation: ff-spin 0.8s linear infinite;
+}
+
+@keyframes ff-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ========================================
+ * Status Indicator
+ * ======================================== */
+
+.ff-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ff-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--flowforge-text-muted);
+}
+
+.ff-status-dot.success {
+  background-color: var(--flowforge-success);
+}
+
+.ff-status-dot.warning {
+  background-color: var(--flowforge-warning);
+}
+
+.ff-status-dot.danger {
+  background-color: var(--flowforge-danger);
+}
+
+.ff-status-dot.executing {
+  background-color: var(--flowforge-primary);
+  animation: ff-pulse 1s ease-in-out infinite;
+}
+
+@keyframes ff-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ========================================
+ * Reduced Motion
+ * ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .ff-spinner {
+    animation: none;
+    border-top-color: var(--flowforge-primary);
+  }
+
+  .ff-status-dot.executing {
+    animation: none;
+  }
+}

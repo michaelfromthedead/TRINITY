@@ -1,0 +1,248 @@
+"""
+DSP and audio effects subsystem.
+
+Provides filters, dynamics processing, time-based effects,
+reverb, distortion, pitch/time manipulation, and special effects.
+"""
+
+from .config import *
+from .dsp_node import (
+    DSPNode,
+    DSPNodeState,
+    ProcessingMode,
+    BypassMode,
+    SmoothedParameter,
+    PassthroughNode,
+    GainNode,
+    MixNode,
+)
+from .dsp_graph import (
+    ConnectionType,
+    NodeConnection,
+    GraphNode,
+    DSPChain,
+    DSPParallel,
+    DSPGraph,
+    EffectRack,
+)
+from .filters import (
+    FilterType,
+    BiquadCoefficients,
+    BiquadFilter,
+    LowPassFilter,
+    HighPassFilter,
+    BandPassFilter,
+    NotchFilter,
+    AllPassFilter,
+    LowShelfFilter,
+    HighShelfFilter,
+    PeakFilter,
+    EQBand,
+    ParametricEQ,
+    StateVariableFilter,
+    OnePoleFilter,
+    DCBlocker,
+)
+from .dynamics import (
+    DetectionMode,
+    StereoLink,
+    EnvelopeFollower,
+    Compressor,
+    Limiter,
+    Expander,
+    Gate,
+    MultibandCompressor,
+    KeySource,
+    SidechainCompressor,
+)
+from .time_effects import (
+    LFOWaveform,
+    LFO,
+    DelayLine,
+    Delay,
+    MultiTapDelay,
+    Chorus,
+    Flanger,
+    Phaser,
+    Vibrato,
+)
+from .reverb import (
+    ReverbType,
+    ReverbPreset,
+    REVERB_PRESETS,
+    CombFilter,
+    AllPassFilterReverb,
+    Freeverb,
+    PlateReverb,
+    ConvolutionReverb,
+    SimpleReverb,
+)
+from .distortion import (
+    DistortionType,
+    DistortionSettings,
+    Distortion,
+    HardClipper,
+    SoftClipper,
+    Bitcrusher,
+    TubeSaturator,
+    TapeSaturator,
+    Waveshaper,
+    Foldback,
+)
+from .pitch_time import (
+    PitchShiftAlgorithm,
+    TimeStretchAlgorithm,
+    PitchShiftSettings,
+    TimeStretchSettings,
+    PitchShifter,
+    TimeStretcher,
+    PitchTimeProcessor,
+    SimplePitchShifter,
+)
+from .special_fx import (
+    SpecialEffectType,
+    RadioSettings,
+    UnderwaterSettings,
+    SlowMotionSettings,
+    ExplosionSettings,
+    RadioEffect,
+    UnderwaterEffect,
+    SlowMotionEffect,
+    ExplosionEffect,
+    MuffledEffect,
+    PhoneEffect,
+    MegaphoneEffect,
+    CaveEffect,
+    create_special_effect,
+)
+
+# Aliases for backward compatibility
+Reverb = Freeverb
+FilterSettings = BiquadCoefficients
+CompressorSettings = None  # Compressor uses inline parameters
+LimiterSettings = None
+GateSettings = None
+DelaySettings = None
+ModulationSettings = None
+ReverbSettings = ReverbPreset
+ShelfFilter = LowShelfFilter
+
+__all__ = [
+    # Config utilities
+    "DEFAULT_SAMPLE_RATE",
+    "BLOCK_SIZE",
+    "ms_to_samples",
+    "samples_to_ms",
+    "db_to_linear",
+    "linear_to_db",
+    "semitones_to_ratio",
+    "ratio_to_semitones",
+    # Core
+    "DSPNode",
+    "DSPNodeState",
+    "ProcessingMode",
+    "BypassMode",
+    "SmoothedParameter",
+    "PassthroughNode",
+    "GainNode",
+    "MixNode",
+    "ConnectionType",
+    "NodeConnection",
+    "GraphNode",
+    "DSPChain",
+    "DSPParallel",
+    "DSPGraph",
+    "EffectRack",
+    # Filters
+    "FilterType",
+    "BiquadCoefficients",
+    "BiquadFilter",
+    "LowPassFilter",
+    "HighPassFilter",
+    "BandPassFilter",
+    "NotchFilter",
+    "AllPassFilter",
+    "LowShelfFilter",
+    "HighShelfFilter",
+    "PeakFilter",
+    "EQBand",
+    "ParametricEQ",
+    "StateVariableFilter",
+    "OnePoleFilter",
+    "DCBlocker",
+    "ShelfFilter",
+    "FilterSettings",
+    # Dynamics
+    "DetectionMode",
+    "StereoLink",
+    "EnvelopeFollower",
+    "Compressor",
+    "Limiter",
+    "Expander",
+    "Gate",
+    "MultibandCompressor",
+    "KeySource",
+    "SidechainCompressor",
+    "CompressorSettings",
+    "LimiterSettings",
+    "GateSettings",
+    # Time effects
+    "LFOWaveform",
+    "LFO",
+    "DelayLine",
+    "Delay",
+    "MultiTapDelay",
+    "Chorus",
+    "Flanger",
+    "Phaser",
+    "Vibrato",
+    "DelaySettings",
+    "ModulationSettings",
+    # Reverb
+    "ReverbType",
+    "ReverbPreset",
+    "ReverbSettings",
+    "REVERB_PRESETS",
+    "CombFilter",
+    "AllPassFilterReverb",
+    "Freeverb",
+    "PlateReverb",
+    "ConvolutionReverb",
+    "SimpleReverb",
+    "Reverb",
+    # Distortion
+    "DistortionType",
+    "DistortionSettings",
+    "Distortion",
+    "HardClipper",
+    "SoftClipper",
+    "Bitcrusher",
+    "TubeSaturator",
+    "TapeSaturator",
+    "Waveshaper",
+    "Foldback",
+    # Pitch/Time
+    "PitchShiftAlgorithm",
+    "TimeStretchAlgorithm",
+    "PitchShiftSettings",
+    "TimeStretchSettings",
+    "PitchShifter",
+    "TimeStretcher",
+    "PitchTimeProcessor",
+    "SimplePitchShifter",
+    # Special FX
+    "SpecialEffectType",
+    "RadioSettings",
+    "UnderwaterSettings",
+    "SlowMotionSettings",
+    "ExplosionSettings",
+    "RadioEffect",
+    "UnderwaterEffect",
+    "SlowMotionEffect",
+    "ExplosionEffect",
+    "MuffledEffect",
+    "PhoneEffect",
+    "MegaphoneEffect",
+    "CaveEffect",
+    "create_special_effect",
+]

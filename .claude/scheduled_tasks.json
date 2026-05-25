@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "sdlc-starter",
+      "cron": "17 */1 * * *",
+      "prompt": "SDLC STARTER — Check for work\n\n1. Read workflows/SDLC/FOLDER_TODO_TRACKER.json\n2. If current_directory is set: Report \"IN PROGRESS: <name>\" and stop\n3. If no current_directory:\n   - Find first PENDING directory\n   - Set it to IN_PROGRESS\n   - Set current_directory, current_phase=1, current_task=null\n   - Update tracker\n   - Report: \"STARTED: <name>. Phases: N. Progress: X/35.\"\n4. If no PENDING directories: Report \"ALL COMPLETE: 35/35\"",
+      "recurring": true,
+      "description": "Pick next pending SDLC directory"
+    },
+    {
+      "id": "sdlc-progressor",
+      "cron": "*/7 * * * *",
+      "prompt": "SDLC PROGRESSOR — Execute next task\n\n**CRITICAL: Python 3.13 Required** — Use `uv run python` for ALL Python commands.\n\n1. Read workflows/SDLC/FOLDER_TODO_TRACKER.json\n2. If current_directory is null: Report \"NO WORK. Waiting for Starter.\" and stop\n3. If current_directory is set:\n   a. Read docs/INVESTIGATION_PHASE_X_OUTPUT_CORRECTED/<current_directory>/PHASE_<N>_TODO.md\n   b. Find next pending task\n   c. Execute ONE task:\n      - DEV: Implement the code\n      - TEST: Run tests with `uv run python -m pytest <path> -v`\n      - QA: Syntax check with `uv run python -m py_compile <file>`\n   d. Update FOLDER_TODO_TRACKER.json:\n      - Increment tasks_done\n      - If phase complete: increment phases_done, advance current_phase\n      - If all phases complete: set status=DONE, clear current_directory\n   e. Report: \"TASK: <name>. Phase: X/Y. Directory: <name>. Overall: Z/35.\"\n\nReference: workflows/SDLC/DIRECTORY_SDLC_PROMPT.md for full instructions.",
+      "recurring": true,
+      "description": "Execute next task in current SDLC directory"
+    }
+  ]
+}

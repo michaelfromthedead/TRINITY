@@ -1,0 +1,386 @@
+{
+  "version": "1.0.0",
+  "name": "BOOK_PRODUCTION",
+  "description": "Swarm production workflow. The most mechanical workflow in the BOOK family. Takes a polished manuscript and produces an automation-ready intermediate — a structured set of files and a BOOK_SPEC.json configuration that a mechanical pipeline (not AI) consumes to produce the final print-ready output (e.g., Lulu.com PDF). The AI's job is validation and metadata generation, NOT typesetting or PDF production. Triggered by the phrase 'BOOK_PRODUCTION'. Owner: Michael. Orchestrator: QUEEN.",
+
+  "trigger": {
+    "phrase": "BOOK_PRODUCTION",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/SHARED/WORKER_PROTOCOL.md",
+      "QUEEN reads workflows/SHARED/WORKER.md",
+      "QUEEN reads BOOK_MANIFEST.json from project root (especially the production section)",
+      "QUEEN reads LULU_SPEC (or appropriate target spec) from infrastructure",
+      "QUEEN verifies polished chapter files exist in chapters/",
+      "QUEEN verifies STRUCTURE.md exists",
+      "QUEEN reports: 'BOOK_PRODUCTION mode engaged. Target: [format]. Ready.'",
+      "QUEEN proceeds to spawn FORMATTER"
+    ]
+  },
+
+  "relationship_to_book_family": {
+    "position": "stage_4_final",
+    "upstream": "BOOK_EDITORIAL (produces polished chapter files)",
+    "downstream": "LULU_PIPELINE or other mechanical automation (not a BOOK workflow — a build script)",
+    "contract": "BOOK_PRODUCTION produces BOOK_SPEC.json + front matter + back matter + validated chapter files. The mechanical pipeline reads these and produces the final print-ready artifact.",
+    "prerequisites": {
+      "required_files": [
+        "BOOK_MANIFEST.json with production section filled (trim_size, color_interior, target_format)",
+        "STRUCTURE.md",
+        "chapters/CH_<NN>_<TITLE>.md (polished, from BOOK_EDITORIAL)",
+        "LULU_SPEC or target format spec (infrastructure document)"
+      ]
+    }
+  },
+
+  "design_rationale": {
+    "ai_does_not_produce_pdfs": "The AI validates, generates metadata, and produces supporting files (front/back matter). Mechanical typesetting (LaTeX, Typst, WeasyPrint, or similar) is a deterministic build step that does not benefit from AI judgment. Separation ensures reproducibility and keeps the AI focused on decisions that require intelligence.",
+    "book_spec_as_contract": "BOOK_SPEC.json is the contract between the AI workflow and the mechanical pipeline. It fully specifies every physical parameter of the book. The mechanical pipeline reads the spec and produces output — no ambiguity, no judgment calls.",
+    "front_back_matter_generation": "Front and back matter (title page, copyright, TOC, bibliography, index, etc.) are generated or validated by the AI because they require content-level decisions (what to include, how to order, what text to use). The mechanical pipeline only handles their typesetting."
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation. Spawns FORMATTER, manages QA, executes verdicts.",
+      "responsibilities": [
+        "verify prerequisites (polished chapters, manifest, target spec)",
+        "load target format spec (LULU_SPEC or other)",
+        "spawn FORMATTER with full context",
+        "spawn QA_PRODUCTION after FORMATTER completes",
+        "execute verdict (GREEN_LIGHT, FIX, ESCALATE)",
+        "fix_counter tracking",
+        "INPROGRESS.md progress logging"
+      ]
+    },
+    "FORMATTER": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_FORMATTER.md",
+      "context_access": "full",
+      "description": "Constructive worker. Validates the polished manuscript, generates front and back matter, and produces BOOK_SPEC.json — the complete physical specification for the mechanical pipeline.",
+      "inputs": [
+        "all chapter files (chapters/CH_<NN>_<TITLE>.md)",
+        "STRUCTURE.md",
+        "BOOK_MANIFEST.json (production section + structure section)",
+        "LULU_SPEC or target format specification"
+      ],
+      "produces": [
+        "BOOK_SPEC.json (complete physical specification)",
+        "front/ directory with front matter files",
+        "back/ directory with back matter files",
+        "validation report (any issues found in manuscript files)"
+      ],
+      "responsibilities": {
+        "manuscript_validation": [
+          "all chapters present and accounted for (match STRUCTURE.md)",
+          "no placeholder text remaining (no TODO, FIXME, TBD, [INSERT], etc.)",
+          "no incomplete sections (sections with headers but no content)",
+          "consistent heading levels across all chapters",
+          "well-formed markup (no broken markdown/LaTeX)"
+        ],
+        "front_matter_generation": {
+          "always_generated": ["title_page", "copyright_page", "toc"],
+          "conditional": ["dedication", "preface", "foreword", "acknowledgments", "epigraph"],
+          "generation_rule": "generate files listed in BOOK_MANIFEST.json structure.front_matter. If a front matter file already exists in front/, validate it rather than regenerating.",
+          "title_page_content": "title, subtitle (if any), author name — derived from BOOK_MANIFEST.json",
+          "copyright_page_content": "copyright notice, year, author, rights statement, ISBN (if in manifest), edition info",
+          "toc_content": "generated from STRUCTURE.md — chapter titles and section headings with placeholder page numbers (mechanical pipeline fills real page numbers)"
+        },
+        "back_matter_generation": {
+          "conditional": ["bibliography", "index", "glossary", "appendices", "about_author", "colophon"],
+          "generation_rule": "generate files listed in BOOK_MANIFEST.json structure.back_matter. If a back matter file already exists in back/, validate it rather than regenerating.",
+          "bibliography_note": "if bibliography declared, FORMATTER collects all citations from chapter files and produces a formatted bibliography. If no citation system is used, FORMATTER flags this as a finding.",
+          "index_note": "index generation is a significant task. FORMATTER produces a preliminary index by extracting key terms from chapters. The human should review and refine.",
+          "glossary_note": "if glossary declared, FORMATTER extracts defined terms from chapters and produces a glossary. Human review expected."
+        },
+        "book_spec_generation": {
+          "description": "BOOK_SPEC.json fully specifies the physical book. All values must be valid against the target format spec (LULU_SPEC).",
+          "calculated_fields": [
+            "spine_width: calculated from page count × paper thickness per page (from target spec)",
+            "gutter: derived from trim size (from target spec tables)",
+            "page_count_estimate: derived from word count + figure count + front/back matter pages"
+          ],
+          "human_specified_fields": [
+            "trim_size: from BOOK_MANIFEST.json production.trim_size",
+            "color_interior: from BOOK_MANIFEST.json production.color_interior",
+            "fonts: from production template or defaults per target spec"
+          ]
+        }
+      },
+      "does_not_do": [
+        "modify chapter prose (chapter content is immutable at this stage)",
+        "produce PDFs or any typeset output",
+        "make aesthetic decisions not specified by manifest or templates",
+        "typeset or paginate (that's the mechanical pipeline's job)"
+      ],
+      "triggered_by": ["QUEEN after prerequisite verification", "QUEEN during FIX cycle"]
+    },
+    "QA_PRODUCTION": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_QA_PRODUCTION.md",
+      "context_access": "full",
+      "stance": "adversarial — completeness and spec-compliance checker",
+      "description": "Validates the FORMATTER's output against the target format spec and completeness requirements.",
+      "inputs": [
+        "BOOK_SPEC.json",
+        "all chapter files",
+        "front/ directory",
+        "back/ directory",
+        "STRUCTURE.md",
+        "BOOK_MANIFEST.json",
+        "LULU_SPEC or target format spec"
+      ],
+      "produces": [
+        "production QA report: issues found, categorized",
+        "verdict recommendation to QUEEN"
+      ],
+      "checks": {
+        "file_integrity": [
+          "all files in BOOK_SPEC.json file_manifest actually exist",
+          "file ordering in manifest matches STRUCTURE.md",
+          "no extra files in chapters/front/back that aren't in the manifest"
+        ],
+        "spec_compliance": [
+          "trim_size is a supported size in target spec",
+          "margins within target spec bounds for declared trim size",
+          "spine_width correctly calculated (page_count × thickness, verify formula)",
+          "bleed values match target spec requirements",
+          "PDF standard declaration is valid for target"
+        ],
+        "content_completeness": [
+          "all front matter files declared in BOOK_MANIFEST exist and have content",
+          "all back matter files declared in BOOK_MANIFEST exist and have content",
+          "no placeholder text in any file (TODO, FIXME, TBD, [INSERT], etc.)",
+          "no incomplete sections (headers without content)",
+          "TOC entries match actual chapter/section structure"
+        ],
+        "structural_consistency": [
+          "chapter heading levels consistent across all files",
+          "markup well-formed in all files",
+          "cross-references valid (if any)",
+          "figure/table/equation numbering sequential and correct (if applicable)"
+        ]
+      },
+      "triggered_by": ["QUEEN after FORMATTER completes"]
+    }
+  },
+
+  "book_spec_schema": {
+    "description": "Schema for BOOK_SPEC.json — the contract between AI workflow and mechanical pipeline",
+    "fields": {
+      "title": "string",
+      "subtitle": "string or null",
+      "author": "string",
+      "isbn": "string or null (if known)",
+      "edition": "string or null",
+
+      "trim_size": {
+        "width_inches": "number",
+        "height_inches": "number",
+        "name": "string — human-readable (e.g., 'US Trade 6x9')"
+      },
+
+      "margins": {
+        "top_inches": "number",
+        "bottom_inches": "number",
+        "inside_inches": "number (gutter side)",
+        "outside_inches": "number"
+      },
+
+      "bleed_inches": "number (per target spec, typically 0.125 for Lulu)",
+      "gutter_inches": "number (calculated from trim size)",
+      "spine_width_inches": "number (calculated from page count × paper thickness)",
+
+      "page_count_estimate": "integer (calculated from content)",
+      "word_count": "integer (actual count from chapters)",
+
+      "fonts": {
+        "body": { "family": "string", "size_pt": "number", "line_height": "number" },
+        "heading_1": { "family": "string", "size_pt": "number" },
+        "heading_2": { "family": "string", "size_pt": "number" },
+        "heading_3": { "family": "string", "size_pt": "number" },
+        "caption": { "family": "string", "size_pt": "number" },
+        "footnote": { "family": "string", "size_pt": "number" }
+      },
+
+      "page_numbering": {
+        "front_matter": "roman_lowercase | roman_uppercase | arabic | none",
+        "body": "arabic",
+        "back_matter": "arabic_continued | arabic_restart | none",
+        "start_page": "recto | verso"
+      },
+
+      "chapter_breaks": "recto | next_page | same_page",
+
+      "headers_footers": {
+        "odd_header": "string pattern (e.g., '{chapter_title}')",
+        "even_header": "string pattern (e.g., '{book_title}')",
+        "odd_footer": "string pattern (e.g., '{page_number}')",
+        "even_footer": "string pattern (e.g., '{page_number}')",
+        "first_page_of_chapter": "suppress_header | show_header"
+      },
+
+      "color_interior": "boolean",
+
+      "pdf_standard": "PDF/X-1a:2001 | PDF/X-3:2002 | PDF/A-1b | other",
+
+      "cover": {
+        "type": "hardcover | paperback",
+        "finish": "matte | glossy",
+        "cover_file": "string path or null (if cover handled separately)"
+      },
+
+      "file_manifest": [
+        {
+          "type": "front_matter | chapter | back_matter",
+          "file": "string — relative path",
+          "title": "string — display title",
+          "order": "integer — sequential position in book"
+        }
+      ],
+
+      "special_elements": {
+        "equations": "boolean",
+        "figures": "boolean",
+        "tables": "boolean",
+        "code_listings": "boolean",
+        "footnotes": "boolean",
+        "endnotes": "boolean",
+        "margin_notes": "boolean"
+      },
+
+      "target_pipeline": "lulu | other",
+      "target_spec_version": "string — version of LULU_SPEC or target spec used"
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify BOOK_MANIFEST.json exists with production section filled",
+        "verify polished chapter files exist in chapters/",
+        "verify STRUCTURE.md exists",
+        "load LULU_SPEC (or target format spec) from infrastructure",
+        "if target spec not found: report missing spec, ESCALATE",
+        "initialize INPROGRESS.md entry for BOOK_PRODUCTION engagement"
+      ]
+    },
+    "formatting": {
+      "performer": "QUEEN spawns FORMATTER",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN assembles context packet: all chapter files + STRUCTURE.md + BOOK_MANIFEST.json + LULU_SPEC + WORKER_FORMATTER.md + WORKER_PROTOCOL.md",
+        "QUEEN spawns FORMATTER",
+        "FORMATTER returns: BOOK_SPEC.json + front/ files + back/ files + validation report",
+        "QUEEN writes FORMATTER report to INPROGRESS.md",
+        "QUEEN proceeds to QA"
+      ]
+    },
+    "qa": {
+      "performer": "QUEEN spawns QA_PRODUCTION",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN spawns QA_PRODUCTION with: BOOK_SPEC.json + all files + STRUCTURE.md + BOOK_MANIFEST.json + LULU_SPEC",
+        "QA_PRODUCTION returns: QA report + verdict recommendation",
+        "QUEEN evaluates QA results → determines verdict"
+      ]
+    },
+    "fix_cycle": {
+      "performer": "QUEEN re-spawns FORMATTER",
+      "type": "loop",
+      "actions": [
+        "QUEEN writes FIX marker to INPROGRESS.md with QA findings",
+        "QUEEN re-spawns FORMATTER with: QA findings as correction directive + all prior context",
+        "FORMATTER addresses flagged issues (regenerate front/back matter, fix BOOK_SPEC values, etc.)",
+        "QUEEN re-spawns QA_PRODUCTION (full re-check)",
+        "fix_counter++"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: verify prerequisites, load target spec",
+      "FORMATTING: FORMATTER validates manuscript, generates front/back matter, produces BOOK_SPEC.json",
+      "QA: QA_PRODUCTION validates output against target spec and completeness",
+      "QUEEN executes verdict",
+      "if FIX: FORMATTER re-spawned → full QA re-run (loop)"
+    ]
+  },
+
+  "verdicts": {
+    "GREEN_LIGHT": {
+      "trigger": "QA_PRODUCTION finds no issues",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "output files finalized: BOOK_SPEC.json, front/, back/, chapters/ (validated)",
+        "QUEEN commits all output to project root",
+        "QUEEN reports: 'BOOK_PRODUCTION complete. Automation-ready output in project root. Run LULU_PIPELINE (or target pipeline) to produce print-ready output.'"
+      ]
+    },
+    "FIX": {
+      "trigger": "QA_PRODUCTION finds fixable issues (missing front matter, incorrect calculations, spec violations, formatting inconsistencies)",
+      "terminal": false,
+      "next": "fix_cycle",
+      "loop_guard": "fix_counter; at 3, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "fix_counter >= 3 OR QA finds issues requiring human judgment OR target spec missing OR manuscript has prose-level issues that should have been caught in BOOK_EDITORIAL",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md",
+        "QUEEN pauses worker spawning",
+        "QUEEN reports to human: what's blocked, whether the issue is production-level or needs return to BOOK_EDITORIAL",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human resolves; QUEEN resumes or directs return to appropriate upstream workflow",
+      "escalation_note": "if QA finds prose-level issues (placeholder text, incomplete sections), this means BOOK_EDITORIAL missed them. ESCALATE with recommendation to return to BOOK_EDITORIAL rather than fixing prose in BOOK_PRODUCTION."
+    }
+  },
+
+  "loop_limits": {
+    "fix_cycles": 3,
+    "counter_semantics": {
+      "fix_counter": "increments on each FIX cycle. At 3, auto-escalate."
+    }
+  },
+
+  "context_access": {
+    "full_access_roles": ["QUEEN", "FORMATTER", "QA_PRODUCTION"],
+    "note": "no cleanroom roles — all workers need full visibility"
+  },
+
+  "hard_rules": {
+    "formatter_does_not_modify_chapter_prose": true,
+    "book_spec_must_be_valid_against_target_spec": true,
+    "every_file_in_manifest_must_exist": true,
+    "spine_width_is_calculated_not_estimated": true,
+    "pdf_standard_is_declared_not_verified": true,
+    "no_chapter_content_modification_at_this_stage": true,
+    "prose_issues_found_here_escalate_to_editorial": true,
+    "front_back_matter_validated_not_regenerated_if_exists": true,
+    "inprogress_prepend_only": true,
+    "no_fabricated_measurements": true,
+    "toc_generated_from_structure_md": true
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "formatter": "workflows/BOOK/WORKER_FORMATTER.md",
+    "qa_production": "workflows/BOOK/WORKER_QA_PRODUCTION.md"
+  },
+
+  "notes": {
+    "mechanical_pipeline_note": "BOOK_PRODUCTION's output feeds a mechanical pipeline (LULU_PIPELINE or equivalent). The mechanical pipeline is a build script — it reads BOOK_SPEC.json + file manifest and produces the final print-ready artifact. It is NOT an AI workflow. It is deterministic software.",
+    "no_prose_modification_note": "At this stage, chapter content is immutable. FORMATTER validates but does not modify prose. If prose issues are found, the correct action is ESCALATE with recommendation to return to BOOK_EDITORIAL.",
+    "cover_note": "Cover design/generation is outside the scope of BOOK_PRODUCTION. BOOK_SPEC.json has a cover section for specifying cover parameters, but cover file generation is a separate process. FORMATTER sets cover.cover_file to null if no cover file exists.",
+    "lulu_spec_note": "LULU_SPEC is an infrastructure document capturing Lulu.com's current print requirements. It must be researched and maintained separately. BOOK_PRODUCTION reads it but does not modify it. If LULU_SPEC is outdated or missing, QUEEN escalates.",
+    "page_count_note": "Page count is estimated from word count + figure count + front/back matter, using per-page word density from the target spec. This is an estimate — the mechanical pipeline calculates the actual page count during typesetting. Spine width is calculated from the estimated page count and may need adjustment after typesetting."
+  }
+}

@@ -1,0 +1,320 @@
+{
+  "version": "1.0.0",
+  "name": "SDLC_WORKFLOW",
+  "description": "Swarm software development lifecycle workflow for JARVIS project. Strict 2-TEST / 3-QA / 4-branch pattern for task-scoped work units. Triggered by the phrase 'SDLC_WORKFLOW'. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrase": "SDLC_WORKFLOW",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads WORKER_QUEEN.md",
+      "QUEEN reports: 'SDLC_WORKFLOW mode engaged. Ready. Direct me to a task.'",
+      "QUEEN waits for explicit task designation before any worker is spawned"
+    ],
+    "task_spawn_requires": "explicit human direction specifying a TASK_ID from the active TODO"
+  },
+
+  "document_conventions": {
+    "phase_arch_pattern": "PHASE_<N>_<NAME>_ARCH.md",
+    "phase_todo_pattern": "PHASE_<N>_<NAME>_TODO.md",
+    "examples": [
+      "PHASE_1_STRIP_ROCM_ARCH.md",
+      "PHASE_1_STRIP_ROCM_TODO.md",
+      "PHASE_2_DEEPSEEKSTYLE_ARCH.md"
+    ],
+    "arch_update_mode": "changelog_prepend_only",
+    "arch_update_detail": "ARCH_DEV output is a dated changelog block prepended to the top of the relevant PHASE_<N>_<NAME>_ARCH.md file. The body of the ARCH doc is immutable — historical decisions stay readable in context. Changelog blocks accumulate at the top in reverse chronological order.",
+    "inprogress_model": "dual_file_upsert",
+    "inprogress_branch_file": "INPROGRESS.md (on task branch — verbose per-worker log of current task)",
+    "inprogress_main_file": "INPROGRESS.md (on main — CHANGELOG-style history of all completed tasks)",
+    "inprogress_update_mode": "prepend_only_except_checkboxes",
+    "inprogress_update_detail": "All new entries prepended as dated blocks. Only exception: checkboxes in existing blocks may be toggled in place. No deletions, no rewrites. History is permanent.",
+    "inprogress_merge_semantics": "UPSERT. On GREEN_LIGHT merge to main, the branch's INPROGRESS content is prepended to main's INPROGRESS. Main's prior entries are preserved verbatim. No line-by-line git merge of INPROGRESS — QUEEN performs the semantic upsert.",
+    "todo_update_mode": "checkboxes_toggle_only",
+    "todo_update_detail": "On task completion, QUEEN toggles the task's checkbox(es) from [ ] to [x] in the relevant PHASE_<N>_<NAME>_TODO.md. No other edits."
+  },
+
+  "branch_conventions": {
+    "task_branch": "task/<TASK_ID>",
+    "task_branch_example": "task/T-G1.0.1",
+    "attempt_preservation": "task/<TASK_ID>-attempt-<N>",
+    "rewrite_cleanup_sequence": [
+      "git branch -m task/<TASK_ID> task/<TASK_ID>-attempt-<N>",
+      "git checkout main",
+      "ARCH_FLOW runs on main",
+      "on ARCH GREEN_LIGHT: squash ARCH changelog commit to main",
+      "git checkout -b task/<TASK_ID> (fresh, from updated main)"
+    ],
+    "merge_strategy": "squash_on_greenlight",
+    "merge_commit_message_pattern": "T-<TASK_ID>: <one-line summary>\\n\\n<summary body>\\n\\nCo-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>",
+    "post_merge_cleanup": "git branch -D task/<TASK_ID> (current deleted; attempt branches preserved indefinitely)"
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation when SDLC_WORKFLOW is active. Runs automation, spawns workers, writes INPROGRESS, enforces loop limits, decides branches only when verdict is ambiguous (trusts SENIOR_QA_FINAL's explicit verdict otherwise).",
+      "responsibilities": [
+        "prestep automation (branch creation, INPROGRESS init, context assembly, prerequisite verification)",
+        "worker spawning with role-specific context packets",
+        "INPROGRESS writing (branch file during task; main upsert on GREEN_LIGHT)",
+        "TODO checkbox updates on GREEN_LIGHT",
+        "loop counter tracking (qa_cycles, rewrite_attempts)",
+        "branch outcome execution (NOT decision — trusts SENIOR_QA_FINAL verdict)",
+        "escalation to human on loop limits or explicit ESCALATE verdict"
+      ],
+      "verdict_authority": "QUEEN does NOT override SENIOR_QA_FINAL verdicts. If SENIOR_QA_FINAL says GREEN_LIGHT, QUEEN proceeds to merge without re-checking. If FIX, QUEEN spawns fix cycle. Etc."
+    },
+    "DEV": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_DEV.md",
+      "context_access": "full",
+      "produces": ["code only"],
+      "never_produces": ["tests"],
+      "reusable_in_fix_cycle": true,
+      "fix_cycle_behavior": "re-reviews own code with QA findings as input; patches if needed, or confirms code was correct if QA was overzealous but already-filtered issues remain",
+      "triggered_by": ["prestep (fresh task)", "FIX branch (re-review own code)"]
+    },
+    "TESTDEV_WHITEBOX": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_TESTDEV_WHITEBOX.md",
+      "context_access": "full",
+      "description": "Whitebox test author. Sees implementation, writes tests that exercise internals — code paths, edge cases in data flow, branch conditions, off-by-ones in loops.",
+      "produces": ["whitebox test suite, with perf assertions where appropriate"],
+      "part_of_unit": "TEST_UNIT",
+      "triggered_by": ["after DEV completes", "FIX branch (may revise its own tests if they were wrong)"]
+    },
+    "TESTDEV_BLACKBOX": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_TESTDEV_BLACKBOX.md",
+      "context_access": "cleanroom",
+      "description": "Blackbox test author. Deliberately blind to implementation. Tests only the public contract — inputs, outputs, acceptance criteria. Independent mental model is the whole point.",
+      "can_read": [
+        "task TODO entry (description, acceptance criterion)",
+        "relevant PHASE_<N>_<NAME>_ARCH.md contract-level sections",
+        "public API signatures as declared in TODO or ARCH",
+        "prior BLACKBOX test output (for debugging its own tests)"
+      ],
+      "cannot_read": [
+        "DEV's implementation source files",
+        "WHITEBOX test file",
+        "prior QA reports on this task",
+        "INPROGRESS entries written by DEV or TESTDEV_WHITEBOX",
+        "any file flagged 'implementation' in the context packet"
+      ],
+      "enforcement": "prompt-based discipline only. QUEEN explicitly names forbidden files in worker prompt. QA_UNIT audits BLACKBOX test output for visibility leaks (telltales: tests encoding internal-specific shapes, identical assertion style to whitebox, knowledge of internal algorithm steps).",
+      "produces": ["blackbox test suite, with perf assertions where appropriate"],
+      "part_of_unit": "TEST_UNIT",
+      "triggered_by": ["after DEV completes", "FIX branch"]
+    },
+    "JUNIOR_QA": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_QA_JUNIOR.md",
+      "context_access": "full",
+      "stance": "hypercritical, adversarial, high-recall — bias strongly toward flagging",
+      "description": "First adversarial filter. Designed to find issues, not to judge severity. Over-flagging is by design; SENIOR_QA_SANITY filters false positives.",
+      "reviews": ["DEV code", "WHITEBOX test", "BLACKBOX test", "perf assertions", "blackbox visibility (did BLACKBOX leak?)"],
+      "produces": ["findings list with severity labels (Critical/High/Medium/Low) per WORKER_QA_JUNIOR.md rubric"],
+      "part_of_unit": "QA_UNIT",
+      "sequence_position": 1
+    },
+    "SENIOR_QA_SANITY": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_QA_SENIOR_SANITY.md",
+      "context_access": "full",
+      "stance": "judicial — filters junior's findings",
+      "description": "Reviews JUNIOR_QA's findings against the TODO and ARCH. Marks each finding 'real' (valid issue, must address) or 'overzealous' (false positive, drop) with rationale. Does not produce new findings — only rules on junior's.",
+      "reviews": ["JUNIOR_QA findings list", "task TODO", "PHASE_<N>_<NAME>_ARCH.md"],
+      "produces": ["filtered findings: each marked real|overzealous with 1-line rationale"],
+      "part_of_unit": "QA_UNIT",
+      "sequence_position": 2
+    },
+    "SENIOR_QA_FINAL": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_QA_SENIOR_FINAL.md",
+      "context_access": "full",
+      "stance": "independent final pass — may surface new findings junior missed, especially architectural/scope issues",
+      "description": "Last word on the task. Reviews everything: DEV code, both tests, perf, filtered findings from SANITY. Emits the branch verdict directly.",
+      "reviews": ["DEV code", "both tests", "perf", "SENIOR_QA_SANITY filtered findings", "task TODO", "relevant PHASE_<N>_<NAME>_ARCH.md"],
+      "produces": [
+        "final branch verdict: GREEN_LIGHT | FIX | REWRITE | ESCALATE",
+        "verdict rationale",
+        "if FIX: consolidated actionable findings for DEV/TEST_UNIT re-entry",
+        "if REWRITE: architectural critique for ARCH_DEV",
+        "if ESCALATE: blocker description for human"
+      ],
+      "part_of_unit": "QA_UNIT",
+      "sequence_position": 3,
+      "authority": "QUEEN trusts this verdict; does not override"
+    },
+    "ARCH_DEV": {
+      "type": "worker",
+      "doc": "workflows/SDLC/WORKER_ARCH_DEV.md",
+      "context_access": "full",
+      "triggered_by": "REWRITE branch only",
+      "description": "Amends the architecture when a REWRITE is triggered. Does NOT edit the existing ARCH doc body. Produces a changelog block prepended to the top of the relevant PHASE_<N>_<NAME>_ARCH.md.",
+      "produces": ["dated changelog block prepended to PHASE_<N>_<NAME>_ARCH.md with amendment description and rationale"],
+      "reviewed_by": "QA_UNIT (same JUNIOR_QA / SENIOR_QA_SANITY / SENIOR_QA_FINAL roles, arch-context prompt)",
+      "reusable_in_fix_cycle": true
+    }
+  },
+
+  "units": {
+    "TEST_UNIT": {
+      "workers": ["TESTDEV_WHITEBOX", "TESTDEV_BLACKBOX"],
+      "execution": "parallel",
+      "atomic": true,
+      "description": "Both tests produced before QA_UNIT engages. Cannot ship with only one. If either fails to produce, the unit has failed and task is BLOCKED."
+    },
+    "QA_UNIT": {
+      "workers": ["JUNIOR_QA", "SENIOR_QA_SANITY", "SENIOR_QA_FINAL"],
+      "execution": "sequential",
+      "atomic": true,
+      "context_chain": "each step receives previous step's output plus the shared task context",
+      "description": "Every branch verdict (GREEN_LIGHT, FIX, REWRITE, ESCALATE) comes from a full QA_UNIT. No shortcuts, no skipping, no re-using prior QA output. Every loop-back re-enters a fresh QA_UNIT."
+    },
+    "ARCH_FLOW": {
+      "sequence": ["ARCH_DEV", "QA_UNIT"],
+      "description": "Architecture amendment with its own review. Runs on main (not on task branch), because the updated ARCH must be on main before the fresh task branch gets created."
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify prerequisites: read prior task checkboxes in PHASE_<N>_<NAME>_TODO.md; refuse to start if prereqs not [x]",
+        "create task branch: git checkout -b task/<TASK_ID> (from main)",
+        "initialize branch INPROGRESS.md: prepend a new dated block with TASK_ID, link to TODO entry, empty sub-logs for each upcoming worker phase",
+        "assemble context packet: task TODO entry + relevant ARCH sections + WORKER_<role>.md + WORKER_PROTOCOL.md + prior worker outputs (for QA / FIX cycles)",
+        "spawn first worker (DEV)"
+      ]
+    },
+    "main_sequence": [
+      "DEV produces code; QUEEN appends DEV report to branch INPROGRESS",
+      "TEST_UNIT runs (WHITEBOX || BLACKBOX); QUEEN appends both TESTDEV reports to branch INPROGRESS",
+      "QA_UNIT runs (JUNIOR → SANITY → FINAL); QUEEN appends each QA report to branch INPROGRESS",
+      "QUEEN executes branch_outcome based on SENIOR_QA_FINAL verdict"
+    ],
+    "fix_cycle": [
+      "QUEEN prepends FIX findings block to branch INPROGRESS",
+      "DEV re-spawned with QA findings as input; may patch code or confirm code was correct",
+      "TEST_UNIT re-spawned; may revise own tests or confirm tests were correct",
+      "QA_UNIT re-spawned in full (3 passes)",
+      "qa_cycle_counter++",
+      "if qa_cycle_counter == 3 and not GREEN_LIGHT: ESCALATE"
+    ],
+    "rewrite_cycle": [
+      "QUEEN prepends REWRITE marker to branch INPROGRESS with SENIOR_QA_FINAL rationale",
+      "git branch -m task/<TASK_ID> task/<TASK_ID>-attempt-<N>",
+      "git checkout main",
+      "ARCH_FLOW spawned (ARCH_DEV → QA_UNIT on the ARCH change)",
+      "on ARCH GREEN_LIGHT: squash ARCH changelog commit to main",
+      "git checkout -b task/<TASK_ID> (fresh, from updated main)",
+      "reset qa_cycle_counter to 0",
+      "rewrite_counter++",
+      "re-enter main_sequence from prestep",
+      "if rewrite_counter == 2 and not GREEN_LIGHT on next attempt: ESCALATE"
+    ]
+  },
+
+  "branch_outcomes": {
+    "GREEN_LIGHT": {
+      "trigger": "SENIOR_QA_FINAL verdict: no blocking findings",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes task completion summary",
+        "QUEEN performs INPROGRESS upsert: prepend branch INPROGRESS content into main INPROGRESS (no delete, no edit, additive history)",
+        "QUEEN toggles TODO checkboxes: [ ] → [x] for completed task in PHASE_<N>_<NAME>_TODO.md",
+        "git merge --squash task/<TASK_ID> onto main with clean commit message",
+        "git branch -D task/<TASK_ID> (preserve -attempt-N branches, delete current)",
+        "QUEEN reports completion and awaits next task"
+      ]
+    },
+    "FIX": {
+      "trigger": "SENIOR_QA_FINAL verdict: fixable issues in code, tests, or perf (not architectural)",
+      "terminal": false,
+      "next": "fix_cycle",
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate to ESCALATE"
+    },
+    "REWRITE": {
+      "trigger": "SENIOR_QA_FINAL verdict: architectural issue; current approach unsalvageable; needs ARCH update before retry",
+      "terminal": false,
+      "next": "rewrite_cycle",
+      "loop_guard": "rewrite_counter; at 2, auto-escalate to ESCALATE"
+    },
+    "ESCALATE": {
+      "trigger": "loop limit hit (qa_cycles >= 3 OR rewrite_counter >= 2) OR SENIOR_QA_FINAL explicitly escalates (e.g., task description ambiguous, prereqs incomplete, external blocker)",
+      "terminal": false,
+      "actions": [
+        "QUEEN prepends escalation summary to branch INPROGRESS (task id, attempts taken, findings history, blocker analysis, recommendation)",
+        "QUEEN pauses all worker spawning",
+        "QUEEN reports to human with structured escalation report",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human directs next action (abort, restart, manual override, etc.); QUEEN resumes under new direction"
+    }
+  },
+
+  "loop_limits": {
+    "qa_cycles_per_attempt": 3,
+    "rewrite_attempts_per_task": 2,
+    "counter_semantics": {
+      "qa_cycle_counter": "resets to 0 on REWRITE (new attempt = new counter)",
+      "rewrite_counter": "persistent across attempts within one task; does not reset"
+    }
+  },
+
+  "context_access": {
+    "full_access_roles": [
+      "QUEEN",
+      "DEV",
+      "TESTDEV_WHITEBOX",
+      "JUNIOR_QA",
+      "SENIOR_QA_SANITY",
+      "SENIOR_QA_FINAL",
+      "ARCH_DEV"
+    ],
+    "cleanroom_roles": ["TESTDEV_BLACKBOX"],
+    "cleanroom_enforcement": "prompt-based discipline only; QUEEN names forbidden files explicitly in worker prompt; QA_UNIT audits output for visibility leaks"
+  },
+
+  "hard_rules": {
+    "no_greenlight_without_full_qa_unit": true,
+    "every_loop_back_reenters_full_qa_unit": true,
+    "queen_does_not_override_senior_qa_final_verdict": true,
+    "arch_updates_changelog_prepend_only": true,
+    "inprogress_prepend_only_except_checkboxes": true,
+    "inprogress_main_upserts_no_delete_edit": true,
+    "blackbox_cannot_read_implementation": true,
+    "no_fabricated_results": true,
+    "no_TODO_FIXME_HACK_in_committed_code": true,
+    "test_unit_is_atomic": true,
+    "qa_unit_is_atomic": true,
+    "task_branch_deleted_on_greenlight_attempts_preserved": true
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "dev": "workflows/SDLC/WORKER_DEV.md",
+    "testdev_whitebox": "workflows/SDLC/WORKER_TESTDEV_WHITEBOX.md",
+    "testdev_blackbox": "workflows/SDLC/WORKER_TESTDEV_BLACKBOX.md",
+    "qa_junior": "workflows/SDLC/WORKER_QA_JUNIOR.md",
+    "qa_senior_sanity": "workflows/SDLC/WORKER_QA_SENIOR_SANITY.md",
+    "qa_senior_final": "workflows/SDLC/WORKER_QA_SENIOR_FINAL.md",
+    "arch_dev": "workflows/SDLC/WORKER_ARCH_DEV.md"
+  },
+
+  "notes": {
+    "trigger_note": "When Michael types 'SDLC_WORKFLOW' at the start of a conversation or in a message, QUEEN (Claude) enters this mode. QUEEN does not begin work until explicitly told a TASK_ID.",
+    "zimaboard_note": "Many tasks require the ZimaBoard GPU at root@192.168.50.142. QUEEN verifies SSH before PRESTEP. If SSH is down, PRESTEP refuses to proceed.",
+    "harness_note": "jarvis-harness is the primary validation surface. All acceptance criteria either use harness commands directly or produce outputs verifiable through the harness.",
+    "relationship_to_clarification_md": "See CLARIFICATION.md for the pedagogical framing of Stages 1–4 this workflow operationalizes."
+  }
+}

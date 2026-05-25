@@ -1,0 +1,3 @@
+[workspace]
+members = ["omega", "crates/renderer-backend"]
+resolver = "2"

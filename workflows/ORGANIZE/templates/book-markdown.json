@@ -1,0 +1,137 @@
+{
+  "name": "book-markdown",
+  "version": "1.0.0",
+  "applies_to": {
+    "description": "Manuscript project processed by the BOOK workflow family. Chapters are organized under chapters/CH_*.md, with front matter in front/, back matter in back/, draft material in drafts/, and RDC source documents in source/. BOOK workflow artefacts (BOOK_MANIFEST.json, STRUCTURE.md, MASTER.md, etc.) are load-bearing and must not be moved. Output from LULU_PIPELINE lives in output/ and is ignored by ORGANIZE.",
+    "signals": [
+      "kind:book-markdown",
+      "workflow_artefacts:BOOK_MANIFEST.json",
+      "workflow_artefacts:STRUCTURE.md",
+      "structure:chapters_dir"
+    ]
+  },
+  "default_rules": [
+    {
+      "id": "t1",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "chapters/CH_*.md",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "BOOK workflow primary output: chapter files in chapters/ following CH_<N>_<title>.md naming are at their canonical location and must not be moved"
+    },
+    {
+      "id": "t2",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{BOOK_MANIFEST.json,BOOK_SPEC.json}",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "BOOK workflow manifest and spec files are load-bearing at project root; BOOK_COMPILER reads them from root; moving them breaks the pipeline"
+    },
+    {
+      "id": "t3",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{STRUCTURE.md,STORYBOARD.md,MASTER.md,PEDAGOGY.md,EVALUATIONS.md,INVENTORY.md,INPROGRESS.md,PROJECT.md}",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "BOOK and RDC workflow artefacts are load-bearing at project root; these files are produced and consumed by the workflow system and must remain where they are"
+    },
+    {
+      "id": "t4",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "front/*.md",
+      "destination": "IN_PLACE",
+      "priority": 95,
+      "active": true,
+      "note": "Front matter files (dedication, preface, foreword, acknowledgements, etc.) under front/ are at their canonical location"
+    },
+    {
+      "id": "t5",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "back/*.md",
+      "destination": "IN_PLACE",
+      "priority": 95,
+      "active": true,
+      "note": "Back matter files (appendices, bibliography, index, colophon, etc.) under back/ are at their canonical location"
+    },
+    {
+      "id": "t6",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "drafts/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 80,
+      "active": true,
+      "note": "Draft material under drafts/ is intentionally staged there — do not move; authors keep drafts/ as a working area separate from committed chapters"
+    },
+    {
+      "id": "t7",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "source/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 80,
+      "active": true,
+      "note": "RDC source documents under source/ are at their canonical location; source/ feeds RDC_WORKFLOW and should not be reorganized by ORGANIZE"
+    },
+    {
+      "id": "t8",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "figures/**",
+      "destination": "IN_PLACE",
+      "priority": 90,
+      "active": true,
+      "note": "Figures (images, diagrams, charts) under figures/ are at their canonical location; BOOK workflow references them by relative path from root"
+    },
+    {
+      "id": "t9",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(tmp|scratch)[^/]*\\.md$",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Temporary scratch markdown files at any depth are candidates for deletion; quarantine to .delete — always ASK_USER before ratifying; book authors may have notes they intend to keep"
+    },
+    {
+      "id": "t10",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(notes\\d+|old_design|.*\\.v\\d+)\\.md$",
+      "destination": ".archive",
+      "priority": 20,
+      "active": true,
+      "note": "Numbered note files, old design docs, and version-stamped markdown files are historical; ASK_USER — book authors often have strong attachment to specific notes, so .archive is the correct destination but must not be automatic"
+    },
+    {
+      "id": "t11",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "IN_PLACE",
+      "priority": 40,
+      "active": true,
+      "note": "Loose markdown at project root not matched by earlier rules — ASK_USER always; a root-level .md in a book project could be a draft chapter, a historical design note, a stray authorial memo, or an intentional orientation file; authorial judgment is required and ORGANIZE must not auto-route these"
+    }
+  ],
+  "default_ignore_paths": [
+    "output/**",
+    ".git/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**"
+  ],
+  "notes": "Book manuscript template aligned with the BOOK workflow family's project layout (see BOOK_WORKFLOW_DISSERTATION.md §14 for the canonical project structure). Key invariant: BOOK, RDC, and SDLC artefacts named in rule t3 are load-bearing workflow files — ORGANIZE must never propose moving or archiving them. Rule t11 (loose *.md at root → ASK_USER) is intentionally conservative: book projects accumulate root-level markdown for many legitimate reasons and authorial judgment is always required. The output/ directory is ignored entirely because LULU_PIPELINE generates it from the source and it is recreated on demand. Flag t8 covers all figure types (PNG, SVG, PDF embedded as figures, etc.) because the glob pattern figures/** matches any file extension.",
+  "inherits_from": null
+}

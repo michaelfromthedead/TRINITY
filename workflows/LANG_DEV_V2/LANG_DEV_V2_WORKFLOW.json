@@ -1,0 +1,654 @@
+{
+  "version": "2.0.0-DRAFT",
+  "name": "LANG_DEV_V2_WORKFLOW",
+  "description": "Swarm workflow for executing the language-development methodology consolidated in workflows/LANG_DEV/LANGS_DEV_RDC/. Given a target programming library plus pre-generated nexus reports, produces a fully-functional DSL covering the library's domain (compiler pipeline + runtime support). Replaces v0.1.0-SUPERSEDED (workflows/LANG_DEV/) which had ten architectural defects documented in workflows/LANG_DEV_V2/WHY_V2.md. v2 implements the 4-phase grouped task model from the RDC corpus, includes Phase 4 (RUNTIME — excluded by v1), enforces the COURT #1 SYNTHESIS ruling on STEP 5A/5B ordering, requires nexus reports as a workflow input, supports multi-doc-per-task reads, allows controlled parallelism in Phase 4, and gates METHODOLOGY_GREEN_LIGHT on a methodology-level integration test (shuffle invariance + compression check + e2e demo). Triggered by 'LANG_DEV_V2_WORKFLOW' or 'LANG_DEV_V2'. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrases": [
+      "LANG_DEV_V2_WORKFLOW",
+      "LANG_DEV_V2",
+      "langdev v2",
+      "language development v2"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_validate_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER.md",
+      "QUEEN reads workflows/LANG_DEV_V2/WORKER_PHASE_EXECUTOR.md, WORKER_PHASE_QA.md, WORKER_METHODOLOGY_INTEGRATOR.md",
+      "QUEEN reads workflows/LANG_DEV_V2/spec/{PHASE_MODEL.md, INPUT_CONTRACT.md, STEP_DOC_INVENTORY.md}",
+      "QUEEN reads workflows/LANG_DEV_V2/contracts/{PHASE_01_CONTRACT.md, PHASE_02_CONTRACT.md, PHASE_03_CONTRACT.md, PHASE_04_CONTRACT.md, ARTIFACT_CATALOG.md}",
+      "QUEEN reads workflows/LANG_DEV/LANGS_DEV_RDC/CLARIFICATION.md (philosophical framing)",
+      "QUEEN reads <step_source_dir>/CREATOR_NOTES.md (vision context)",
+      "QUEEN reports: 'LANG_DEV_V2_WORKFLOW mode engaged. Inputs: target=<path or pending>, nexus=<path or pending>, workspace=<path or pending>, step_source=<path or default>. Ready. Provide target_library, nexus_reports_dir, and workspace_dir to begin.'",
+      "QUEEN waits for explicit human direction specifying all required inputs, then runs PRESTEP validation per spec/INPUT_CONTRACT.md §6"
+    ],
+    "parameters_required": {
+      "target_library": "absolute path to the library being deconstructed (e.g., /home/user/repos/pandas)",
+      "nexus_reports_dir": "absolute path to directory containing nexus reports for the target library. Auto-derived as <target_library>_nexus/ if absent. Must contain GRAVITY, GRAMMAR, VERBS, TIERS, CLASSIFICATION, GENESIS, GENERATOR, COMPRESSION reports.",
+      "workspace_dir": "absolute path where intermediate outputs land. Created if absent. Must be empty if exists (no --reuse-workspace flag in v2.0.0).",
+      "step_source_dir": "absolute path to directory containing the 22 source methodology docs (16 STEP + 4 boss_level + context.md + CREATOR_NOTES.md). Default: LANG_DEV_STEPS/ at project root."
+    }
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "parallel-altitude to SDLC, RDC, RECON, BOOK family, ORGANIZE, LANG_DEV (v1)",
+    "supersedes": "workflows/LANG_DEV/LANG_DEV_WORKFLOW.json (v0.1.0-SUPERSEDED). v1 is preserved as a historical artifact; do not engage.",
+    "rdc_coupling": "LANGS_DEV_RDC was used to produce the authoritative methodology corpus that drives v2. v2 does NOT auto-trigger RDC; the RDC pass already happened (output at workflows/LANG_DEV/LANGS_DEV_RDC/).",
+    "sdlc_coupling": "v2's PHASE TODOs (in LANGS_DEV_RDC/) are SDLC-shaped and could in principle be handed to SDLC directly. v2 keeps the workflow specialized because: (a) per-task acceptance is methodology-specific (shuffle test, compression check), (b) multi-doc-per-task reads, (c) on-demand recovery semantics. Open question — see LANG_DEV_V2_BUILDOUT_TODO.md Open Questions §1.",
+    "recon_coupling": "Before engaging v2 on a new target library, RECON can characterize the library structure. Manual handoff.",
+    "organize_coupling": "None. v2 operates on domain artefacts, not project structure.",
+    "does_not_auto_trigger": ["SDLC_WORKFLOW", "RDC_WORKFLOW", "RECON_WORKFLOW", "ORGANIZE_WORKFLOW", "any BOOK_* workflow"]
+  },
+
+  "inputs": {
+    "target_library": {
+      "type": "absolute_path",
+      "required": true,
+      "validation": ["exists", "is_directory", "readable", "non_empty"],
+      "access_mode": "read_only",
+      "escalate_on_fail": "target_library invalid: <reason>"
+    },
+    "nexus_reports_dir": {
+      "type": "absolute_path",
+      "required": true,
+      "default_derivation": "<target_library>_nexus/",
+      "validation": ["exists", "is_directory", "readable", "all_required_reports_present"],
+      "required_reports": [
+        "GRAVITY.md",
+        "GRAMMAR.md",
+        "VERBS.md",
+        "TIERS.md",
+        "CLASSIFICATION.md",
+        "GENESIS.md",
+        "GENERATOR.md",
+        "COMPRESSION.md"
+      ],
+      "access_mode": "read_only",
+      "escalate_on_fail": "nexus_reports invalid: <reason>; required reports listed above"
+    },
+    "workspace_dir": {
+      "type": "absolute_path",
+      "required": true,
+      "validation": ["absolute_path", "parent_writable", "empty_or_nonexistent"],
+      "access_mode": "read_write",
+      "init_action": "mkdir -p; write empty workspace_manifest.json with schema v1.0.0",
+      "escalate_on_fail": "workspace_dir invalid: <reason>"
+    },
+    "step_source_dir": {
+      "type": "absolute_path",
+      "required": true,
+      "default": "LANG_DEV_STEPS/ at project root",
+      "validation": ["exists", "is_directory", "all_22_files_present", "all_files_non_empty"],
+      "required_files": [
+        "STEP 1 - DECONSTRUCTION OPS.md",
+        "STEP 1.1 - RECOVER OPS.md",
+        "STEP 2 - DECONSTRUCTION OBJS.md",
+        "STEP 3 - DECONSTRUCTION TYPES.md",
+        "STEP 4 - ATOMICS.md",
+        "STEP 5 - DECISIONS SCHEMA.md",
+        "STEP 5 - BAG GRAMMAR.md",
+        "STEP 6 - RULESETS AND DEFAULTS.md",
+        "STEP 6.1 - THE_CONUNDRUM.md",
+        "STEP 6.2 - PRE LEXER.md",
+        "STEP 7 - LEXER.md",
+        "STEP 7.1 - VALIDATOR.md",
+        "STEP 8 - PARSER.md",
+        "STEP 9 - TYPER.md",
+        "STEP 10 - CLASSIFIER.md",
+        "STEP 11 - SOLVER.md",
+        "boss_level_1_executor_rules.md",
+        "boss_level_2_optimizer_rules.md",
+        "boss_level_3_error_reporter_rules.md",
+        "boss_level_4_debugger_rules.md",
+        "context.md",
+        "CREATOR_NOTES.md"
+      ],
+      "access_mode": "read_only",
+      "step_5_naming_note": "Per COURT #1 SYNTHESIS, STEP_05A == 'STEP 5 - DECISIONS SCHEMA.md' (format) and STEP_05B == 'STEP 5 - BAG GRAMMAR.md' (operators). Enforced by hard rule step_5_ordering.",
+      "escalate_on_fail": "step_source_dir invalid: <reason>; missing files: <list>"
+    }
+  },
+
+  "phase_model": {
+    "description": "Four serial phases plus terminal METHODOLOGY_INTEGRATION. Per spec/PHASE_MODEL.md.",
+    "phase_order": ["PHASE_1", "PHASE_2", "PHASE_3", "PHASE_4", "METHODOLOGY_INTEGRATION"],
+    "phases": {
+      "PHASE_1": {
+        "name": "DECONSTRUCTION",
+        "concern": "Find primitives, objects, type signatures of the target library.",
+        "tasks_serial_order": ["T-01.1", "T-01.2", "T-01.3"],
+        "on_demand_tasks": ["T-01.1.1"],
+        "tasks": {
+          "T-01.1": {
+            "title": "Deconstruction Ops",
+            "source_docs": ["STEP 1 - DECONSTRUCTION OPS.md", "context.md"],
+            "depends_on": [],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_01_CONTRACT.md#T-01.1"
+          },
+          "T-01.1.1": {
+            "title": "Recover Ops",
+            "source_docs": ["STEP 1.1 - RECOVER OPS.md"],
+            "depends_on": ["T-01.1"],
+            "parallelism": "on-demand",
+            "trigger_condition": "T-01.1 reaches retry limit without TASK_PASS",
+            "max_attempts": 3,
+            "mandatory": false,
+            "output_contract": "contracts/PHASE_01_CONTRACT.md#T-01.1.1"
+          },
+          "T-01.2": {
+            "title": "Deconstruction Objs",
+            "source_docs": ["STEP 2 - DECONSTRUCTION OBJS.md"],
+            "depends_on": ["T-01.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_01_CONTRACT.md#T-01.2"
+          },
+          "T-01.3": {
+            "title": "Deconstruction Types",
+            "source_docs": ["STEP 3 - DECONSTRUCTION TYPES.md"],
+            "depends_on": ["T-01.1", "T-01.2"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_01_CONTRACT.md#T-01.3"
+          }
+        }
+      },
+      "PHASE_2": {
+        "name": "DESIGN",
+        "concern": "Specify atoms, decisions schema, bag grammar, rulesets, tokens.",
+        "tasks_serial_order": ["T-02.1", "T-02.2", "T-02.3", "T-02.4", "T-02.4.1", "T-02.4.2"],
+        "on_demand_tasks": [],
+        "tasks": {
+          "T-02.1": {
+            "title": "Atomics",
+            "source_docs": ["STEP 4 - ATOMICS.md", "context.md"],
+            "depends_on": ["PHASE_1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.1"
+          },
+          "T-02.2": {
+            "title": "Decisions Schema (STEP 5A)",
+            "source_docs": ["STEP 5 - DECISIONS SCHEMA.md"],
+            "depends_on": ["T-02.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.2",
+            "step_5_position": "5A (format layer; per COURT #1 SYNTHESIS)"
+          },
+          "T-02.3": {
+            "title": "Bag Grammar (STEP 5B)",
+            "source_docs": ["STEP 5 - BAG GRAMMAR.md"],
+            "depends_on": ["T-02.2"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.3",
+            "step_5_position": "5B (operator layer; per COURT #1 SYNTHESIS)"
+          },
+          "T-02.4": {
+            "title": "Rulesets and Defaults",
+            "source_docs": ["STEP 6 - RULESETS AND DEFAULTS.md"],
+            "depends_on": ["T-02.3"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.4",
+            "sub_tasks": ["T-02.4.1", "T-02.4.2"]
+          },
+          "T-02.4.1": {
+            "title": "The Conundrum",
+            "source_docs": ["STEP 6.1 - THE_CONUNDRUM.md"],
+            "depends_on": ["T-02.4"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.4.1"
+          },
+          "T-02.4.2": {
+            "title": "Pre-Lexer",
+            "source_docs": ["STEP 6.2 - PRE LEXER.md"],
+            "depends_on": ["T-02.4.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_02_CONTRACT.md#T-02.4.2"
+          }
+        }
+      },
+      "PHASE_3": {
+        "name": "IMPLEMENTATION",
+        "concern": "Build the compiler pipeline (lexer, validator, parser, typer, classifier, solver).",
+        "tasks_serial_order": ["T-03.1", "T-03.1.1", "T-03.2", "T-03.3", "T-03.4", "T-03.5"],
+        "on_demand_tasks": [],
+        "tasks": {
+          "T-03.1": {
+            "title": "Lexer",
+            "source_docs": ["STEP 7 - LEXER.md"],
+            "depends_on": ["PHASE_2"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.1"
+          },
+          "T-03.1.1": {
+            "title": "Validator",
+            "source_docs": ["STEP 7.1 - VALIDATOR.md"],
+            "depends_on": ["T-03.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.1.1"
+          },
+          "T-03.2": {
+            "title": "Parser",
+            "source_docs": ["STEP 8 - PARSER.md"],
+            "depends_on": ["T-03.1.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.2"
+          },
+          "T-03.3": {
+            "title": "Typer",
+            "source_docs": ["STEP 9 - TYPER.md"],
+            "depends_on": ["T-03.2"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.3"
+          },
+          "T-03.4": {
+            "title": "Classifier",
+            "source_docs": ["STEP 10 - CLASSIFIER.md"],
+            "depends_on": ["T-03.3"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.4"
+          },
+          "T-03.5": {
+            "title": "Solver (Solver-level shuffle test gate)",
+            "source_docs": ["STEP 11 - SOLVER.md"],
+            "depends_on": ["T-03.4"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_03_CONTRACT.md#T-03.5",
+            "acid_test": "Solver-level shuffle invariance over 100+ iterations on 10+ diverse bags"
+          }
+        }
+      },
+      "PHASE_4": {
+        "name": "RUNTIME",
+        "concern": "Build executor, optimizer, error reporter, debugger.",
+        "tasks_serial_order": ["T-04.3", "T-04.1", "T-04.2", "T-04.4"],
+        "on_demand_tasks": [],
+        "parallelism_note": "T-04.3 first (defines unified Error type); then T-04.1 and T-04.2 can run in parallel; T-04.4 depends on T-04.1.",
+        "tasks": {
+          "T-04.3": {
+            "title": "Error Reporter",
+            "source_docs": ["boss_level_3_error_reporter_rules.md"],
+            "depends_on": ["PHASE_3"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_04_CONTRACT.md#T-04.3",
+            "rationale_first": "Defines unified Error type; subsequent runtime stages emit against it."
+          },
+          "T-04.1": {
+            "title": "Executor",
+            "source_docs": ["boss_level_1_executor_rules.md"],
+            "depends_on": ["T-04.3"],
+            "parallelism": "parallel-with-siblings",
+            "siblings": ["T-04.2"],
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_04_CONTRACT.md#T-04.1"
+          },
+          "T-04.2": {
+            "title": "Optimizer",
+            "source_docs": ["boss_level_2_optimizer_rules.md"],
+            "depends_on": ["T-04.3"],
+            "parallelism": "parallel-with-siblings",
+            "siblings": ["T-04.1"],
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_04_CONTRACT.md#T-04.2",
+            "golden_rule": "optimized_output == original_output, ALWAYS. Verified by correctness_suite.py over 20+ plans."
+          },
+          "T-04.4": {
+            "title": "Debugger",
+            "source_docs": ["boss_level_4_debugger_rules.md"],
+            "depends_on": ["T-04.1"],
+            "parallelism": "sequential",
+            "mandatory": true,
+            "output_contract": "contracts/PHASE_04_CONTRACT.md#T-04.4"
+          }
+        }
+      },
+      "METHODOLOGY_INTEGRATION": {
+        "name": "METHODOLOGY_INTEGRATION",
+        "concern": "Methodology-level acceptance gate: shuffle test on full DSL + compression check + e2e demo.",
+        "worker": "METHODOLOGY_INTEGRATOR",
+        "depends_on": ["PHASE_4"],
+        "verdicts": ["METHODOLOGY_GREEN_LIGHT", "METHODOLOGY_INCOMPLETE"],
+        "spec_docs": [
+          "spec/SHUFFLE_TEST_SPEC.md",
+          "spec/COMPRESSION_SPEC.md",
+          "spec/E2E_DEMO_SPEC.md",
+          "spec/REFERENCE_LIBRARY.md"
+        ]
+      }
+    }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in main conversation when LANG_DEV_V2_WORKFLOW is active. Runs PRESTEP validation, spawns PHASE_EXECUTOR + PHASE_QA per task, manages workspace_manifest.json, INPROGRESS.md updates, retry counters, on-demand spawn semantics, methodology-level integration handoff.",
+      "responsibilities": [
+        "PRESTEP: validate all 4 inputs per spec/INPUT_CONTRACT.md §6",
+        "Initialize workspace_dir + empty workspace_manifest.json + INPROGRESS engagement entry",
+        "Per-task: assemble PHASE_EXECUTOR context packet, spawn, receive outputs, spawn PHASE_QA, collect verdict",
+        "On TASK_PASS: append to workspace_manifest.json, advance per dependency graph",
+        "On TASK_FAIL_RETRY: re-spawn PHASE_EXECUTOR with findings; retry_counter++",
+        "On TASK_FAIL_ESCALATE: pause workflow, report",
+        "On Phase 1 T-01.1 retry-exhausted: spawn T-01.1.1 RECOVER (on-demand)",
+        "On all phase tasks PASS: append phase summary, emit PHASE_GREEN_LIGHT, advance",
+        "After PHASE_4 PHASE_GREEN_LIGHT: spawn METHODOLOGY_INTEGRATOR",
+        "On METHODOLOGY_GREEN_LIGHT: emit CLEAN_RUN; report",
+        "Maintain INPROGRESS.md with prepend-only entries"
+      ],
+      "verdict_authority": "QUEEN does NOT override PHASE_QA verdicts. QUEEN does NOT override METHODOLOGY_INTEGRATOR's verdict. If PHASE_QA says TASK_PASS, advance without re-checking. If TASK_FAIL_RETRY, spawn fix cycle.",
+      "does_not": [
+        "modify source docs in step_source_dir",
+        "modify nexus reports",
+        "modify workspace files (only PHASE_EXECUTOR writes)",
+        "skip phases or tasks (except on-demand T-01.1.1 when not triggered)",
+        "auto-trigger other workflows",
+        "interleave with another active workflow"
+      ]
+    },
+    "PHASE_EXECUTOR": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV_V2/WORKER_PHASE_EXECUTOR.md",
+      "context_access": "full read on target_library, nexus_reports_dir, step_source_dir, workspace_dir; read+write on workspace_dir for own task's outputs",
+      "description": "Executes one task per spawn. Multi-doc reads (source_docs is an array). Writes outputs per the task's output_contract. Returns structured completion report. Generic pattern — task-specific knowledge lives in source docs + contract, not in this worker's role doc.",
+      "inputs_per_spawn": [
+        "task_id (e.g., T-02.1)",
+        "source_docs (array of absolute paths under step_source_dir)",
+        "output_contract (path to contracts/PHASE_<N>_CONTRACT.md section)",
+        "target_library_path",
+        "nexus_reports_dir",
+        "workspace_dir",
+        "workspace_manifest (current state)",
+        "prior_phase_outputs (array of paths)",
+        "prior_retry_findings (optional; present on retry spawn)",
+        "recovery_mode (boolean; true only for T-01.1.1 spawns)"
+      ],
+      "produces": [
+        "concrete output files per output_contract",
+        "workspace_manifest entry update (appended by QUEEN on TASK_PASS)",
+        "structured completion report with: outputs_paths, source_doc_citations (per output, which doc + section), acceptance_command_results (verbatim), ambiguities_surfaced (cross-doc disagreements found, if any)"
+      ],
+      "discipline": [
+        "full-read every doc in source_docs array (no partial scans)",
+        "full-read prior_phase_outputs referenced by the contract",
+        "produce outputs in the EXACT shape the contract declares",
+        "no fabrication — every output entry traces to source-doc analysis or prior outputs",
+        "honest ambiguity — if source docs disagree, surface in completion report; do not silently pick",
+        "no scope creep into other tasks' lanes",
+        "no modification of source docs",
+        "no auto-recursion (does not spawn sub-workers)"
+      ],
+      "triggered_by": [
+        "QUEEN at each task entry",
+        "QUEEN on TASK_FAIL_RETRY (re-spawn with prior_retry_findings)",
+        "QUEEN with recovery_mode=true for T-01.1.1 spawns"
+      ]
+    },
+    "PHASE_QA": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV_V2/WORKER_PHASE_QA.md",
+      "context_access": "full read on workspace_dir, source_docs, output_contract, nexus_reports_dir",
+      "description": "Per-task QA. Bounded by the task's output_contract from contracts/PHASE_<N>_CONTRACT.md. Runs the contract's acceptance commands and verifies completion criteria. Does not perform the work itself. Same-doc-and-contract authority model.",
+      "inputs_per_spawn": [
+        "task_id",
+        "output_contract (path)",
+        "executor_outputs (paths + completion report from PHASE_EXECUTOR)",
+        "workspace_dir"
+      ],
+      "produces": [
+        "TASK_PASS or TASK_FAIL verdict",
+        "structured findings array; each finding: severity (Critical/High/Medium/Low) + criterion violated (cites contract section) + specific evidence (file path + line/JSON path)",
+        "verbatim acceptance_command output (no summarization)"
+      ],
+      "discipline": [
+        "TASK_PASS requires: all required outputs present, all completion criteria met, all acceptance commands exit 0, no fabrication detected in completion report",
+        "TASK_FAIL on any Critical finding",
+        "High/Medium findings → TASK_PASS with warnings unless numerous (count threshold: 3)",
+        "bounded scope — only check what the output_contract specifies",
+        "no fabrication — every finding cites contract section + executor output location",
+        "run every acceptance command; include verbatim output in verdict"
+      ],
+      "triggered_by": ["QUEEN after each PHASE_EXECUTOR completion"]
+    },
+    "METHODOLOGY_INTEGRATOR": {
+      "type": "worker",
+      "doc": "workflows/LANG_DEV_V2/WORKER_METHODOLOGY_INTEGRATOR.md",
+      "context_access": "full read on workspace_dir (entire tree), spec/REFERENCE_LIBRARY.md, spec/{SHUFFLE_TEST_SPEC,COMPRESSION_SPEC,E2E_DEMO_SPEC}.md",
+      "description": "Terminal acceptance worker. Runs methodology-level integration tests on the produced DSL: shuffle test on full pipeline, compression ratio check, e2e demo. No-op v1 equivalent. Spawned by QUEEN after PHASE_4 PHASE_GREEN_LIGHT.",
+      "inputs_per_spawn": [
+        "workspace_dir",
+        "spec_docs (the 4 spec/*.md files)",
+        "reference_library_path (from spec/REFERENCE_LIBRARY.md)"
+      ],
+      "produces": [
+        "workspace/METHODOLOGY_REPORT.md",
+        "workspace/SHUFFLE_TEST_RESULTS.json",
+        "workspace/COMPRESSION_REPORT.md",
+        "workspace/E2E_DEMO_OUTPUT.md",
+        "METHODOLOGY_GREEN_LIGHT or METHODOLOGY_INCOMPLETE verdict"
+      ],
+      "discipline": [
+        "shuffle test: 100+ iterations on 10+ diverse bags; assertion: solve(bag) == solve(shuffle(bag))",
+        "compression check: count of main-tier primitives vs target library API surface; ratio ≥ 18:1 (target ~20:1)",
+        "e2e demo: source string → executed output; matches expected output structure",
+        "no fabrication of test results — every assertion ran",
+        "max 1 retry on FAIL (per loop_limits.methodology_integration_retry_counter)"
+      ],
+      "triggered_by": ["QUEEN after PHASE_4 PHASE_GREEN_LIGHT"]
+    }
+  },
+
+  "units": {
+    "PHASE_TASK_UNIT": {
+      "description": "One task's atomic execution: PHASE_EXECUTOR → PHASE_QA. Sequential, atomic.",
+      "workers": ["PHASE_EXECUTOR", "PHASE_QA"],
+      "execution": "sequential",
+      "atomic": true,
+      "retry_semantics": "On TASK_FAIL_RETRY, PHASE_EXECUTOR re-spawned with findings as prior_retry_findings. PHASE_QA re-runs. At task_retry_counter == 2, TASK_FAIL_ESCALATE."
+    },
+    "PARALLEL_BATCH_UNIT": {
+      "description": "Used in Phase 4 for parallel siblings (T-04.1 + T-04.2 after T-04.3 lands). Each sibling runs as its own PHASE_TASK_UNIT in parallel; QUEEN aggregates verdicts before advancing.",
+      "execution": "parallel",
+      "aggregate_rule": "All siblings TASK_PASS → batch PASS. Any sibling TASK_FAIL_ESCALATE → batch HOLD. Mix of PASS and FAIL_RETRY → wait for retries to settle, then aggregate."
+    },
+    "ON_DEMAND_UNIT": {
+      "description": "T-01.1.1 RECOVER. Spawns only when triggering condition met (T-01.1 retry-exhausted). Same shape as PHASE_TASK_UNIT but bounded by max_attempts=3.",
+      "execution": "sequential",
+      "trigger_managed_by": "QUEEN"
+    },
+    "METHODOLOGY_INTEGRATION_UNIT": {
+      "description": "Terminal unit. METHODOLOGY_INTEGRATOR runs once after PHASE_4 PHASE_GREEN_LIGHT. No PHASE_QA — METHODOLOGY_INTEGRATOR's own report is the verdict.",
+      "execution": "sequential",
+      "atomic": true,
+      "retry_semantics": "Max 1 retry on METHODOLOGY_INCOMPLETE; then escalate."
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "validate target_library per inputs.target_library.validation",
+        "derive nexus_reports_dir if not provided; validate per inputs.nexus_reports_dir.validation",
+        "validate workspace_dir per inputs.workspace_dir.validation",
+        "derive step_source_dir if not provided; validate per inputs.step_source_dir.validation (must contain all 22 required files)",
+        "if any validation fails: ESCALATE with structured error report; do not proceed",
+        "mkdir -p workspace_dir; write workspace_manifest.json with schema_version 1.0.0 and engagement metadata",
+        "prepend engagement entry to INPROGRESS.md at project root",
+        "perform at-engagement reads (per trigger.on_engage)",
+        "report ready to user; await confirmation to begin Phase 1"
+      ]
+    },
+    "phase_iteration": {
+      "performer": "QUEEN spawns PHASE_TASK_UNIT (or PARALLEL_BATCH_UNIT)",
+      "type": "iterative_per_phase",
+      "per_phase_pattern": [
+        "for each task in phase.tasks_serial_order: spawn PHASE_TASK_UNIT",
+        "if a task is parallel-with-siblings: collect siblings into PARALLEL_BATCH_UNIT",
+        "on TASK_PASS: append outputs to workspace_manifest.json; advance per dependency graph",
+        "on TASK_FAIL_RETRY (retry_counter < 2): re-spawn PHASE_EXECUTOR with findings",
+        "on TASK_FAIL_ESCALATE: spawn ON_DEMAND_UNIT (T-01.1.1) if applicable; else emit PHASE_HOLD",
+        "after all tasks in phase reach TASK_PASS: write phase completion to INPROGRESS.md, emit PHASE_GREEN_LIGHT, advance to next phase"
+      ]
+    },
+    "methodology_integration": {
+      "performer": "QUEEN spawns METHODOLOGY_INTEGRATION_UNIT",
+      "type": "terminal",
+      "actions": [
+        "spawn METHODOLOGY_INTEGRATOR with workspace_dir + spec docs + reference_library_path",
+        "INTEGRATOR runs shuffle test, compression check, e2e demo; produces METHODOLOGY_REPORT.md + 3 supporting artifacts",
+        "on METHODOLOGY_GREEN_LIGHT: QUEEN updates workspace_manifest.json, writes final entry to INPROGRESS.md, emits CLEAN_RUN",
+        "on METHODOLOGY_INCOMPLETE (first attempt): QUEEN re-spawns INTEGRATOR once with diagnostic findings",
+        "on METHODOLOGY_INCOMPLETE (second attempt): QUEEN emits METHODOLOGY_INCOMPLETE workflow verdict; pauses; reports"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: validate inputs + initialize workspace + INPROGRESS engagement entry",
+      "PHASE_1 iteration: T-01.1 → (T-01.1.1 if needed) → T-01.2 → T-01.3 → PHASE_GREEN_LIGHT",
+      "PHASE_2 iteration: T-02.1 → T-02.2 → T-02.3 → T-02.4 → T-02.4.1 → T-02.4.2 → PHASE_GREEN_LIGHT",
+      "PHASE_3 iteration: T-03.1 → T-03.1.1 → T-03.2 → T-03.3 → T-03.4 → T-03.5 → PHASE_GREEN_LIGHT",
+      "PHASE_4 iteration: T-04.3 → (T-04.1 || T-04.2 in parallel) → T-04.4 → PHASE_GREEN_LIGHT",
+      "METHODOLOGY_INTEGRATION: shuffle test + compression + e2e demo → METHODOLOGY_GREEN_LIGHT",
+      "FINALIZE: workspace_manifest.json closed; INPROGRESS final entry; CLEAN_RUN verdict"
+    ]
+  },
+
+  "verdicts": {
+    "per_task_verdicts": {
+      "TASK_PASS": "PHASE_QA PASS against contract; QUEEN advances per dependency graph",
+      "TASK_FAIL_RETRY": "PHASE_QA FAIL with retries remaining; re-spawn PHASE_EXECUTOR",
+      "TASK_FAIL_ESCALATE": "PHASE_QA FAIL + retry_counter at limit; pause and escalate",
+      "TASK_SKIP_BY_DESIGN": "On-demand task not triggered (e.g., T-01.1.1 when T-01.1 passes first attempt); not a failure"
+    },
+    "per_phase_verdicts": {
+      "PHASE_GREEN_LIGHT": "All mandatory phase tasks TASK_PASS; advance to next phase",
+      "PHASE_HOLD": "At least one task TASK_FAIL_ESCALATE; phase incomplete; workflow paused",
+      "PHASE_BLOCKED": "Cascading hold — a task cannot start because a dependency escalated"
+    },
+    "methodology_verdicts": {
+      "METHODOLOGY_GREEN_LIGHT": "All 4 phases PHASE_GREEN_LIGHT + METHODOLOGY_INTEGRATOR PASS",
+      "METHODOLOGY_INCOMPLETE": "Any phase HOLD/BLOCKED; OR all phases PASS but METHODOLOGY_INTEGRATOR FAIL",
+      "ABORTED": "Human aborts mid-flight"
+    },
+    "workflow_verdicts": {
+      "CLEAN_RUN": "METHODOLOGY_GREEN_LIGHT achieved. Full DSL runnable end-to-end.",
+      "PARTIAL_RUN": "Workflow halted by human after some phases PASS but before METHODOLOGY_GREEN_LIGHT. Completed work preserved.",
+      "ESCALATED": "Phase HOLD or METHODOLOGY_INCOMPLETE. Workflow paused. Human resolves and resumes (or aborts).",
+      "ABORTED": "Human aborts entirely"
+    }
+  },
+
+  "loop_limits": {
+    "task_retry_limit": 2,
+    "task_retry_counter_semantics": "Per-task counter. Resets to 0 at each task entry. Increments on TASK_FAIL_RETRY. At 2, TASK_FAIL_ESCALATE.",
+    "recovery_max_attempts": 3,
+    "recovery_attempts_semantics": "Counts T-01.1.1 spawns triggered by T-01.1 escalation. At 3, T-01.1 emits TASK_FAIL_ESCALATE definitively (no further recovery).",
+    "methodology_integration_retry_counter": 1,
+    "methodology_integration_semantics": "If METHODOLOGY_INTEGRATOR's first run yields METHODOLOGY_INCOMPLETE, QUEEN re-spawns once with findings as context. If second run also INCOMPLETE, workflow emits METHODOLOGY_INCOMPLETE final verdict.",
+    "no_global_retry_budget": "Tasks do not share retry budgets",
+    "no_per_phase_retry": "Phases are not re-run as a unit; only individual tasks retry"
+  },
+
+  "hard_rules": {
+    "step_5_ordering": "Per COURT #1 SYNTHESIS ruling in workflows/LANG_DEV/LANGS_DEV_RDC/INPROGRESS.md: STEP_05A == 'STEP 5 - DECISIONS SCHEMA.md' (T-02.2; format layer); STEP_05B == 'STEP 5 - BAG GRAMMAR.md' (T-02.3; operator layer). Format precedes operators because grammar layers on top of the schema's atom records. v1 had these reversed; v2 enforces the corrected ordering. Violation: PHASE_QA emits TASK_FAIL_ESCALATE on detection.",
+    "nexus_reports_required": "PRESTEP cannot complete without all 8 required nexus reports present in nexus_reports_dir. Phase 1 cannot execute without nexus reports as analytical input. No bypass.",
+    "phase_4_required": "METHODOLOGY_GREEN_LIGHT cannot be emitted without Phase 4 (T-04.1 through T-04.4) complete. Without Phase 4, the methodology produces a compiler pipeline nobody can run. v1's exclusion of Phase 4 is the most consequential v1 defect.",
+    "methodology_acceptance": "CLEAN_RUN requires METHODOLOGY_INTEGRATOR PASS: shuffle test PASS (100+ iterations on 10+ diverse bags) + compression ratio ≥ 18:1 + e2e demo PASS. Per-phase verdicts alone do not constitute methodology acceptance.",
+    "multi_doc_authority": "PHASE_EXECUTOR's source_docs is an array. Worker full-reads every doc in the array. PHASE_QA's authority is bounded by the source docs PLUS the contract — not by the source docs alone. Cross-doc disagreement is surfaced honestly, not silently resolved.",
+    "no_fabrication": "Every output entry traces to source-doc analysis, prior-phase output, or target_library / nexus_reports content. PHASE_QA findings cite specific source-doc lines + executor-output locations. Fabrication detected by PHASE_QA → TASK_FAIL_ESCALATE.",
+    "no_step_doc_modification": "The 22 source docs in step_source_dir are read-only. The methodology source is immutable; methodology corrections happen outside this workflow.",
+    "no_target_library_modification": "target_library is read-only.",
+    "no_nexus_reports_modification": "nexus_reports_dir is read-only.",
+    "workspace_discipline": "Intermediate outputs land in workspace_dir per ARTIFACT_CATALOG.md. Authoritative artifact <library>_decisions.json lives at workspace_dir root (not in a STEP subdir) because every Phase 3 stage consumes it.",
+    "workspace_manifest_single_source_of_truth": "workspace_manifest.json records every artifact with path + producing-task + checksum. Append-only after task PASS. Never rewritten.",
+    "inprogress_prepend_only": "INPROGRESS.md entries are prepend-only (except checkbox toggles). No deletions, no rewrites of past entries.",
+    "queen_does_not_override_qa": "QUEEN does NOT override PHASE_QA verdicts. If PHASE_QA says TASK_PASS, QUEEN advances without re-checking. If TASK_FAIL_RETRY, QUEEN spawns fix cycle without second-guessing.",
+    "queen_does_not_override_integrator": "QUEEN does NOT override METHODOLOGY_INTEGRATOR's verdict.",
+    "no_phase_skip": "A phase task must reach TASK_PASS (or TASK_SKIP_BY_DESIGN for on-demand) before downstream tasks proceed. No skipping.",
+    "no_auto_workflow_trigger": "v2 never auto-triggers RDC, RECON, SDLC, BOOK, or ORGANIZE.",
+    "no_workflow_mixing": "While v2 is active, do not interleave with another workflow.",
+    "never_no_verify": "Never use git commit --no-verify to bypass hooks.",
+    "honest_ambiguity": "When source docs disagree (e.g., STEP doc + retrofit), PHASE_EXECUTOR surfaces the disagreement in the completion report. Does not silently pick one.",
+    "v1_dropped_rules": {
+      "monolithic_serial": "DROPPED. Phase 4 components run in parallel per dependency graph.",
+      "boss_level_roles_not_integrated": "DROPPED. Phase 4 IS in scope."
+    }
+  },
+
+  "document_conventions": {
+    "workspace_manifest": {
+      "path": "workspace_dir/workspace_manifest.json",
+      "schema_version": "1.0.0",
+      "schema_doc": "contracts/ARTIFACT_CATALOG.md",
+      "update_mode": "append-only-on-task-pass",
+      "rewrite_forbidden": true
+    },
+    "inprogress": {
+      "path": "INPROGRESS.md (project root)",
+      "update_mode": "prepend_only_except_checkboxes",
+      "shared_with": "all other workflows"
+    },
+    "decisions_json": {
+      "path": "workspace_dir/<library>_decisions.json",
+      "schema_version": "1.0.0",
+      "schema_doc": "contracts/PHASE_02_CONTRACT.md#T-02.2",
+      "authoritative": true,
+      "consumed_by": ["T-02.3", "T-02.4", "T-03.1.1", "T-03.3", "T-04.1", "METHODOLOGY_INTEGRATOR"]
+    },
+    "methodology_report": {
+      "path": "workspace_dir/METHODOLOGY_REPORT.md",
+      "produced_by": "METHODOLOGY_INTEGRATOR",
+      "is_terminal_output": true
+    }
+  },
+
+  "known_tbds": [
+    {
+      "id": "TBD-V2-01",
+      "topic": "Reuse-workspace flag for resuming partial runs",
+      "deferred_to": "v2.1.0",
+      "details": "v2.0.0 requires empty workspace_dir. Resume semantics for partial runs not modeled."
+    },
+    {
+      "id": "TBD-V2-02",
+      "topic": "Nexus report content validation",
+      "deferred_to": "future",
+      "details": "PRESTEP only validates filename presence. Schema validation of nexus content would slow PRESTEP significantly; deferred."
+    },
+    {
+      "id": "TBD-V2-03",
+      "topic": "Multi-target invocation",
+      "deferred_to": "future",
+      "details": "Whether one workflow run can produce DSLs for multiple target libraries"
+    },
+    {
+      "id": "TBD-V2-04",
+      "topic": "PCFG online learning",
+      "deferred_to": "future",
+      "details": "When (if ever) the workflow updates PCFG weights during a run vs as a separate post-methodology step"
+    },
+    {
+      "id": "TBD-V2-05",
+      "topic": "Whether v2 should be a workflow at all",
+      "deferred_to": "design review",
+      "details": "RDC PHASE TODOs are SDLC-shaped; could be handed to SDLC directly. v2 keeps specialized workflow because of multi-doc reads, on-demand recovery, methodology-level acceptance. See LANG_DEV_V2_BUILDOUT_TODO.md Open Questions §1."
+    }
+  ]
+}

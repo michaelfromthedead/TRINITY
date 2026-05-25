@@ -1,0 +1,228 @@
+{
+  "version": "1.0.0",
+  "name": "VERIFY_MATH_WORKFLOW",
+  "description": "Comprehensive mathematical verification workflow for GNOSTICA. Runs test suites, verifies mathematical identities, audits rule consistency, validates corpus coverage, and detects regressions. Triggered by phrase 'VERIFY_MATH_WORKFLOW'. Produces unified verification report.",
+
+  "trigger": {
+    "phrase": "VERIFY_MATH_WORKFLOW",
+    "modes": ["full", "tests", "identity", "audit", "corpus", "regression"],
+    "default_mode": "full",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads all WORKER_*.md files in this directory",
+      "QUEEN reports: 'VERIFY_MATH_WORKFLOW engaged. Mode: {mode}. Ready to verify GNOSTICA mathematical correctness.'",
+      "If mode=full: run all phases sequentially with Phase 2 parallel",
+      "If mode=specific: run only that phase"
+    ]
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "downstream verification",
+    "triggers_after": ["SDLC_WORKFLOW", "manual invocation"],
+    "may_trigger": "SDLC_WORKFLOW (if ISSUES_FOUND requires fixes)",
+    "contract": "VERIFY_MATH_WORKFLOW validates that GNOSTICA rules are mathematically correct. It runs AFTER implementation phases to ensure quality. If issues found, can trigger SDLC_WORKFLOW to fix them."
+  },
+
+  "scope": {
+    "rules": {
+      "count": "~18,223",
+      "files": 273,
+      "location": "rules/**/*.gn",
+      "updated": "2026-05-21"
+    },
+    "tests": {
+      "count": "~13,914",
+      "ignored": "~60",
+      "location": "tests/*.rs",
+      "updated": "2026-05-21"
+    },
+    "corpus": {
+      "problems": 884,
+      "total_in_db": 989,
+      "classification": "IMPLEMENT",
+      "years": "1938-2025"
+    },
+    "identities": {
+      "catalog": "workflows/VERIFY_MATH/IDENTITY_CATALOG.json",
+      "count": 210,
+      "categories": ["derivative", "integral", "algebraic", "trigonometric", "limit", "series", "matrix", "number_theory"]
+    },
+    "manifest": "docs/VERIFICATION_MANIFEST.md"
+  },
+
+  "phases": {
+    "PHASE_1_TEST_SWEEP": {
+      "name": "Test Sweep",
+      "worker": "TEST_SWEEP",
+      "parallel": false,
+      "description": "Run all tests, produce structured report with categorization",
+      "inputs": ["tests/*.rs", "rules/**/*.gn"],
+      "outputs": ["docs/verify/TEST_SWEEP_REPORT.md"],
+      "pass_condition": "all tests pass OR only known-skip tests fail",
+      "on_failure": "CRITICAL_FAILURE verdict, abort workflow"
+    },
+
+    "PHASE_2_VERIFICATION": {
+      "name": "Parallel Verification",
+      "parallel": true,
+      "workers": ["IDENTITY_VERIFIER", "RULE_AUDITOR", "CORPUS_VALIDATOR"],
+      "description": "Run identity checks, rule audit, and corpus validation in parallel",
+      "sub_phases": {
+        "IDENTITY": {
+          "worker": "IDENTITY_VERIFIER",
+          "inputs": ["IDENTITY_CATALOG.json", "GNOSTICA engine"],
+          "outputs": ["docs/verify/IDENTITY_REPORT.md"]
+        },
+        "AUDIT": {
+          "worker": "RULE_AUDITOR",
+          "inputs": ["rules/**/*.gn"],
+          "outputs": ["docs/verify/RULE_AUDIT_REPORT.md"]
+        },
+        "CORPUS": {
+          "worker": "CORPUS_VALIDATOR",
+          "inputs": ["884 IMPLEMENT problems", "GNOSTICA engine"],
+          "outputs": ["docs/verify/CORPUS_VALIDATION_REPORT.md"]
+        }
+      }
+    },
+
+    "PHASE_3_REGRESSION": {
+      "name": "Regression Detection",
+      "worker": "REGRESSION_DETECTOR",
+      "parallel": false,
+      "description": "Compare current results against stored baseline",
+      "inputs": ["CANONICAL_EXPRESSIONS.json", "baseline/*.json", "Phase 1-2 outputs"],
+      "outputs": ["docs/verify/REGRESSION_REPORT.md"],
+      "skip_if": "no baseline exists (first run)"
+    },
+
+    "PHASE_4_SYNTHESIS": {
+      "name": "Report Synthesis",
+      "worker": "QUEEN",
+      "parallel": false,
+      "description": "Merge all reports into unified verification report",
+      "inputs": ["All Phase 1-3 outputs"],
+      "outputs": ["docs/verify/VERIFY_REPORT.md"],
+      "action": "Determine final verdict, produce unified report"
+    }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "not_a_spawned_worker": true,
+      "description": "Claude in main conversation. Orchestrates phases, spawns workers, synthesizes results.",
+      "responsibilities": [
+        "Parse mode from trigger",
+        "Execute phases in order (with Phase 2 parallel)",
+        "Spawn workers with appropriate inputs",
+        "Collect worker outputs",
+        "Synthesize unified report",
+        "Emit final verdict"
+      ]
+    },
+    "TEST_SWEEP": {
+      "type": "worker",
+      "doc": "workflows/VERIFY_MATH/WORKER_TEST_SWEEP.md",
+      "description": "Runs all tests, categorizes results, identifies failures"
+    },
+    "IDENTITY_VERIFIER": {
+      "type": "worker",
+      "doc": "workflows/VERIFY_MATH/WORKER_IDENTITY_VERIFIER.md",
+      "description": "Tests mathematical identities and laws"
+    },
+    "RULE_AUDITOR": {
+      "type": "worker",
+      "doc": "workflows/VERIFY_MATH/WORKER_RULE_AUDITOR.md",
+      "description": "Static analysis of rule files for consistency"
+    },
+    "CORPUS_VALIDATOR": {
+      "type": "worker",
+      "doc": "workflows/VERIFY_MATH/WORKER_CORPUS_VALIDATOR.md",
+      "description": "Validates all 884 implemented Putnam problems"
+    },
+    "REGRESSION_DETECTOR": {
+      "type": "worker",
+      "doc": "workflows/VERIFY_MATH/WORKER_REGRESSION_DETECTOR.md",
+      "description": "Compares against baseline, detects changes"
+    }
+  },
+
+  "verdicts": {
+    "VERIFIED": {
+      "condition": "All phases pass with no Critical/High issues",
+      "action": "Report success. Update baseline if requested. Safe to release.",
+      "color": "green"
+    },
+    "ISSUES_FOUND": {
+      "condition": "Medium/Low issues found, no Critical/High",
+      "action": "Report issues with details. Optionally trigger SDLC_WORKFLOW to create fix tasks. May release with known issues documented.",
+      "triggers": ["SDLC_WORKFLOW (optional)", "Issue tracking update"],
+      "color": "yellow"
+    },
+    "CRITICAL_FAILURE": {
+      "condition": "Critical or High severity issues found",
+      "action": "BLOCK release. Trigger SDLC_WORKFLOW with mandatory fixes. Require re-verification after fixes.",
+      "triggers": ["SDLC_WORKFLOW (mandatory)", "Release block"],
+      "color": "red"
+    }
+  },
+
+  "severity_levels": {
+    "CRITICAL": {
+      "description": "Mathematically incorrect results, data corruption, crashes",
+      "examples": ["D[x^2, x] returns wrong answer", "Rule produces NaN", "Infinite loop"],
+      "action": "Must fix before any release"
+    },
+    "HIGH": {
+      "description": "Significant functionality broken, major identity violations",
+      "examples": ["Chain rule doesn't compose", "Major corpus problems fail", "Rule conflicts"],
+      "action": "Should fix before release"
+    },
+    "MEDIUM": {
+      "description": "Minor functionality issues, non-critical identity edge cases",
+      "examples": ["Edge case fails", "Performance regression", "Minor simplification issues"],
+      "action": "Track for next release"
+    },
+    "LOW": {
+      "description": "Cosmetic issues, minor inconsistencies",
+      "examples": ["Output format inconsistent", "Unnecessary parentheses", "Style violations"],
+      "action": "Fix when convenient"
+    }
+  },
+
+  "outputs": {
+    "per_worker": {
+      "TEST_SWEEP": "docs/verify/TEST_SWEEP_REPORT.md",
+      "IDENTITY_VERIFIER": "docs/verify/IDENTITY_REPORT.md",
+      "RULE_AUDITOR": "docs/verify/RULE_AUDIT_REPORT.md",
+      "CORPUS_VALIDATOR": "docs/verify/CORPUS_VALIDATION_REPORT.md",
+      "REGRESSION_DETECTOR": "docs/verify/REGRESSION_REPORT.md"
+    },
+    "unified": "docs/verify/VERIFY_REPORT.md",
+    "baseline_update": "baseline/baseline_v{version}.json"
+  },
+
+  "baseline": {
+    "location": "baseline/",
+    "current": "baseline/baseline_current.json",
+    "schema": "workflows/VERIFY_MATH/BASELINE_SCHEMA.md",
+    "update_policy": "Manual trigger after VERIFIED verdict. Never auto-update.",
+    "contents": [
+      "Rule file hashes",
+      "Canonical expression outputs",
+      "Test pass counts by category",
+      "Identity verification results",
+      "Corpus validation summary"
+    ]
+  },
+
+  "invocation_examples": {
+    "full_verification": "VERIFY_MATH_WORKFLOW",
+    "tests_only": "VERIFY_MATH_WORKFLOW --mode=tests",
+    "identity_only": "VERIFY_MATH_WORKFLOW --mode=identity",
+    "audit_only": "VERIFY_MATH_WORKFLOW --mode=audit",
+    "corpus_only": "VERIFY_MATH_WORKFLOW --mode=corpus",
+    "regression_only": "VERIFY_MATH_WORKFLOW --mode=regression"
+  }
+}

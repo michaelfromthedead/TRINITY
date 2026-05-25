@@ -1,0 +1,98 @@
+{
+  "name": "knowledge-base",
+  "version": "1.0.0",
+  "applies_to": {
+    "description": "Topic-organized markdown wiki or knowledge base. No code expected. Structure: each top-level directory is a topic, with its own README.md and subtopic subdirectories. The project is navigated by directory hierarchy rather than a build process. Common tools: Obsidian, MkDocs, plain git + markdown. Authorial judgment on topic placement is high — ORGANIZE is ASK_USER-heavy by design for this template.",
+    "signals": [
+      "kind:knowledge-base",
+      "lang:none",
+      "structure:topic_dirs_with_readme",
+      "orientation:present"
+    ]
+  },
+  "default_rules": [
+    {
+      "id": "t1",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{README.md,INDEX.md,LICENSE.md,CHANGELOG.md}",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Structural root files (README, INDEX, LICENSE, CHANGELOG) are canonically at project root and must not be moved; these files orient readers to the knowledge base"
+    },
+    {
+      "id": "t2",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*/README.md",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Per-topic README files are at their canonical location; each topic directory should have its own README.md that explains the topic's scope and contents"
+    },
+    {
+      "id": "t3",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 95,
+      "active": true,
+      "note": "Markdown files already placed inside topic subtrees are at their canonical location; ORGANIZE does not second-guess topic placement for files that are already within a topic directory"
+    },
+    {
+      "id": "t4",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "drafts/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 80,
+      "active": true,
+      "note": "Draft articles under drafts/ are at their canonical location if the project maintains a drafts/ area; applies only if drafts/ exists — do not create it speculatively"
+    },
+    {
+      "id": "t5",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(tmp|scratch)[^/]*\\.md$",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Temporary scratch markdown files are candidates for deletion; quarantine to .delete — always ASK_USER before ratifying, as knowledge-base authors sometimes use scratch files as active working notes"
+    },
+    {
+      "id": "t6",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "notes\\d+\\.md$",
+      "destination": "IN_PLACE",
+      "priority": 25,
+      "active": true,
+      "note": "Numbered note files (notes1.md, notes22.md) — ASK_USER; likely .archive candidates, but in a knowledge base these may be intentional chronological notes that the author wants to keep accessible; if this pattern recurs across many files, FLAG_NEW_RULE to establish a consistent routing"
+    },
+    {
+      "id": "t7",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "IN_PLACE",
+      "priority": 50,
+      "active": true,
+      "note": "Loose markdown at project root not matched by earlier rules — ASK_USER always; could belong in a topic directory, could be a historical file, or could be an intentionally root-level orientation document; topic placement is authorial and cannot be determined from the filename alone"
+    }
+  ],
+  "default_ignore_paths": [
+    ".git/**",
+    ".obsidian/**",
+    ".vscode/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**"
+  ],
+  "notes": "Knowledge base template. This template is ASK_USER-heavy by design — topic placement is authorial and cannot be reliably automated. The hierarchy of a knowledge base reflects the author's mental model of the domain; ORGANIZE should surface ambiguity and let the author decide, not impose a structure. Use FLAG_NEW_RULE to promote recurring patterns to explicit rules over time (e.g., if the author consistently puts meeting notes in a meetings/ directory, a rule for that pattern should be promoted). The .obsidian/** ignore path covers Obsidian vault metadata (themes, plugins, workspace state) — do not touch this. Non-markdown files (images, PDFs embedded in articles) should be handled by adding project-specific rules during BOOTSTRAP or via FLAG_NEW_RULE once the pattern is observed.",
+  "inherits_from": null
+}

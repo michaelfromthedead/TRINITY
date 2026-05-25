@@ -1,0 +1,190 @@
+{
+  "version": "0.1.0",
+  "template": "python-lib",
+  "created": "2026-04-01T10:00:00Z",
+  "last_run": "2026-04-18T15:30:00Z",
+  "runs": 3,
+  "rules": [
+    {
+      "id": "r1",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "src/**/*.py",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Python source files under src/ are canonically placed; no action needed"
+    },
+    {
+      "id": "r2",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "tests/**/*.py",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Test files already under tests/ are canonically placed"
+    },
+    {
+      "id": "r3",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "**/test_*.py",
+      "destination": "tests/",
+      "priority": 90,
+      "active": true,
+      "note": "Python test files not already under tests/ should be moved there"
+    },
+    {
+      "id": "r4",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "docs/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 85,
+      "active": true,
+      "note": "Markdown documentation already under docs/ is canonically placed"
+    },
+    {
+      "id": "r5",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "scripts/**/*.sh",
+      "destination": "IN_PLACE",
+      "priority": 82,
+      "active": true,
+      "note": "Shell scripts already under scripts/ are canonically placed"
+    },
+    {
+      "id": "r6",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "**/*.sh",
+      "destination": "scripts/",
+      "priority": 80,
+      "active": true,
+      "note": "Shell scripts not already under scripts/ should be moved there"
+    },
+    {
+      "id": "r7",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "{README,CHANGELOG,LICENSE,CONTRIBUTING,SECURITY}.md",
+      "destination": "IN_PLACE",
+      "priority": 75,
+      "active": true,
+      "note": "Standard root-level documentation files are canonically at project root"
+    },
+    {
+      "id": "r8",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "docs/",
+      "priority": 50,
+      "active": true,
+      "note": "Loose markdown at project root (not covered by r7) should move to docs/"
+    },
+    {
+      "id": "r9",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "regex",
+      "pattern": "notes\\d+\\.md",
+      "destination": ".archive",
+      "priority": 35,
+      "active": true,
+      "note": "Numbered note files (notes1.md, notes22.md) are historical threads; archive them"
+    },
+    {
+      "id": "r10",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "scratch*",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Files starting with 'scratch' are temporary work artefacts; quarantine to .delete"
+    },
+    {
+      "id": "r11",
+      "created": "2026-04-01T10:00:00Z",
+      "kind": "glob",
+      "pattern": "tmp*",
+      "destination": ".delete",
+      "priority": 28,
+      "active": true,
+      "note": "Files starting with 'tmp' are temporary; quarantine to .delete"
+    },
+    {
+      "id": "r12",
+      "created": "2026-04-14T09:15:00Z",
+      "kind": "hint",
+      "pattern": "Python files that do not import pytest and whose filename does not begin with 'test_' are not test files — do not move them to tests/ even if they are located adjacent to test files.",
+      "destination": "IN_PLACE",
+      "priority": 88,
+      "active": true,
+      "note": "RATIFIED via FLAG_NEW_RULE in run 2 — guards against moving utility helpers into tests/"
+    }
+  ],
+
+  "quarantine_log": [
+    {
+      "run": 1,
+      "timestamp": "2026-04-05T11:20:00Z",
+      "file": "scratch_auth_ideas.py",
+      "destination": ".delete",
+      "reason": "Filename matches cruft pattern 'scratch*' configured in rule r10. File contents confirm: 3 uncommitted code fragments with no imports, no function definitions — confirmed scratch work.",
+      "ratified_by": "user",
+      "untracked_at_move": false
+    },
+    {
+      "run": 2,
+      "timestamp": "2026-04-14T09:45:00Z",
+      "file": "notes1.md",
+      "destination": ".archive",
+      "reason": "Filename matches regex rule r9 (notes\\d+\\.md). File contents: design notes from early project phase, now superseded by ARCHITECTURE.md. Intellectual value preserved; no longer active reference.",
+      "ratified_by": "user",
+      "untracked_at_move": false
+    }
+  ],
+
+  "pending_rule_candidates": [
+    {
+      "surfaced_run": 3,
+      "pattern_observed": "3 files matching *.bench.py in project root with no covering rule (bench_auth.bench.py, bench_db.bench.py, bench_cache.bench.py)",
+      "suggested_rule": {
+        "id": "proposed-r13",
+        "created": "2026-04-18T15:30:00Z",
+        "kind": "glob",
+        "pattern": "**/*.bench.py",
+        "destination": "benchmarks/",
+        "priority": 77,
+        "active": true,
+        "note": "Python benchmark files identified by .bench.py suffix — proposed by TRIAGE in run 3"
+      },
+      "rationale": "Observed 3 files with .bench.py suffix at project root, none covered by any active rule. Pattern suggests a benchmarking convention the project uses. Proposing a rule to route them to benchmarks/ directory.",
+      "status": "pending"
+    }
+  ],
+
+  "ignore_paths": [
+    ".git/**",
+    ".venv/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    ".pytest_cache/**",
+    ".mypy_cache/**",
+    "**/*.egg-info/**",
+    "dist/**",
+    "build/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**",
+    "workflows/**"
+  ],
+
+  "notes": "Python library project. Uses src/ layout with src/mylib/ as the package root. Tests live under tests/ with conftest.py at root. Documentation is in docs/ using Sphinx. Shell scripts in scripts/ (mainly CI helpers). Benchmarks emerging as a pattern — pending rule r13 for ratification in next run."
+}

@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+target/
+
+# Rust
+src-tauri/target/
+Cargo.lock
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Cache
+.turbo/
+.cache/
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lock files (let package managers format these)
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Generated files
+*.generated.ts
+*.generated.js
+*.d.ts.map
+
+# Minified files
+*.min.js
+*.min.css
+
+# Test fixtures that need exact formatting
+**/fixtures/**
+**/snapshots/**

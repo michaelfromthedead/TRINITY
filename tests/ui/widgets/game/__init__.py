@@ -1,0 +1,1 @@
+"""Game widgets tests package."""

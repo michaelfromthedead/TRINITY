@@ -1,0 +1,117 @@
+{
+  "version": "1.1.0",
+  "title": "The Spin of Gravity",
+  "subtitle": "A Field-Theoretic Introduction to Spin and Non-Locality",
+  "author": "Michael Straughan",
+  "isbn": null,
+  "edition": "First Edition",
+  "genre": "academic_exploratory",
+  "target_audience": "Graduate physics students and advanced undergraduates with exposure to quantum mechanics I (wave functions, superposition, measurement, undergraduate classical mechanics including Lagrangian formulation).",
+  "templates": {
+    "mode": "bundle",
+    "bundle": "BUNDLE_SPIN_OF_GRAVITY",
+    "bundle_path": "templates/BUNDLE_SPIN_OF_GRAVITY.md",
+    "resolved_atomics": {
+      "voice": "VOICE_SOCRATIC",
+      "persona": "PERSONA_PHYSICIST_TEACHER",
+      "style": "STYLE_ACADEMIC_EXPLORATORY",
+      "prose": "PROSE_MEDIUM_ACCESSIBLE"
+    },
+    "template_version_pinned_at": "1.0.0"
+  },
+  "scope": {
+    "scope_declared_at": "2026-04-18T10:00:00Z",
+    "scope_revision_log": [],
+    "intended_chapters": [
+      {
+        "index": 1,
+        "title": "Why Non-Locality",
+        "slug": "CH_01_WHY_NON_LOCALITY",
+        "target_topic": "Establish the motivating puzzle: spin correlations in the EPR experiment violate classical locality. Distinguish what QM I describes from what it explains. State the field-theoretic resolution thesis. Establish pedagogical contract: intuition before formalism, concrete before abstract. State spin-first ordering rationale.",
+        "target_length_words": 8000,
+        "rationale": "Opens the manuscript. Installs the motivating question and pedagogical contract that subsequent chapters fulfill. No prerequisites.",
+        "status": "DRAFT"
+      },
+      {
+        "index": 2,
+        "title": "Reference Frames and Symmetry",
+        "slug": "CH_02_REFERENCE_FRAMES",
+        "target_topic": "Introduce reference frame invariance as the conceptual bridge from classical to quantum mechanics. Show how symmetry groups (rotations, Lorentz) constrain physical quantities. Motivate why spin cannot be captured by SO(3) alone — the need for SU(2).",
+        "target_length_words": 9000,
+        "rationale": "Requires CH_01. Provides the mathematical scaffolding (symmetry, groups) that the spin formalism builds on. Historically situates the SU(2) discovery.",
+        "status": "DRAFT"
+      },
+      {
+        "index": 3,
+        "title": "Larmor Precession and Spin",
+        "slug": "CH_03_LARMOR_SPIN",
+        "target_topic": "Use Larmor precession as the concrete spin phenomenon. Derive the Larmor frequency from the torque equation for a magnetic dipole. Introduce spin as a two-state quantum system. Show the 360-degree sign-flip that distinguishes spin-1/2 from classical rotation.",
+        "target_length_words": 9000,
+        "rationale": "Requires CH_01 and CH_02. This is the concrete spin case that the spin-first ordering promises. Produces the physical intuition for the formalism chapters that follow.",
+        "status": "NOTES_ONLY"
+      },
+      {
+        "index": 4,
+        "title": "Angular Momentum — The General Case",
+        "slug": "CH_04_ANGULAR_MOMENTUM",
+        "target_topic": "Generalize from spin to angular momentum. Introduce L = r x p, angular momentum commutators, eigenvalue structure. Clebsch-Gordan coefficients for combining angular momenta. Show why spin came first: the concrete case (spin) makes the general case (angular momentum) intelligible. Fine structure as payoff.",
+        "target_length_words": 11000,
+        "rationale": "Requires CH_02 and CH_03. Fulfills the spin-first ordering promise. The most mathematically demanding chapter. Delivers the formal machinery payoff.",
+        "status": "PARTIALLY_DRAFTED"
+      },
+      {
+        "index": 5,
+        "title": "Synthesis: Spin, Field, and Gravity",
+        "slug": "CH_05_SYNTHESIS",
+        "target_topic": "Connect the spin formalism to quantum field theory. Introduce spin as a Lorentz group representation label. Argue that the graviton must be a spin-2 field. Sketch the spin-gravity coupling in linearized gravity. Identify open research questions at the interface of spin and quantum gravity. Return to the non-locality puzzle of CH_01 and show how the field-theoretic treatment addresses it.",
+        "target_length_words": 7000,
+        "rationale": "Requires CH_03 and CH_04. Terminal chapter. Delivers the field-theoretic resolution thesis. Opens the research frontier rather than closing the argument.",
+        "status": "OUTLINE_ONLY"
+      }
+    ]
+  },
+  "triage": {
+    "triage_version": "1.1.0",
+    "triage_run_at": null,
+    "aggregate_state": null,
+    "recommended_workflow": null,
+    "per_chapter_state": null,
+    "notes": "Triage not yet run. Run BOOK_TRIAGE against source/ directory to populate this section."
+  },
+  "production": {
+    "trim_size": "US Trade 6x9",
+    "color_interior": false,
+    "binding_type": "paperback",
+    "target_format": "lulu",
+    "cover_finish": "matte",
+    "copyright_year": 2026,
+    "fonts": {
+      "body": { "family": "Palatino Linotype", "size_pt": 11, "line_height": 1.3 },
+      "heading_1": { "family": "Palatino Linotype", "size_pt": 18 },
+      "heading_2": { "family": "Palatino Linotype", "size_pt": 14 },
+      "heading_3": { "family": "Palatino Linotype", "size_pt": 12 },
+      "caption": { "family": "Palatino Linotype", "size_pt": 9 },
+      "footnote": { "family": "Palatino Linotype", "size_pt": 9 }
+    },
+    "page_numbering": {
+      "style": "arabic",
+      "start_at": 1,
+      "start_chapter": "CH_01_WHY_NON_LOCALITY",
+      "front_matter_style": "roman"
+    },
+    "chapter_breaks": "new_page",
+    "headers_footers": {
+      "odd_header": "book_title",
+      "even_header": "chapter_title",
+      "footer": "page_number_centered"
+    }
+  },
+  "structure": {
+    "genre": "academic_exploratory",
+    "front_matter": ["title_page", "copyright_page", "dedication", "toc", "preface"],
+    "back_matter": ["bibliography", "index", "about_author"],
+    "toc_depth": 2,
+    "dedication_text": "For those who ask why before asking how.",
+    "about_author_text": "Michael Straughan is a theoretical physicist and author writing at the intersection of quantum field theory and pedagogy."
+  }
+}

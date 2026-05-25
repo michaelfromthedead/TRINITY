@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run commitlint to verify commit message format
+bun x @commitlint/cli --edit ${1}

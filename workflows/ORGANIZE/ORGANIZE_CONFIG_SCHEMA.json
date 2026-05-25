@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/organize-config-schema.json",
+  "title": "ORGANIZE Config Schema",
+  "description": "JSON Schema Draft 7 for .organize.json — the per-project configuration file written and maintained by the ORGANIZE_WORKFLOW. Defines the ruleset that governs where files in a project belong, records quarantine history, and surfaces rule candidates from TRIAGE observations. The rules array and quarantine_log are append-only at runtime; this schema cannot enforce mutation semantics, but all runtime invariants are documented in field descriptions.",
+  "type": "object",
+
+  "required": [
+    "version",
+    "template",
+    "created",
+    "rules",
+    "ignore_paths"
+  ],
+
+  "additionalProperties": false,
+
+  "properties": {
+
+    "version": {
+      "type": "string",
+      "description": "Schema version of this .organize.json, following SemVer (MAJOR.MINOR.PATCH). MAJOR bumps require explicit migration. MINOR and PATCH bumps are backward-compatible. See ORGANIZE_SCHEMA_VERSIONING.md for migration policy.",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[a-zA-Z0-9._-]+)?$",
+      "examples": ["0.1.0", "1.0.0", "0.1.0-DRAFT"]
+    },
+
+    "template": {
+      "type": "string",
+      "description": "Name of the project template this .organize.json adheres to. Chosen during BOOTSTRAP by INSPECTOR + user ratification. May only be changed by re-running BOOTSTRAP with mode_override. Templates correspond to files in workflows/ORGANIZE/templates/<name>.json (Part 2 library). 'custom' means no canonical template — rules were built from scratch.",
+      "enum": [
+        "python-lib",
+        "python-app",
+        "rust-crate",
+        "rust-app",
+        "book-markdown",
+        "book-print",
+        "mixed-research",
+        "knowledge-base",
+        "polyglot",
+        "custom"
+      ]
+    },
+
+    "created": {
+      "type": "string",
+      "description": "ISO 8601 timestamp of the first BOOTSTRAP run that produced this .organize.json. Set once; never updated by MAINTENANCE runs.",
+      "format": "date-time",
+      "examples": ["2026-04-18T14:30:00Z"]
+    },
+
+    "last_run": {
+      "type": ["string", "null"],
+      "description": "ISO 8601 timestamp of the most recent MAINTENANCE circuit completion. Null until first MAINTENANCE run completes. Updated by QUEEN after each circuit wave finishes and moves are committed.",
+      "format": "date-time",
+      "examples": ["2026-04-18T15:45:00Z", null]
+    },
+
+    "runs": {
+      "type": "integer",
+      "description": "Total MAINTENANCE circuits completed across all invocations. Incremented by 1 per circuit (not per invocation). 0 until first MAINTENANCE circuit completes. Never decremented.",
+      "minimum": 0,
+      "examples": [0, 1, 7]
+    },
+
+    "rules": {
+      "type": "array",
+      "description": "Ordered array of classification rules. APPEND-ONLY INVARIANT: existing rules are never mutated or deleted at runtime. To disable a rule, set active=false and record why in the note field. Rules are evaluated in descending priority order (higher number = evaluated first); first match wins. New rules are appended to the end of the array and take effect based on their priority value, not their position.",
+      "items": {
+        "$ref": "#/definitions/rule"
+      },
+      "minItems": 0
+    },
+
+    "quarantine_log": {
+      "type": "array",
+      "description": "APPEND-ONLY audit trail of quarantine events. Every file moved to .delete/ or .archive/ produces one entry here. Never rewritten. Entries accumulate across all invocations. Provides a permanent record of what was moved where and why — supports manual reversal if needed.",
+      "items": {
+        "$ref": "#/definitions/quarantine_event"
+      },
+      "minItems": 0
+    },
+
+    "pending_rule_candidates": {
+      "type": "array",
+      "description": "Rule suggestions surfaced by TRIAGE via FLAG_NEW_RULE verdicts that the user has not yet ratified. Each candidate has a lifecycle: pending -> ratified (copied into rules array) or rejected (kept here with status updated for historical reference). QUEEN appends to this array; never removes entries.",
+      "items": {
+        "$ref": "#/definitions/rule_candidate"
+      },
+      "minItems": 0
+    },
+
+    "ignore_paths": {
+      "type": "array",
+      "description": "Glob patterns that ORGANIZE will not enumerate or classify. Applied by QUEEN before batching — files matching these patterns never reach TRIAGE. Root invariant paths (.claude/**, .claude-flow/**, .hive-mind/**, .mcp.json) are always implicitly ignored and should be included here as documentation. Standard build artifacts, VCS dirs, and quarantine dirs are typical entries.",
+      "items": {
+        "type": "string",
+        "description": "Glob pattern. Standard glob semantics: * within a path segment, ** across segments, ? single character.",
+        "examples": [".git/**", ".venv/**", "**/__pycache__/**", "target/**", ".delete/**", ".archive/**"]
+      },
+      "minItems": 0
+    },
+
+    "notes": {
+      "type": "string",
+      "description": "Free-form human notes about this project's organization philosophy, why certain rules were chosen, or observations from past runs. Not parsed by the workflow; purely for human context."
+    }
+
+  },
+
+  "definitions": {
+
+    "rule": {
+      "type": "object",
+      "description": "A single classification rule. Evaluated by TRIAGE in priority-descending order during MAINTENANCE. First-match wins. Rules are append-only; disable via active=false, never delete.",
+      "required": ["id", "created", "kind", "pattern", "destination", "priority", "active"],
+      "additionalProperties": false,
+      "properties": {
+
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this rule within the .organize.json. Conventionally 'r<index>' (e.g., 'r1', 'r2'). Once assigned, never reused — even after a rule is deactivated.",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+          "examples": ["r1", "r7", "proposed-r12"]
+        },
+
+        "created": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when this rule was created (either during BOOTSTRAP or when a FLAG_NEW_RULE candidate was ratified).",
+          "format": "date-time"
+        },
+
+        "kind": {
+          "type": "string",
+          "description": "How the pattern field is interpreted by TRIAGE. 'glob' uses standard glob matching against file path. 'regex' applies regex match to file path (anchored as-written). 'hint' is a natural-language rule that TRIAGE interprets using full file content + path as evidence — cannot be evaluated mechanically. See ORGANIZE_RULE_FORMAT.md for full semantics.",
+          "enum": ["glob", "regex", "hint"]
+        },
+
+        "pattern": {
+          "type": "string",
+          "description": "The pattern expression. For kind=glob: standard glob (e.g., 'src/**/*.py', '**/test_*.py'). For kind=regex: regex string (e.g., '^tests/.*\\.py$'). For kind=hint: natural-language description of the rule (e.g., 'Python files without pytest imports and without test_ prefix in filename are not tests and should not be moved to tests/').",
+          "minLength": 1
+        },
+
+        "destination": {
+          "type": "string",
+          "description": "Where a matching file should go. 'IN_PLACE' means the file is already at its canonical location — no move needed. A relative path (e.g., 'tests/', 'docs/', 'scripts/') means move the file there. '.delete' means quarantine to .delete/ (garbage — scratch, broken, orphaned). '.archive' means quarantine to .archive/ (historical, intellectual value preserved). All moves are reversible — ORGANIZE never deletes.",
+          "examples": ["IN_PLACE", "tests/", "docs/", "scripts/", ".delete", ".archive"]
+        },
+
+        "priority": {
+          "type": "integer",
+          "description": "Evaluation order within the sorted rule list. Higher integers are evaluated first. First-match wins (unless continue-matching is set — a future flag, not in v0.1.0). Conventional ranges: 100+ for precise canonical rules (src/**, tests/**), 80-99 for secondary structural rules (docs/**, scripts/**), 50-79 for pattern rules (loose markdown), 20-49 for cruft/archival rules (scratch*, notes[0-9]*).",
+          "minimum": 0
+        },
+
+        "active": {
+          "type": "boolean",
+          "description": "Whether this rule is enforced during MAINTENANCE. Set to false to disable without removing. APPEND-ONLY INVARIANT: rules are never deleted — deactivate via active=false and record the reason in the note field."
+        },
+
+        "note": {
+          "type": "string",
+          "description": "One-line rationale explaining why this rule exists (or, if active=false, why it was deactivated). Required by convention though not schema-enforced. Future readers depend on this for understanding the project's organization intent."
+        }
+
+      }
+    },
+
+    "quarantine_event": {
+      "type": "object",
+      "description": "A single quarantine record created when a file is moved to .delete/ or .archive/. APPEND-ONLY: never mutated or removed. Provides a permanent audit trail for manual recovery.",
+      "required": ["run", "timestamp", "file", "destination", "reason", "ratified_by"],
+      "additionalProperties": false,
+      "properties": {
+
+        "run": {
+          "type": "integer",
+          "description": "The circuit number (from the runs counter) during which this quarantine event occurred.",
+          "minimum": 1
+        },
+
+        "timestamp": {
+          "type": "string",
+          "description": "ISO 8601 timestamp when the move was executed.",
+          "format": "date-time"
+        },
+
+        "file": {
+          "type": "string",
+          "description": "Original path of the quarantined file, relative to target_dir. The file was moved to <quarantine_root>/<file> preserving this relative path.",
+          "examples": ["scratch.py", "src/old_utils.py", "notes2.md"]
+        },
+
+        "destination": {
+          "type": "string",
+          "description": "Which quarantine destination received this file.",
+          "enum": [".delete", ".archive"]
+        },
+
+        "reason": {
+          "type": "string",
+          "description": "Human-readable explanation from TRIAGE's verdict rationale: why this file was quarantined.",
+          "minLength": 1
+        },
+
+        "ratified_by": {
+          "type": "string",
+          "description": "Who authorized the quarantine move. 'user' means the user explicitly approved during the ratification dialog. 'auto' is reserved for future blanket-approval rules (not implemented in v0.1.0 — all moves require user ratification).",
+          "enum": ["user", "auto"]
+        },
+
+        "untracked_at_move": {
+          "type": "boolean",
+          "description": "True if the file was not tracked by git at the time of the move. In this case ORGANIZE used plain mv instead of git mv, and git tracking was lost. Logged per the git_mv_only hard rule from ORGANIZE_WORKFLOW.json."
+        }
+
+      }
+    },
+
+    "rule_candidate": {
+      "type": "object",
+      "description": "A FLAG_NEW_RULE suggestion from TRIAGE. Represents a recurring pattern observed in a batch that has no covering rule. User may ratify (copies the suggested_rule into the rules array), reject (marks status=rejected; entry remains for history), or leave pending. APPEND-ONLY: entries are never removed; only status field is updated.",
+      "required": ["surfaced_run", "pattern_observed", "suggested_rule", "rationale", "status"],
+      "additionalProperties": false,
+      "properties": {
+
+        "surfaced_run": {
+          "type": "integer",
+          "description": "The circuit number during which TRIAGE flagged this candidate.",
+          "minimum": 1
+        },
+
+        "pattern_observed": {
+          "type": "string",
+          "description": "Human-readable description of the observed file pattern that prompted this candidate. Typically the file extension + directory context (e.g., '4 files matching *.bench.py in project root with no benchmark rule').",
+          "minLength": 1
+        },
+
+        "suggested_rule": {
+          "$ref": "#/definitions/rule",
+          "description": "The full rule object that TRIAGE proposed. If ratified by the user, this object is copied verbatim into the rules array."
+        },
+
+        "rationale": {
+          "type": "string",
+          "description": "TRIAGE's explanation for why this rule should exist, grounded in evidence from the files observed.",
+          "minLength": 1
+        },
+
+        "status": {
+          "type": "string",
+          "description": "Lifecycle state of this candidate. 'pending' = awaiting user decision. 'ratified' = user approved; rule has been copied to the rules array. 'rejected' = user declined; entry retained for historical reference.",
+          "enum": ["pending", "ratified", "rejected"]
+        }
+
+      }
+    }
+
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "version": "1.1.0",
+  "name": "BOOK_TRIAGE",
+  "description": "Pre-check routing operation for the BOOK workflow family. Classifies an input folder of written material, produces a BOOK_MANIFEST.json, and recommends which BOOK workflow to enter. Not a full swarm workflow — no worker spawning, no QA loops, no verdicts. A single-pass QUEEN-level classification. v1.1.0 extends v1.0.0 with per-chapter state classification (Step 3.5) when manifest scope is present. Backward-compatible: manifests without scope fall back to v1.0.0 aggregate-only behavior. Triggered by the phrase 'BOOK_TRIAGE'. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation).",
+
+  "trigger": {
+    "phrase": "BOOK_TRIAGE",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reports: 'BOOK_TRIAGE mode engaged. Ready. Point me to the source folder.'",
+      "QUEEN waits for explicit human direction specifying the folder path"
+    ],
+    "source_folder_requires": "explicit human direction specifying the directory containing source documents"
+  },
+
+  "relationship_to_book_family": {
+    "position": "gateway",
+    "output_is_input_to": "all BOOK workflows",
+    "contract": "BOOK_TRIAGE produces BOOK_MANIFEST.json which all downstream BOOK workflows consume. TRIAGE determines entry point; human confirms.",
+    "handoff": "On triage completion, human reviews BOOK_MANIFEST.json, fills template declarations, and triggers the recommended (or overridden) BOOK workflow."
+  },
+
+  "nature": "single_pass_classification",
+  "is_full_workflow": false,
+  "has_worker_spawning": false,
+  "has_qa_loop": false,
+  "has_verdicts": false,
+
+  "execution": {
+    "performer": "QUEEN",
+    "type": "automation",
+    "steps": {
+      "step_1_inventory": {
+        "name": "INVENTORY",
+        "actions": [
+          "list all files in the source folder recursively",
+          "count files by type (.md, .txt, .tex, .docx, .pdf, etc.)",
+          "note any existing structural files (TOC, README, chapter ordering, table of contents)",
+          "note any existing manifest or configuration files",
+          "produce file list with paths, sizes, and types"
+        ]
+      },
+      "step_2_sampling": {
+        "name": "SAMPLING",
+        "actions": [
+          "read the first ~100 lines and last ~50 lines of each text-based file",
+          "for each file, identify: file length (lines/words), presence of headers/structure, prose quality assessment, presence of TOC or chapter markers, presence of citations, presence of equations/figures/code, detected date/epoch if visible"
+        ]
+      },
+      "step_3_per_file_classification": {
+        "name": "FILE_CLASSIFICATION",
+        "categories": {
+          "fragment": "short, unstructured, note-like, incomplete thoughts, research snippets",
+          "draft": "has structure (headers, sections) but prose is rough, incomplete, or contains TODO markers",
+          "chapter": "structured, substantial prose, appears to be a complete chapter or major section",
+          "polished": "structured, complete, prose is publication-quality or near it"
+        },
+        "actions": [
+          "classify each file into one of the four categories",
+          "note confidence level for each classification (high/medium/low)",
+          "note any files that don't fit cleanly (e.g., a bibliography file, a glossary, an outline)"
+        ]
+      },
+      "step_4_aggregate_assessment": {
+        "name": "AGGREGATE",
+        "quality_levels": {
+          "rough": "majority fragments and drafts, no coherent chapter structure → recommend BOOK_CONSOLIDATION",
+          "structured": "majority chapters, some coherent ordering exists but no storyboard/arc → recommend BOOK_STORYBOARD",
+          "storyboarded": "chapters exist with clear logical progression and pedagogical structure → recommend BOOK_EDITORIAL",
+          "polished": "prose is complete, consistent, and high quality → recommend BOOK_PRODUCTION"
+        },
+        "actions": [
+          "determine overall folder state based on file classifications",
+          "identify the recommended entry workflow",
+          "note any caveats (e.g., 'mostly structured but 3 files are fragments that need consolidation first')"
+        ]
+      },
+      "step_5_genre_detection": {
+        "name": "GENRE_DETECTION",
+        "actions": [
+          "attempt to identify genre from content (academic, exploratory, meta-study, hard sci-fi, math exposition, etc.)",
+          "attempt to identify voice patterns (Socratic, Feynman, authoritative, conversational, etc.)",
+          "attempt to identify target audience (bright students, peer researchers, general audience, etc.)",
+          "these are SUGGESTIONS — human fills in definitive values in manifest"
+        ]
+      },
+      "step_3_5_per_chapter_classification": {
+        "name": "PER_CHAPTER_CLASSIFICATION",
+        "condition": "only runs if BOOK_MANIFEST.json already exists at project root with a 'scope' section containing 'intended_chapters'",
+        "skip_condition": "if no scope present in manifest — falls back to v1.0.0 aggregate-only behavior (step_4_aggregate_assessment output is the final classification)",
+        "actions": [
+          "read scope.intended_chapters from existing BOOK_MANIFEST.json",
+          "for each intended chapter entry: search all source files for content matching chapter.target_topic",
+          "classify each intended chapter using CHAPTER_STATE_TAXONOMY.md vocabulary: MISSING | OUTLINE_ONLY | NOTES_ONLY | PARTIALLY_DRAFTED | DRAFT | CHAPTER | POLISHED",
+          "assign confidence level (high/medium/low) to each classification",
+          "record which source_files were associated with each chapter",
+          "produce triage.per_chapter_state array: [{ chapter_index, chapter_title, detected_state, confidence, source_files, notes }]",
+          "update scope.intended_chapters[].status with detected state for each chapter",
+          "note: if aggregate_assessment from step_4 is 'rough' and scope is present, recommend BOOK_COMPLETION as entry workflow (not BOOK_CONSOLIDATION)"
+        ],
+        "outputs": [
+          "triage.per_chapter_state — per-chapter state classifications",
+          "updated scope.intended_chapters[].status fields",
+          "possibly updated recommended_entry (BOOK_COMPLETION if mixed states detected)"
+        ],
+        "reference": "workflows/BOOK/CHAPTER_STATE_TAXONOMY.md — state definitions and detection heuristics"
+      },
+      "step_6_produce_manifest": {
+        "name": "MANIFEST_GENERATION",
+        "actions": [
+          "write BOOK_MANIFEST.json to project root",
+          "fill triage section completely (including per_chapter_state if step_3_5 ran)",
+          "fill templates section with best-guess suggestions or explicit placeholders",
+          "fill structure section with detected values or placeholders",
+          "fill production section with placeholders (human specifies)"
+        ]
+      },
+      "step_7_report": {
+        "name": "REPORT",
+        "actions": [
+          "present triage findings to human: file count, per-file classification table, aggregate assessment, recommended entry workflow, template suggestions, any caveats",
+          "instruct human to review and edit BOOK_MANIFEST.json before triggering next workflow",
+          "report engagement phrase for recommended workflow"
+        ]
+      }
+    }
+  },
+
+  "manifest_schema": {
+    "version": "1.1.0",
+    "backward_compatible_with": "1.0.0",
+    "changelog": "v1.1.0 adds scope section (intended_chapters, scope_declared_at, scope_revision_log) and per_chapter_state to triage section. Manifests without scope are still valid and fall back to v1.0.0 behavior.",
+    "fields": {
+      "title": "string — book title (human fills)",
+      "author": "string — author name (human fills)",
+      "project_root": "string — path to project root (TRIAGE fills)",
+
+      "triage": {
+        "performed_at": "ISO timestamp (TRIAGE fills)",
+        "file_count": "integer (TRIAGE fills)",
+        "quality_assessment": "rough | structured | storyboarded | polished (TRIAGE fills)",
+        "recommended_entry": "BOOK_CONSOLIDATION | BOOK_STORYBOARD | BOOK_EDITORIAL | BOOK_PRODUCTION | BOOK_COMPLETION (TRIAGE fills; BOOK_COMPLETION recommended when scope present and mixed states detected)",
+        "per_file_classifications": "array of {file, category, confidence, notes} (TRIAGE fills)",
+        "per_chapter_state": "array of {chapter_index, chapter_title, detected_state, confidence, source_files, notes} (TRIAGE v1.1 fills when scope present; absent when no scope)",
+        "notes": "string — triage observations (TRIAGE fills)"
+      },
+
+      "scope": {
+        "_note": "OPTIONAL — v1.1.0 addition. If absent, TRIAGE behaves as v1.0.0. Schema documented in workflows/BOOK/BOOK_MANIFEST_SCOPE.md",
+        "scope_declared_at": "ISO timestamp (human fills when declaring scope)",
+        "scope_revision_log": "array of revision entries (append-only; empty array if scope never revised)",
+        "intended_chapters": "array of { index, title, slug, target_topic, target_length_words, rationale, status } (human fills; TRIAGE v1.1 fills status field)"
+      },
+
+      "templates": {
+        "mode": "bundle | composition (human fills)",
+        "bundle": "string — BUNDLE_<name> if mode=bundle (human fills)",
+        "voice": "string — VOICE_<name> if mode=composition (human fills, TRIAGE suggests)",
+        "persona": "string — PERSONA_<name> if mode=composition (human fills, TRIAGE suggests)",
+        "style": "string — STYLE_<name> if mode=composition (human fills, TRIAGE suggests)",
+        "prose": "string — PROSE_<name> if mode=composition (human fills, TRIAGE suggests)"
+      },
+
+      "structure": {
+        "genre": "string — genre classification (human fills, TRIAGE suggests)",
+        "target_audience": "string — intended reader description (human fills)",
+        "estimated_chapters": "integer or null (TRIAGE estimates, human confirms)",
+        "front_matter": "array of strings — ordered list of front matter sections (human fills)",
+        "back_matter": "array of strings — ordered list of back matter sections (human fills)",
+        "special_elements": "array of strings — equations, figures, tables, code, proofs, etc. (TRIAGE detects, human confirms)"
+      },
+
+      "production": {
+        "target_format": "lulu | other (human fills)",
+        "trim_size": "string — e.g., 6x9 (human fills)",
+        "color_interior": "boolean (human fills)",
+        "template_id": "string — production template reference (human fills or deferred to BOOK_PRODUCTION)"
+      }
+    }
+  },
+
+  "output": {
+    "files": ["BOOK_MANIFEST.json"],
+    "location": "project root"
+  },
+
+  "hard_rules": {
+    "triage_is_single_pass": true,
+    "no_worker_spawning": true,
+    "no_qa_loop": true,
+    "manifest_template_fields_are_suggestions_not_mandates": true,
+    "human_reviews_and_edits_manifest_before_downstream": true,
+    "triage_does_not_modify_source_files": true
+  },
+
+  "notes": {
+    "re_triage": "There is no 're-triage' operation. If the human disagrees with the assessment, they edit BOOK_MANIFEST.json directly. TRIAGE is a one-shot classification.",
+    "template_resolution": "TRIAGE may suggest templates if it recognizes voice/style patterns in the source material, but template declarations are ultimately human-owned. TRIAGE suggestions go in the manifest as placeholders that the human confirms or overrides.",
+    "entry_flexibility": "The human can override TRIAGE's recommended entry workflow. A folder TRIAGE classifies as 'rough' can be entered at BOOK_EDITORIAL if the human knows the material is actually polished — TRIAGE recommends, human decides.",
+    "v1_1_scope_note": "When scope is present (v1.1.0 behavior), TRIAGE recommends BOOK_COMPLETION if it detects mixed states (some chapters present, some absent). The human may override. BOOK_COMPLETION requires the scope section to function — do not trigger BOOK_COMPLETION without it.",
+    "per_chapter_state_note": "The per_chapter_state array in the triage section is TRIAGE v1.1's primary new output. It is consumed by BOOK_COMPLETION. If TRIAGE is re-run (e.g., after the human adds more source files), per_chapter_state is updated in place.",
+    "taxonomy_reference": "State vocabulary for per_chapter_state classification: workflows/BOOK/CHAPTER_STATE_TAXONOMY.md",
+    "scope_schema_reference": "Full scope section schema: workflows/BOOK/BOOK_MANIFEST_SCOPE.md"
+  }
+}

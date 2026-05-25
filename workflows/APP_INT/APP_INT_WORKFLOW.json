@@ -1,0 +1,381 @@
+{
+  "version": "1.0.0",
+  "name": "APP_INT_WORKFLOW",
+  "description": "Layer 3 application integration workflow. Drives the three-phase process of integrating a curated app into the Fantasy OS theming and data systems: P1 (template theming), P2 (source fork + behavioral unification), P3 (deep ownership: libfantasy rebuild, SQLite unification, live reload). Input spec comes from apps/docs/APP-TASKS.md (per-app checklist) and apps/docs/PHASE-PATTERNS.md (per-category generic checklist). Source work happens in src/<app-id>/. Triggered by the phrase 'APP_INT_WORKFLOW' or natural language. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrases": [
+      "APP_INT_WORKFLOW",
+      "integrate",
+      "start phase",
+      "do phase",
+      "work on"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_extract_or_ask",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/APP_INT/WORKER_SURVEYOR.md, WORKER_PATCHER.md, WORKER_QA_CHECKLIST.md",
+      "QUEEN extracts: app_id (e.g. 'celluloid'), phase_target (P1 | P2 | P3 | P1+P2 | all)",
+      "QUEEN reads apps/docs/APP-TASKS.md entry for the app — extracts Category tag and phase checklists",
+      "QUEEN reads apps/docs/PHASE-PATTERNS.md section for the app's Category",
+      "QUEEN reports: 'APP_INT_WORKFLOW engaged. App: <app_id>. Category: <category>. Phase target: <phases>. Source at: src/<app_id>/. Proceeding to SURVEY.'",
+      "QUEEN spawns SURVEYOR immediately (no manual direction needed — app + phase were specified in invocation)"
+    ],
+    "parameters_required": "app_id + phase_target. If ambiguous, QUEEN asks before proceeding.",
+    "parameter_defaults": {
+      "phase_target": "P1 — if only app is named with no phase, default to P1 only and ask before continuing to P2"
+    }
+  },
+
+  "context": {
+    "spec_sources": {
+      "per_app_checklist": "apps/docs/APP-TASKS.md — find the app's ## section; read the full entry including Category tag, all three phase checklists, effort estimates, and any app-specific notes",
+      "category_pattern": "apps/docs/PHASE-PATTERNS.md — read the section matching the app's Category tag (e.g. §GTK4-GNOME, §GTK3-FORK, §QT-ACCEPT, §OWN-RENDERER, etc.) for the full generic Phase 2 and Phase 3 checklists",
+      "fleet_status": "apps/docs/APP-TASKS.md §Fleet Layer 2 Status — check which gaps (G1-G6) and which fleet tools (SIBYL, PHEME, ARGUS, IRIS, libfantasy) are actually available for use in P2/P3 tasks"
+    },
+    "source_root": "CONTROLLER/src/<app_id>/ — the cloned upstream repo that serves as our fork base",
+    "integration_docs_root": "apps/docs/integration/<app_id>/ — created by SURVEYOR on first run",
+    "palette_json_location": "rice/palettes/<current>.json — the active OS color palette; referenced by all template and patch work",
+    "rice_templates_root": "lang/rice/components/11-theme-engine/impl/templates/ — verified 2026-04-26 during Celluloid P1; gtk4-css.tmpl and gtk3-css.tmpl live at .../templates/gtk/; new per-app templates for OWN-RENDERER and browser apps go at .../templates/<app_id>/; TERMINAL templates go under lang/rice/components/06-terminal/templates/<app_id>/",
+    "phase_patterns_location": "apps/docs/PHASE-PATTERNS.md",
+    "app_tasks_location": "apps/docs/APP-TASKS.md"
+  },
+
+  "document_conventions": {
+    "survey_file": "apps/docs/integration/<app_id>/SURVEY.md — produced by SURVEYOR; maps every checklist item to specific source files and line numbers; shared across all phases; updated (not replaced) when new phases begin",
+    "inprogress_file": "apps/docs/integration/<app_id>/INPROGRESS.md — prepend-only log; dated blocks per phase per session",
+    "patches_file": "apps/docs/integration/<app_id>/PATCHES.md — running log of all patches applied: what was changed, where, why, which checklist item it satisfies",
+    "app_tasks_update": "on GREEN_LIGHT, QUEEN toggles completed checklist items in apps/docs/APP-TASKS.md from [ ] to [x]",
+    "inprogress_update_mode": "prepend_only_except_checkboxes",
+    "survey_update_mode": "append new phase section; never delete prior phase survey entries",
+    "sqlite_eval_file": "apps/docs/integration/<app_id>/SQLITE_EVAL.md — produced by SQLITE_EVAL in P1; contains integration category (NATIVE_SQLITE / DCONF_BRIDGE / XML_OR_OTHER / NO_DATA), full data inventory, effort estimate, and P2/P3 action items; persists across phases",
+    "no_delete_policy": "all integration docs are append-only historical record"
+  },
+
+  "branch_conventions": {
+    "pattern": "int/<app_id>-p<N>",
+    "examples": ["int/celluloid-p1", "int/celluloid-p2", "int/cherrytree-p1"],
+    "base": "main",
+    "source_branch_scope": "The branch lives on the source repo (src/<app_id>/), not on the apps/ planning docs repo. Source patches go on the int/ branch. Planning doc updates (APP-TASKS.md checkboxes, INPROGRESS.md) go directly to apps/ main.",
+    "merge_strategy": "squash on GREEN_LIGHT",
+    "merge_commit_pattern": "INT-<app_id>-P<N>: <one-line summary>\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+    "attempt_preservation": "int/<app_id>-p<N>-attempt-<N> — preserved on REVISIT cycles"
+  },
+
+  "phases": {
+    "P1": {
+      "name": "Template theming",
+      "description": "Verify the app is reached by the OS theme engine. For GTK4-GNOME/GTK3 apps: verify gtk4-css.tmpl or gtk3-css.tmpl applies to all major surfaces. For OWN-RENDERER apps: write the IRIS Tera template that maps palette JSON to the app's color config. For TERMINAL apps: verify ANSI color derivation. No source modification except config templates.",
+      "workers": ["SURVEYOR (if not already done)", "SQLITE_EVAL", "THEME_VERIFY", "QA_CHECKLIST"],
+      "outputs": ["SQLITE_EVAL.md (data store evaluation + P2/P3 action items)", "IRIS Tera template file (if new template needed)", "documented theming gaps", "reload mechanism confirmed"],
+      "acceptance": "All P1 checklist items in APP-TASKS.md entry are [x] or [—]",
+      "source_changes": "config templates only (no app source code modification in P1)"
+    },
+    "P2": {
+      "name": "Source fork + behavioral unification",
+      "description": "Fork the upstream repo. Apply behavioral patches: keybind audit and fixes, menu bar removal / rofi command palette, dialog standardization, vim navigation in tree/list views, profile awareness (_NET_WM_PROFILE read at startup), icon replacement, dconf-sqlite bridge registration. Category-specific: see PHASE-PATTERNS.md §<Category> Phase 2 checklist.",
+      "workers": ["SURVEYOR (update for P2 scope)", "PATCHER", "QA_CHECKLIST"],
+      "prerequisites": ["P1 GREEN_LIGHT"],
+      "outputs": ["patched source on int/<app_id>-p2 branch", "build verification (meson build && ninja -C build)", "PATCHES.md entries for all changes"],
+      "acceptance": "All P2 checklist items in APP-TASKS.md entry are [x] or [—]; build succeeds cleanly; no regressions on P1 theming"
+    },
+    "P3": {
+      "name": "Deep ownership",
+      "description": "Rebuild against libfantasy (for GTK4-GNOME apps: swap libadwaita-1 dependency). Wire dconf-sqlite bridge if not done in P2. Register with configd blobstore. Register SQLite databases with unified search (SIBYL provider). Add live palette reload via libfantasy D-Bus signal or inotify watch. Profile-aware data paths. Category-specific: see PHASE-PATTERNS.md §<Category> Phase 3 checklist.",
+      "workers": ["SURVEYOR (update for P3 scope)", "PORTER", "QA_CHECKLIST"],
+      "prerequisites": ["P2 GREEN_LIGHT", "libfantasy available at expected path (check fleet status — PROJECT-PYGMA + libfantasy must be built)"],
+      "outputs": ["app rebuilt against libfantasy", "live reload verified", "unified search registration", "PATCHES.md entries"],
+      "acceptance": "All P3 checklist items in APP-TASKS.md entry are [x] or [—]; build succeeds against libfantasy; live reload verified; app entry in configd blobstore"
+    }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "worker_agent_type_note": "QA_CHECKLIST uses Explore (read-only; verdict returned as response text); all other workers (SURVEYOR, SQLITE_EVAL, THEME_VERIFY, PATCHER, PORTER) use general-purpose (file write required). Never spawn SURVEYOR, SQLITE_EVAL, THEME_VERIFY, PATCHER, or PORTER as Explore.",
+      "description": "QUEEN is Claude in the main conversation when APP_INT_WORKFLOW is active. Reads app entry + category pattern, assembles worker context packets, spawns workers, writes INPROGRESS, enforces loop limits, executes verdicts.",
+      "app_int_specific_responsibilities": [
+        "Read APP-TASKS.md entry for the target app before any worker spawning",
+        "Read PHASE-PATTERNS.md section for the app's Category before any worker spawning",
+        "Verify phase prerequisites (P1 green before P2, P2 green before P3)",
+        "Check that src/<app_id>/ exists before SURVEYOR; if not, instruct human to git clone first",
+        "After GREEN_LIGHT: toggle completed checklist items in APP-TASKS.md from [ ] to [x]",
+        "After GREEN_LIGHT: upsert phase completion block into apps/docs/integration/<app_id>/INPROGRESS.md"
+      ]
+    },
+    "SURVEYOR": {
+      "type": "worker",
+      "agent_type": "general-purpose",
+      "doc": "workflows/APP_INT/WORKER_SURVEYOR.md",
+      "context_access": "read-only on src/<app_id>/; read-write on apps/docs/integration/<app_id>/",
+      "description": "First worker for any phase. Reads the app source strategically, maps each checklist item from the APP-TASKS.md entry and PHASE-PATTERNS.md category section to specific source files and line numbers. Produces or updates SURVEY.md. Does not write any source patches.",
+      "runs_when": "start of every phase (P1, P2, P3); can be re-run if source changes",
+      "produces": ["apps/docs/integration/<app_id>/SURVEY.md — structured mapping of checklist items to source locations"],
+      "key_reads": [
+        "apps/docs/APP-TASKS.md — the app's full entry (Category, all phase checklists, effort estimates)",
+        "apps/docs/PHASE-PATTERNS.md — the section for the app's Category",
+        "src/<app_id>/meson.build or Cargo.toml — confirm actual toolkit version (may differ from planning docs)",
+        "src/<app_id>/src/*.{c,rs,py} — source files relevant to current phase checklist items",
+        "src/<app_id>/data/*.{gschema.xml,css,ui} — schema, styles, UI definitions",
+        "apps/docs/integration/<app_id>/SURVEY.md — prior survey entries (append new phase section)"
+      ],
+      "discipline": [
+        "full-read-or-skip — never partial-scan source files",
+        "flag toolkit mismatches immediately (e.g. app listed as GTK3 in APP-TASKS.md but meson.build says gtk4)",
+        "flag any Category mismatch between APP-TASKS.md and what the source reveals",
+        "every claim in SURVEY.md cites a specific file and line number",
+        "read-only on source"
+      ]
+    },
+    "SQLITE_EVAL": {
+      "type": "worker",
+      "agent_type": "general-purpose",
+      "doc": "workflows/APP_INT/WORKER_SQLITE_EVAL.md",
+      "context_access": "read-only on src/<app_id>/; read-write on apps/docs/integration/<app_id>/",
+      "description": "P1 worker. Performs a full evaluation of the SQLite integration effort for this specific app. Categorizes the app's data storage approach, inventories all persistent data stores, and produces a structured recommendation for P2/P3 integration work. Does not write patches.",
+      "storage_categories": {
+        "NATIVE_SQLITE": "App already uses SQLite natively — identify .db file paths, schema (tables, columns), searchable content, and SIBYL registration approach",
+        "DCONF_BRIDGE": "GTK app uses GSettings/dconf — bridge to SQLite is the integration path; inventory all schema keys and their discoverability value",
+        "XML_OR_OTHER": "App uses XML, INI, JSON, or binary flat files — evaluate migration effort and whether a SIBYL provider is warranted",
+        "NO_DATA": "App has no persistent user data worth indexing — document and mark N/A for SQLite integration"
+      },
+      "runs_when": "P1 only (evaluation runs once; P2/P3 act on the recommendation)",
+      "produces": [
+        "apps/docs/integration/<app_id>/SQLITE_EVAL.md — structured evaluation report with integration category, data inventory, effort estimate, and P2/P3 action items"
+      ],
+      "triggered_by": ["QUEEN after SURVEYOR completes P1 survey"]
+    },
+    "THEME_VERIFY": {
+      "type": "worker",
+      "agent_type": "general-purpose",
+      "doc": "workflows/APP_INT/WORKER_THEME_VERIFY.md",
+      "context_access": "read on src/<app_id>/; write on lang/rice/components/11-theme-engine/impl/templates/<app_id>/",
+      "description": "P1 worker. Universal toolkit-agnostic theme verification and template creation. Determines how the OS theme engine reaches this app, verifies coverage of all major UI surfaces, documents any unthemeable gaps (e.g. GL render areas), creates or verifies IRIS Tera templates as needed, and confirms the reload mechanism. Covers all 11 app categories.",
+      "runs_when": "P1 only",
+      "produces": [
+        "lang/rice/components/11-theme-engine/impl/templates/<app_id>/<config>.tmpl (IRIS Tera format) — new template if category requires it (OWN-RENDERER, browser apps; TERMINAL templates go under lang/rice/components/06-terminal/templates/<app_id>/ instead)",
+        "documented theming coverage table: each major UI surface → themed / gap / N/A",
+        "documented reload mechanism"
+      ],
+      "toolkit_dispatch": {
+        "GTK4-GNOME": "verify gtk4-css.tmpl reaches all major surfaces; document any GL/epoxy surfaces as unthemeable gaps; reload via xsettingsd SIGHUP or pkill -HUP",
+        "GTK3-FORK": "verify gtk3-css.tmpl applies to all major surfaces; audit any custom GtkDrawingArea surfaces; reload via xsettingsd",
+        "GTK3-ACCEPT": "same verification as GTK3-FORK but source is read-only — document gaps without patching",
+        "GTK3-BROWSER": "userChrome.css approach; verify palette variables reach browser chrome and content area; document about:config prefs needed",
+        "QT-ACCEPT": "qt5ct or qt6ct palette config file; verify QPA theme plugin loaded; no source modification needed",
+        "QT-REPLACE": "as QT-ACCEPT — we control the Qt config file path",
+        "QT-FORK-UI": "as QT-ACCEPT but source-level Qt theme code is a candidate for P2 patching",
+        "OWN-RENDERER": "write IRIS Tera template for the app's native color config format; map every color slot to closest palette.json key; run iris render to verify output",
+        "TERMINAL": "verify ANSI color derivation from palette; write or verify derivation script; confirm terminal color config format (e.g. Xresources, alacritty.toml, foot.ini)",
+        "DAEMON": "usually no visible UI — document if terminal output colorization applies; otherwise mark theme scope as N/A",
+        "TOR-ISOLATED": "sandboxed profile — document isolation constraints; apply userChrome.css if supported; note what palette variables are achievable within sandbox"
+      },
+      "triggered_by": ["QUEEN after SQLITE_EVAL completes"]
+    },
+    "PATCHER": {
+      "type": "worker",
+      "agent_type": "general-purpose",
+      "doc": "workflows/APP_INT/WORKER_PATCHER.md",
+      "context_access": "full on src/<app_id>/; read on SURVEY.md, PHASE-PATTERNS.md §<Category>, APP-TASKS.md entry",
+      "description": "P2 worker. Applies source code patches to the forked app repo per the P2 checklist in PHASE-PATTERNS.md §<Category> and the app-specific P2 items in APP-TASKS.md. Uses SURVEY.md to know exactly which files and lines to touch. Commits work in logical units. Runs build verification after all patches applied.",
+      "runs_when": "P2 only",
+      "produces": [
+        "source patches on int/<app_id>-p2 branch",
+        "build verification: meson build && ninja -C build (or cargo check) output",
+        "PATCHES.md entries for each change"
+      ],
+      "build_verification_command": {
+        "meson": "cd src/<app_id> && meson setup build-int --buildtype=debug && ninja -C build-int 2>&1 | tail -20",
+        "cargo": "cd src/<app_id> && cargo check 2>&1 | tail -20"
+      },
+      "commit_discipline": [
+        "one commit per logical P2 checklist item (keybind audit, menu removal, dialog std, vim nav, profile awareness, icon replacement, dconf-sqlite registration)",
+        "commit message: 'INT-P2-<item>: <one-line description>'",
+        "never --no-verify",
+        "build must pass before reporting GREEN_LIGHT"
+      ],
+      "triggered_by": ["QUEEN after SURVEYOR P2 update completes"]
+    },
+    "PORTER": {
+      "type": "worker",
+      "agent_type": "general-purpose",
+      "doc": "workflows/APP_INT/WORKER_PATCHER.md",
+      "context_access": "full on src/<app_id>/; read on SURVEY.md, PHASE-PATTERNS.md §<Category>, APP-TASKS.md entry",
+      "description": "P3 worker. Executes the P3 checklist: libfantasy dependency swap, dconf-sqlite bridge wiring, configd blobstore registration, unified search provider registration, live palette reload via D-Bus signal or inotify. Verifies the app builds and runs against libfantasy.",
+      "runs_when": "P3 only",
+      "prerequisite_check": "before patching, verify libfantasy is built and available at the expected path; if not, report BLOCKED with instructions",
+      "produces": [
+        "source patches on int/<app_id>-p3 branch",
+        "build verification against libfantasy",
+        "PATCHES.md entries"
+      ],
+      "triggered_by": ["QUEEN after SURVEYOR P3 update completes"]
+    },
+    "QA_CHECKLIST": {
+      "type": "worker",
+      "agent_type": "Explore",
+      "doc": "workflows/APP_INT/WORKER_QA_CHECKLIST.md",
+      "context_access": "full — reads PATCHER/PORTER output, SURVEY.md, PATCHES.md, phase checklist from PHASE-PATTERNS.md and APP-TASKS.md",
+      "description": "Checklist verifier. Compares the PATCHER/PORTER's PATCHES.md and the SURVEY.md against each checklist item in the current phase. For each item: ADDRESSED (patch exists and is correct), PARTIAL (patch exists but incomplete), MISSING (not touched), DEFERRED (explicitly documented as deferred with rationale), or N/A (not applicable to this app as documented in SURVEY). Emits the phase verdict.",
+      "stance": "conservative — when in doubt, mark PARTIAL not ADDRESSED; MISSING items block GREEN_LIGHT",
+      "produces": [
+        "per-item audit: each checklist item in the phase with verdict (ADDRESSED | PARTIAL | MISSING | DEFERRED | N/A)",
+        "build verification status (did PATCHER's build actually succeed?)",
+        "phase verdict: GREEN_LIGHT | REVISIT | ESCALATE | DEFER_PHASE"
+      ],
+      "triggered_by": ["QUEEN after THEME_VERIFY completes (P1) or after PATCHER/PORTER completes (P2/P3)"]
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "actions": [
+        "verify src/<app_id>/ exists (if not: instruct human to run 'git clone <url>' first; halt)",
+        "verify phase prerequisites: P2 requires P1 GREEN_LIGHT in INPROGRESS; P3 requires P2 GREEN_LIGHT",
+        "create integration docs dir: apps/docs/integration/<app_id>/ (if not exists)",
+        "create branch on src/<app_id>/: git -C src/<app_id> checkout -b int/<app_id>-p<N>",
+        "initialize or update INPROGRESS.md: prepend new phase block with date, app_id, phase, category",
+        "assemble SURVEYOR context packet",
+        "spawn SURVEYOR"
+      ]
+    },
+    "p1_sequence": [
+      "PRESTEP",
+      "SURVEYOR: read source, map P1 checklist items to source files, note any toolkit/category mismatches",
+      "QUEEN: if toolkit or category mismatch found — update APP-TASKS.md entry accordingly, then re-read updated entry",
+      "SQLITE_EVAL: full evaluation of app's persistent data stores; categorize as NATIVE_SQLITE / DCONF_BRIDGE / XML_OR_OTHER / NO_DATA; produce SQLITE_EVAL.md with integration approach for P2/P3",
+      "THEME_VERIFY: determine how OS theme engine reaches this app (toolkit-dispatch); verify coverage per app category; create IRIS Tera template if needed; confirm reload mechanism",
+      "QA_CHECKLIST: verify all P1 items ADDRESSED or N/A or DEFERRED",
+      "QUEEN executes verdict"
+    ],
+    "p2_sequence": [
+      "PRESTEP (requires P1 GREEN_LIGHT)",
+      "SURVEYOR: update SURVEY.md with P2 scope — map keybind handlers, menu code, dialog code, GSettings locations, profile startup hook point",
+      "PATCHER: apply P2 patches per PHASE-PATTERNS.md §<Category> Phase 2 checklist + APP-TASKS.md P2 items",
+      "QA_CHECKLIST: per-item audit + build verification",
+      "QUEEN executes verdict"
+    ],
+    "p3_sequence": [
+      "PRESTEP (requires P2 GREEN_LIGHT)",
+      "QUEEN: check libfantasy built (verify fleet status; if PORTER will be blocked, warn human now)",
+      "SURVEYOR: update SURVEY.md with P3 scope — libfantasy swap point in build system, SQLite registration points, D-Bus signal hook points",
+      "PORTER: apply P3 patches",
+      "QA_CHECKLIST: per-item audit + libfantasy build verification",
+      "QUEEN executes verdict"
+    ],
+    "revisit_cycle": [
+      "QUEEN prepends REVISIT block to INPROGRESS with QA findings",
+      "rename branch: int/<app_id>-p<N>-attempt-<N>",
+      "create fresh branch from main: int/<app_id>-p<N>",
+      "re-enter PATCHER/PORTER with QA findings as input",
+      "re-run QA_CHECKLIST in full",
+      "revisit_counter++",
+      "if revisit_counter >= 2 and not GREEN_LIGHT: ESCALATE"
+    ]
+  },
+
+  "branch_outcomes": {
+    "GREEN_LIGHT": {
+      "trigger": "QA_CHECKLIST: all checklist items ADDRESSED, DEFERRED, or N/A; no MISSING or PARTIAL; build verified",
+      "terminal_for_phase": true,
+      "actions": [
+        "QUEEN writes phase completion summary",
+        "QUEEN prepends completion block to apps/docs/integration/<app_id>/INPROGRESS.md",
+        "QUEEN toggles completed items in apps/docs/APP-TASKS.md from [ ] to [x]",
+        "git -C src/<app_id> merge --squash int/<app_id>-p<N> onto main with clean commit message",
+        "git -C src/<app_id> branch -D int/<app_id>-p<N> (attempt branches preserved)",
+        "QUEEN reports completion; if phase_target includes next phase, asks human to confirm before proceeding"
+      ],
+      "deferred_items": "QA_CHECKLIST marks DEFERRED items with rationale in PATCHES.md; QUEEN notes them in completion summary; they carry over to the next phase's checklist or are tracked as known deferrals in APP-TASKS.md"
+    },
+    "REVISIT": {
+      "trigger": "QA_CHECKLIST: one or more MISSING or PARTIAL items; build passes; issues are fixable (not architectural)",
+      "terminal": false,
+      "next": "revisit_cycle",
+      "loop_guard": "revisit_counter; at 2, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "revisit_counter >= 2; OR build fails repeatedly; OR blocker that requires human decision (libfantasy not available, license issue, upstream API break, category correction needed)",
+      "terminal": false,
+      "actions": [
+        "QUEEN prepends escalation block to INPROGRESS with: app_id, phase, attempts, blocker description, recommendation",
+        "QUEEN pauses all workers",
+        "QUEEN reports to human with structured summary",
+        "QUEEN waits for human direction"
+      ]
+    },
+    "DEFER_PHASE": {
+      "trigger": "QA_CHECKLIST: all remaining items are explicitly deferred with rationale (e.g., libfantasy not yet available, upstream GTK4 port in progress, scope too large for current session)",
+      "terminal_for_phase": true,
+      "actions": [
+        "QUEEN writes deferral summary",
+        "QUEEN marks deferred items with [~] in APP-TASKS.md (partial / in progress)",
+        "QUEEN notes deferral rationale in INPROGRESS",
+        "branch preserved (not squashed); work paused until conditions change"
+      ]
+    }
+  },
+
+  "loop_limits": {
+    "revisit_attempts_per_phase": 2,
+    "counter_semantics": "revisit_counter resets to 0 on new phase; persistent within a phase"
+  },
+
+  "special_cases": {
+    "toolkit_mismatch": {
+      "description": "SURVEYOR reads meson.build/Cargo.toml and discovers the actual toolkit differs from what APP-TASKS.md says (e.g., app is GTK4 but listed as GTK3)",
+      "action": "SURVEYOR flags this in SURVEY.md; QUEEN updates APP-TASKS.md Category tag and re-reads the correct PHASE-PATTERNS.md section before spawning any patch worker; no branch is created until correction is confirmed"
+    },
+    "category_ambiguity": {
+      "description": "App does not clearly fit one category (e.g., uses both GTK3 widgets and a custom renderer)",
+      "action": "SURVEYOR documents the ambiguity; QUEEN asks human for category decision before proceeding"
+    },
+    "source_not_cloned": {
+      "description": "src/<app_id>/ does not exist",
+      "action": "QUEEN halts PRESTEP, provides the git clone command from APP-TASKS.md or known repo URL, waits for human to clone"
+    },
+    "libfantasy_unavailable": {
+      "description": "P3 requires libfantasy but PROJECT-PYGMA + libfantasy fork is not yet built on the target machine",
+      "action": "QUEEN reports DEFER_PHASE with explanation; P3 resumes when libfantasy is available; all P2 work preserved on its branch"
+    }
+  },
+
+  "hard_rules": {
+    "no_greenlight_without_full_qa_checklist": true,
+    "every_revisit_reruns_full_qa_checklist": true,
+    "queen_does_not_override_qa_checklist_verdict": true,
+    "surveyor_runs_before_any_patch_worker": true,
+    "build_must_pass_before_greenlight": true,
+    "no_fabricated_results": true,
+    "no_TODO_FIXME_HACK_in_committed_patches": true,
+    "toolkit_mismatch_must_be_resolved_before_patching": true,
+    "app_tasks_md_checkboxes_toggled_only_on_greenlight": true,
+    "source_branch_only_for_source_patches": "planning doc changes (APP-TASKS.md, INPROGRESS.md, SURVEY.md, PATCHES.md) go directly to apps/ main, not on the source int/ branch",
+    "phase_prerequisites_enforced": "QUEEN refuses to start P2 without P1 GREEN_LIGHT in INPROGRESS; refuses P3 without P2 GREEN_LIGHT"
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "surveyor": "workflows/APP_INT/WORKER_SURVEYOR.md",
+    "sqlite_eval": "workflows/APP_INT/WORKER_SQLITE_EVAL.md",
+    "theme_verify": "workflows/APP_INT/WORKER_THEME_VERIFY.md",
+    "patcher": "workflows/APP_INT/WORKER_PATCHER.md",
+    "qa_checklist": "workflows/APP_INT/WORKER_QA_CHECKLIST.md"
+  },
+
+  "notes": {
+    "trigger_note": "APP_INT_WORKFLOW can be triggered by 'APP_INT_WORKFLOW' or natural language. QUEEN extracts app name and phase from context. If not clear, QUEEN asks: 'Which app? Which phase?'",
+    "no_traditional_tests": "This workflow has no TESTDEV role. The equivalent of tests is: (1) build verification (does the patched app compile?), (2) checklist completeness (does QA_CHECKLIST find all items ADDRESSED?). UI correctness is verified by human on first run of the patched app.",
+    "iris_template_note": "P1 templates use IRIS Tera format. Palette variable namespaces: base.* (bg/fg), semantic.* (primary/danger/success), accent.* (blue/purple/yellow/red/green), terminal.* (ANSI 16 colors), ui.* (cursor/selection). TEMPLATE_DEV should read an existing template (e.g. lang/rice/components/06-terminal/templates/alacritty/ for TERMINAL apps, lang/rice/components/11-theme-engine/impl/templates/alacritty/ for OWN-RENDERER apps) for format reference. The old notation {{ palette.bg }} is incorrect — use {{ base.bg }} instead.",
+    "phase_patterns_are_authoritative": "PHASE-PATTERNS.md is the authoritative checklist for each category. APP-TASKS.md entries are per-app annotations. When they conflict, PHASE-PATTERNS.md is the canonical source; APP-TASKS.md notes are app-specific deviations.",
+    "multi_session": "Workflows are resumable. INPROGRESS.md tracks state. On session restart, QUEEN reads INPROGRESS.md to find the last phase and outcome, then asks human how to proceed.",
+    "relationship_to_sdlc": "APP_INT_WORKFLOW is a peer of SDLC_WORKFLOW, not a subset. SDLC handles fleet Rust crate development (lang/). APP_INT handles Layer 3 application integration (src/). They can run in the same repo without interference as long as they don't operate on the same files simultaneously."
+  }
+}

@@ -1,0 +1,504 @@
+{
+  "version": "1.0.0",
+  "name": "BOOK_EDITORIAL",
+  "description": "Swarm editorial review and revision workflow. The most complex workflow in the BOOK family. Takes a storyboarded manuscript and audits it against declared templates (voice, persona, style, prose) for consistency, correctness, and quality. Uses a four-axis parallel junior audit → cross-axis synthesis → senior precision filter → senior final verdict pipeline. When issues are found, a REVISION worker surgically patches flagged passages. Templates (voice/persona/style/prose) are loaded from BOOK_MANIFEST.json and define what the editorial workers check against. The storyboard (STORYBOARD.md) serves as the structural reference — ensuring voice application doesn't break logical structure. Triggered by the phrase 'BOOK_EDITORIAL'. Owner: Michael. Orchestrator: QUEEN.",
+
+  "trigger": {
+    "phrase": "BOOK_EDITORIAL",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/SHARED/WORKER_PROTOCOL.md",
+      "QUEEN reads workflows/SHARED/WORKER.md",
+      "QUEEN reads BOOK_MANIFEST.json from project root",
+      "QUEEN reads chapter_subset parameter (from invocation or from BOOK_MANIFEST.json workflow_settings; invocation takes precedence; if absent or null = full-manuscript pass); validates all slugs if subset specified (per CHAPTER_SUBSET_PROTOCOL.md §4)",
+      "QUEEN resolves templates from manifest (bundle or composition mode)",
+      "QUEEN validates template compatibility if composition mode (check against TEMPLATE_COMPATIBILITY matrix)",
+      "QUEEN reads STORYBOARD.md from project root",
+      "QUEEN verifies chapter files exist in chapters/ directory",
+      "QUEEN scans frontmatter of each chapter file in the working set for drafter_origin: true — notes which chapters are drafter-origin; passes this list to all junior workers and EDITORIAL_SYNTHESIS as part of their context packets",
+      "QUEEN reports: 'BOOK_EDITORIAL mode engaged. Templates loaded: [list]. [Subset: X chapters.] [Drafter-origin chapters: Y — enhanced scrutiny active.]'",
+      "QUEEN proceeds to spawn editorial workers"
+    ],
+    "chapter_subset_parameter": {
+      "spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md §3.3",
+      "format": "null | [array of chapter slugs] | {from: slug, to: slug}",
+      "source_precedence": "invocation parameter overrides BOOK_MANIFEST.json workflow_settings; absent/null = full-manuscript pass",
+      "behavior_when_present": "all 4 JUNIOR workers and EDITORIAL_SYNTHESIS receive only the subset chapter files for audit; STORYBOARD.md and STRUCTURE.md are available in full as reference documents; findings lists contain findings only from subset chapters; cross-axis findings are identified within the subset only",
+      "note": "subset restriction applies to chapter files being audited, not to reference documents (STORYBOARD.md, STRUCTURE.md, templates)"
+    },
+    "drafter_origin_pre_step": {
+      "spec": "workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3 and §Consequences for EDITORIAL Discipline",
+      "behavior": "QUEEN reads frontmatter of each chapter file in the working set; chapters with drafter_origin: true are flagged in context packets for all junior workers; all four JUNIOR workers apply their full audit checklist to drafter-origin chapters (no reduced scope); JUNIOR_CONCEPT additionally checks every drafter-origin chapter for DRAFTER_GAP markers; EDITORIAL_SYNTHESIS is aware that drafter-origin content carries higher risk for voice-style conflicts"
+    },
+    "template_resolution": {
+      "spec_reference": "templates/TEMPLATE_RESOLUTION.md — full resolution algorithm including all error paths and fallback behavior",
+      "compatibility_matrix": "templates/TEMPLATE_COMPATIBILITY.md — compatibility matrix for all 13 pairs among the 6 initial atomics; validation algorithm in §6",
+      "bundle_mode": "if manifest templates.mode == 'bundle': load the named bundle doc (templates/BUNDLE_<NAME>.md), which internally references constituent atomics via constituent_atomics: frontmatter field; load each constituent atomic as well",
+      "composition_mode": "if manifest templates.mode == 'composition': load all four atomic templates (VOICE, PERSONA, STYLE, PROSE); then run compatibility validation algorithm (templates/TEMPLATE_COMPATIBILITY.md §6.2) across all 6 atomic pairs before spawning any workers",
+      "compatibility_validation": {
+        "algorithm": "templates/TEMPLATE_COMPATIBILITY.md §6.2 — full pseudocode with output format per case",
+        "on_compatible": "proceed silently",
+        "on_requires_bundle_mediation": "emit non-blocking WARNING with pair, rationale, and recommended bundle name (if any); proceed to spawn workers",
+        "on_not_tested": "emit non-blocking WARNING with pair; proceed to spawn workers; note that EDITORIAL_SYNTHESIS should monitor for cross-axis conflicts from this pair",
+        "on_conflicts": "BLOCKING ERROR — emit ESCALATE with pair, rationale from compatibility notes registry, and resolution options; HALT all worker spawning; wait for human direction"
+      },
+      "on_incompatibility": "if compatibility matrix returns 'conflicts' for any declared atomic pair: QUEEN reports the conflict, cites TEMPLATE_COMPATIBILITY.md §5 rationale, and waits for human resolution before proceeding. This is a blocking error. Non-blocking warnings (requires-bundle-mediation, not-tested) allow workflow to proceed.",
+      "on_missing_template": "if any declared template file does not exist: attempt alias resolution (search all templates/*.md for aliases: field containing requested name); if alias found: load and warn to update manifest; if no alias: QUEEN reports missing file path and ESCALATEs immediately; no partial template loading",
+      "on_version_mismatch": "if MAJOR version mismatches pinned version: ESCALATE; if MINOR/PATCH mismatch only: load available version and warn",
+      "resolution_success_report": "after all templates loaded and compatibility validated without blocking errors: emit 'Template resolution complete. Mode: [bundle|composition]. Templates loaded: [list with versions]. Compatibility: [summary]. Proceeding to spawn JUNIOR_EDITORIAL unit.'"
+    }
+  },
+
+  "relationship_to_book_family": {
+    "position": "stage_3",
+    "upstream": "BOOK_STORYBOARD (produces STORYBOARD.md)",
+    "downstream": "BOOK_PRODUCTION (consumes polished chapter files)",
+    "contract": "BOOK_EDITORIAL produces polished chapter files (modified in place). BOOK_PRODUCTION validates and formats them for print.",
+    "prerequisites": {
+      "required_files": [
+        "BOOK_MANIFEST.json with templates section filled",
+        "STORYBOARD.md",
+        "STRUCTURE.md",
+        "chapters/CH_<NN>_<TITLE>.md (at least one)",
+        "all template files referenced by manifest (voice, persona, style, prose or bundle)"
+      ],
+      "required_infrastructure": "template files must exist in the templates directory; compatibility matrix must exist if composition mode"
+    }
+  },
+
+  "template_architecture": {
+    "four_axes": {
+      "VOICE": "how the author relates to the reader — pedagogical/narrative contract",
+      "PERSONA": "who the author is performing as — domain authority, relationship to material",
+      "STYLE": "genre-level conventions — citation, argument structure, section patterns, density",
+      "PROSE": "sentence-level craft rules — complexity, register, metaphor, rhythm"
+    },
+    "template_document_structure": {
+      "sections": ["Contract", "Characteristic Patterns", "Anti-Patterns", "Audit Checklist", "Interaction Notes"],
+      "audit_checklist_usage": "editorial workers use the Audit Checklist section as their primary evaluation framework"
+    },
+    "resolution_modes": {
+      "bundle": "single document specifying all 4 axes + synergy notes. BUNDLE_<n>.md",
+      "composition": "4 separate atomic documents. VOICE_<n>.md + PERSONA_<n>.md + STYLE_<n>.md + PROSE_<n>.md"
+    }
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation when BOOK_EDITORIAL is active. Resolves templates, spawns all editorial workers, manages the junior→synthesis→senior pipeline, spawns REVISION on REVISE verdict, manages QA loop, executes verdicts.",
+      "responsibilities": [
+        "template resolution from BOOK_MANIFEST.json (bundle or composition mode)",
+        "template compatibility validation (composition mode only)",
+        "spawn JUNIOR_EDITORIAL unit (4 parallel workers)",
+        "spawn EDITORIAL_SYNTHESIS after junior unit completes",
+        "spawn SENIOR_SANITY after synthesis completes",
+        "spawn SENIOR_FINAL after sanity completes",
+        "execute verdict (GREEN_LIGHT, REVISE, ESCALATE)",
+        "on REVISE: spawn REVISION worker, then re-enter full pipeline from JUNIOR_EDITORIAL",
+        "qa_cycle_counter tracking",
+        "INPROGRESS.md progress logging",
+        "escalation on loop limits or blocking issues"
+      ]
+    },
+    "JUNIOR_VOICE": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_JUNIOR_VOICE.md",
+      "context_access": "full",
+      "stance": "hypercritical, adversarial, high-recall — bias strongly toward flagging",
+      "description": "Audits the manuscript against the declared VOICE template. Checks every chapter for adherence to the voice contract. Over-flagging is by design — SENIOR_SANITY filters false positives.",
+      "inputs": [
+        "all chapter files",
+        "VOICE template (atomic or from bundle)",
+        "STORYBOARD.md (for context on chapter intent)"
+      ],
+      "produces": [
+        "findings list with severity labels (Critical/High/Medium/Low)",
+        "each finding: chapter, section, paragraph reference + specific passage + violation description + which audit checklist item was violated"
+      ],
+      "checks": [
+        "pedagogical contract adherence (per voice template's Contract section)",
+        "narrator posture consistency throughout",
+        "pronoun usage patterns match voice template (we/I/passive)",
+        "uncertainty expression matches voice template",
+        "question frequency and placement match voice template",
+        "no unintentional code-switching into a different voice mid-chapter",
+        "all Characteristic Patterns are present where expected",
+        "no Anti-Patterns appear"
+      ],
+      "drafter_origin_stance": "for chapters with drafter_origin: true in frontmatter, apply the full voice audit checklist with enhanced recall bias; drafter-origin prose carries higher risk of voice inconsistency because DRAFTER was not applying authorial instinct, only template constraints; any voice deviation in drafter-origin chapters is flagged at one severity level higher than the normal threshold for the same deviation in author-owned chapters",
+      "part_of_unit": "JUNIOR_EDITORIAL",
+      "parallel_with": ["JUNIOR_CONCEPT", "JUNIOR_STYLE", "JUNIOR_FLOW"],
+      "cannot_see": "other junior workers' findings — juniors are independent"
+    },
+    "JUNIOR_CONCEPT": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_JUNIOR_CONCEPT.md",
+      "context_access": "full",
+      "stance": "hypercritical, adversarial, high-recall",
+      "description": "Audits concept consistency across the entire manuscript. Not tied to any single template — content-level check that applies regardless of voice/style.",
+      "inputs": [
+        "all chapter files",
+        "STORYBOARD.md (for prerequisite chain reference)",
+        "STRUCTURE.md (for chapter ordering)"
+      ],
+      "produces": [
+        "findings list with severity labels",
+        "each finding: specific concept + chapters involved + inconsistency description"
+      ],
+      "checks": [
+        "term consistency: same concept called the same thing throughout (no unnamed synonyms)",
+        "definition-before-use: every technical term introduced/defined before used as assumed knowledge",
+        "no contradictions: concept descriptions in chapter N don't contradict chapter M",
+        "concept completeness: concepts referenced in later chapters were established in earlier chapters (cross-ref STORYBOARD.md prerequisite chain)",
+        "notation consistency: mathematical notation, variable naming, unit conventions stable throughout",
+        "cross-reference validity: any explicit cross-references (see chapter N) are accurate",
+        "DRAFTER_GAP marker detection (drafter-origin chapters only): for every chapter with drafter_origin: true in frontmatter, scan the chapter body for [DRAFTER_GAP: reason] placeholder markers; any such marker is a blocking Critical finding unless it appears in [DRAFTER_GAP_ACK: reason] form (human acknowledged; downgrade to Low severity); gap markers indicate DRAFTER could not produce content from available source material and human authorial input is required before GREEN_LIGHT. Spec: workflows/BOOK/WORKER_DRAFTER.md §5.2 and workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3"
+      ],
+      "drafter_origin_stance": "for drafter-origin chapters, apply full audit checklist with enhanced recall bias — drafter-origin prose was not authored by the book's author and carries no authorial intent; over-flagging is explicitly preferred over under-flagging for drafter-origin content",
+      "part_of_unit": "JUNIOR_EDITORIAL",
+      "parallel_with": ["JUNIOR_VOICE", "JUNIOR_STYLE", "JUNIOR_FLOW"],
+      "cannot_see": "other junior workers' findings"
+    },
+    "JUNIOR_STYLE": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_JUNIOR_STYLE.md",
+      "context_access": "full",
+      "stance": "hypercritical, adversarial, high-recall",
+      "description": "Audits the manuscript against the declared STYLE template. Checks genre-level conventions.",
+      "inputs": [
+        "all chapter files",
+        "STYLE template (atomic or from bundle)",
+        "PROSE template (atomic or from bundle, for register/density checks)",
+        "BOOK_MANIFEST.json (for genre context)"
+      ],
+      "produces": [
+        "findings list with severity labels",
+        "each finding: chapter, section reference + specific issue + which style convention was violated"
+      ],
+      "checks": [
+        "citation conventions match style template",
+        "argument structure matches expected patterns (per style template)",
+        "section/chapter structure follows genre norms",
+        "prose density within expected range (per prose template)",
+        "jargon handling matches style template (defined on first use, assumed known, glossaried)",
+        "mathematical/technical presentation follows template conventions",
+        "all Characteristic Patterns present where expected",
+        "no Anti-Patterns appear"
+      ],
+      "drafter_origin_stance": "for chapters with drafter_origin: true in frontmatter, apply the full style and prose audit checklist with enhanced recall bias; DRAFTER may produce prose that is internally consistent-looking but subtly misaligned with genre-level conventions (e.g., argument structure, citation pattern, section organization); flag all such deviations in drafter-origin chapters regardless of whether they would be flagged in author-owned chapters at the same degree",
+      "part_of_unit": "JUNIOR_EDITORIAL",
+      "parallel_with": ["JUNIOR_VOICE", "JUNIOR_CONCEPT", "JUNIOR_FLOW"],
+      "cannot_see": "other junior workers' findings"
+    },
+    "JUNIOR_FLOW": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_JUNIOR_FLOW.md",
+      "context_access": "full",
+      "stance": "hypercritical, adversarial, high-recall",
+      "description": "Audits logical progression, transitions, and arc adherence. Cross-references against STORYBOARD.md.",
+      "inputs": [
+        "all chapter files",
+        "STORYBOARD.md (primary reference for expected arc and transitions)",
+        "STRUCTURE.md"
+      ],
+      "produces": [
+        "findings list with severity labels",
+        "each finding: chapter boundary or section reference + specific issue + how it deviates from STORYBOARD.md"
+      ],
+      "checks": [
+        "chapter transitions: each chapter's opening connects to previous chapter's closing",
+        "argument arc: manuscript follows arc described in STORYBOARD.md",
+        "redundancy: no concepts explained multiple times without justification",
+        "pacing: no chapters disproportionately dense or sparse relative to their arc role",
+        "reader journey: at each chapter boundary, reader has what they need for next chapter",
+        "storyboard fidelity: what the chapter actually does matches what STORYBOARD.md says it does"
+      ],
+      "drafter_origin_stance": "for chapters with drafter_origin: true in frontmatter, apply the full flow audit checklist with enhanced recall bias; DRAFTER may produce prose that follows the storyboard's structural description at a surface level but fails to execute the logical transitions the storyboard requires; check actual chapter transitions and argument arc against STORYBOARD.md with higher scrutiny for drafter-origin chapters",
+      "part_of_unit": "JUNIOR_EDITORIAL",
+      "parallel_with": ["JUNIOR_VOICE", "JUNIOR_CONCEPT", "JUNIOR_STYLE"],
+      "cannot_see": "other junior workers' findings"
+    },
+    "EDITORIAL_SYNTHESIS": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_EDITORIAL_SYNTHESIS.md",
+      "context_access": "full",
+      "stance": "integrative — cross-axis interaction detector",
+      "description": "Integration worker. Reads all 4 junior reports and finds cross-axis interactions that no individual junior could detect. The only worker that sees findings from all four axes simultaneously. Also passes through all junior findings (tagged with originating axis) as part of its integrated report.",
+      "inputs": [
+        "JUNIOR_VOICE findings",
+        "JUNIOR_CONCEPT findings",
+        "JUNIOR_STYLE findings",
+        "JUNIOR_FLOW findings",
+        "all chapter files (for verification)",
+        "all templates (for understanding axis interactions)",
+        "STORYBOARD.md"
+      ],
+      "produces": [
+        "integrated findings report containing:",
+        "  - all junior findings passed through (tagged with originating axis)",
+        "  - NEW cross-axis findings with interaction annotations"
+      ],
+      "cross_axis_interactions_to_detect": [
+        "voice-style conflicts: voice is consistent but doesn't match genre style expectations",
+        "concept-flow conflicts: concepts individually consistent but introduced in wrong order for pedagogical flow",
+        "prose-voice conflicts: prose register shifts where voice doesn't call for it",
+        "style-flow conflicts: genre conventions followed locally but overall arc doesn't match genre expectations",
+        "voice-concept conflicts: voice asks questions about concepts not yet introduced, or voice declares when template says discover",
+        "compound issues: findings that appear minor on one axis but compound across axes into significant problems",
+        "drafter-origin specific: voice-style masking — DRAFTER may produce consistent-sounding voice that masks a concept gap; a chapter that sounds right in voice and style may still have concept_completeness failures that voice-consistency obscures; flag this cross-axis pattern explicitly for drafter-origin chapters. Spec: workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Consequences for EDITORIAL Discipline",
+        "drafter-origin specific: compound drafter-origin severity upgrade — where EDITORIAL_SYNTHESIS detects cross-axis compound issues in drafter-origin chapters, flag at Medium severity minimum (vs Low for author-owned chapters where the same interaction would be lower-priority); rationale: drafter-origin prose was not author-vetted before EDITORIAL and compound issues reflect real gaps in the drafting constraint set"
+      ],
+      "sequence_position": "after JUNIOR_EDITORIAL, before SENIOR_SANITY"
+    },
+    "SENIOR_SANITY": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_SENIOR_SANITY.md",
+      "context_access": "full",
+      "stance": "judicial — precision filter",
+      "description": "Reviews EDITORIAL_SYNTHESIS integrated findings. For each finding: marks it 'real' (valid issue, must address) or 'overzealous' (false positive, drop) with rationale. Does NOT produce new findings — only rules on existing ones. Same role architecture as SDLC SENIOR_QA_SANITY.",
+      "inputs": [
+        "EDITORIAL_SYNTHESIS integrated findings report",
+        "all chapter files (for context)",
+        "all templates",
+        "STORYBOARD.md",
+        "BOOK_MANIFEST.json"
+      ],
+      "produces": [
+        "filtered findings: each finding marked real|overzealous with 1-line rationale"
+      ],
+      "does_not_produce": "new findings — only rules on integrated findings from synthesis",
+      "sequence_position": "after EDITORIAL_SYNTHESIS, before SENIOR_FINAL"
+    },
+    "SENIOR_FINAL": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_SENIOR_FINAL.md",
+      "context_access": "full",
+      "stance": "independent final pass — may surface new findings, especially emergent or holistic issues",
+      "description": "Last word on the manuscript. Performs an independent pass over the full manuscript plus all prior reports. May surface new findings the entire pipeline missed. Emits the binding verdict. QUEEN does NOT override this verdict.",
+      "inputs": [
+        "all chapter files",
+        "SENIOR_SANITY filtered findings",
+        "EDITORIAL_SYNTHESIS integrated report (for full context)",
+        "all templates",
+        "STORYBOARD.md",
+        "STRUCTURE.md",
+        "BOOK_MANIFEST.json"
+      ],
+      "produces": [
+        "final verdict: GREEN_LIGHT | REVISE | ESCALATE",
+        "verdict rationale",
+        "if REVISE: consolidated actionable findings for REVISION worker (only 'real' findings, with specific passage references and correction guidance)",
+        "if ESCALATE: blocker description for human (e.g., voice break might be intentional authorial choice, concept inconsistency reflects genuine material ambiguity)"
+      ],
+      "authority": "QUEEN trusts this verdict; does not override",
+      "sequence_position": "after SENIOR_SANITY, final in pipeline"
+    },
+    "REVISION": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_REVISION.md",
+      "context_access": "full",
+      "stance": "constructive — prose writer under template constraints",
+      "description": "The highest-skill worker in the BOOK family. Receives filtered findings + full manuscript + all templates + STORYBOARD.md. Rewrites ONLY the flagged passages. Does not touch unflagged text. Must simultaneously satisfy template constraints, storyboard constraints, concept constraints, and local prose quality — all while making surgical edits that don't destabilize surrounding text.",
+      "inputs": [
+        "SENIOR_FINAL consolidated actionable findings (passage references + correction guidance)",
+        "all chapter files",
+        "all templates (voice, persona, style, prose or bundle)",
+        "STORYBOARD.md (structural reference — don't break logic while fixing voice/style)",
+        "STRUCTURE.md"
+      ],
+      "produces": [
+        "revised chapter files (only files containing flagged passages are modified)",
+        "revision report: per-passage changelog listing what was changed, why, and which finding it addresses"
+      ],
+      "constraints": [
+        "SURGICAL: only flagged passages are modified — unflagged text is immutable",
+        "TEMPLATE-ADHERENT: all rewrites must conform to declared voice, persona, style, and prose templates",
+        "STORYBOARD-ADHERENT: rewrites must not break the logical structure described in STORYBOARD.md",
+        "CONCEPT-CONSISTENT: rewrites must not introduce new terminology or contradict existing definitions",
+        "CONTEXT-AWARE: rewrites must read naturally in context — surrounding unflagged text must still flow",
+        "MINIMAL: prefer the smallest edit that addresses the finding; don't rewrite more than necessary"
+      ],
+      "triggered_by": ["QUEEN on REVISE verdict from SENIOR_FINAL"]
+    }
+  },
+
+  "units": {
+    "JUNIOR_EDITORIAL": {
+      "workers": ["JUNIOR_VOICE", "JUNIOR_CONCEPT", "JUNIOR_STYLE", "JUNIOR_FLOW"],
+      "execution": "parallel",
+      "atomic": true,
+      "description": "All four junior workers run in parallel. They do not see each other's findings. Each audits one axis independently. All four must complete before EDITORIAL_SYNTHESIS begins.",
+      "independence_rule": "juniors are independent — no cross-contamination of findings between axes at this stage",
+      "subset_scoping": "when chapter_subset is specified at engagement, each junior worker receives only the subset chapter files; juniors do not audit non-subset chapters; STORYBOARD.md and STRUCTURE.md are provided in full as reference documents regardless of subset",
+      "drafter_origin_scoping": "QUEEN's pre-step identifies drafter-origin chapters; all four juniors receive the list of drafter-origin chapters in their context packets and apply enhanced scrutiny to those chapters per each worker's drafter_origin_stance spec"
+    },
+    "EDITORIAL_PIPELINE": {
+      "sequence": ["JUNIOR_EDITORIAL", "EDITORIAL_SYNTHESIS", "SENIOR_SANITY", "SENIOR_FINAL"],
+      "atomic": true,
+      "description": "The full editorial pipeline: parallel junior audit → cross-axis synthesis → precision filter → final verdict. Every REVISE loop re-enters this entire pipeline from JUNIOR_EDITORIAL. No shortcuts."
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify BOOK_MANIFEST.json exists with templates section filled",
+        "resolve templates (bundle or composition mode)",
+        "if composition mode: validate combination against compatibility matrix",
+        "if incompatibility detected: report conflict, wait for human resolution (blocking error)",
+        "if any template file missing: report, ESCALATE immediately",
+        "verify STORYBOARD.md exists",
+        "verify STRUCTURE.md exists",
+        "verify chapter files exist in chapters/",
+        "initialize INPROGRESS.md entry for BOOK_EDITORIAL engagement",
+        "report template resolution: which templates loaded, mode, any notes"
+      ]
+    },
+    "editorial_pass": {
+      "performer": "QUEEN spawns workers",
+      "type": "sequential_pipeline_with_parallel_first_stage",
+      "actions": [
+        "QUEEN spawns JUNIOR_EDITORIAL unit: 4 workers in parallel (VOICE, CONCEPT, STYLE, FLOW)",
+        "QUEEN collects all 4 junior findings reports",
+        "QUEEN writes junior summary to INPROGRESS.md",
+        "QUEEN spawns EDITORIAL_SYNTHESIS with all 4 junior reports + full context",
+        "QUEEN writes synthesis report to INPROGRESS.md",
+        "QUEEN spawns SENIOR_SANITY with integrated findings",
+        "QUEEN writes sanity filter results to INPROGRESS.md",
+        "QUEEN spawns SENIOR_FINAL with filtered findings + full context",
+        "QUEEN writes final verdict to INPROGRESS.md",
+        "QUEEN executes verdict"
+      ]
+    },
+    "revision_cycle": {
+      "performer": "QUEEN spawns REVISION then re-enters editorial_pass",
+      "type": "loop",
+      "actions": [
+        "QUEEN writes REVISE marker to INPROGRESS.md with SENIOR_FINAL findings",
+        "QUEEN spawns REVISION with: actionable findings + full manuscript + all templates + STORYBOARD.md",
+        "REVISION returns: revised chapter files + revision report",
+        "QUEEN writes revision report to INPROGRESS.md",
+        "QUEEN re-enters editorial_pass from JUNIOR_EDITORIAL (full pipeline re-run)",
+        "qa_cycle_counter++"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: verify prerequisites, resolve templates, validate compatibility",
+      "EDITORIAL_PASS: JUNIOR_EDITORIAL (4 parallel) → EDITORIAL_SYNTHESIS → SENIOR_SANITY → SENIOR_FINAL",
+      "QUEEN executes verdict",
+      "if REVISE: REVISION → full EDITORIAL_PASS re-run (loop)"
+    ]
+  },
+
+  "verdicts": {
+    "GREEN_LIGHT": {
+      "trigger": "SENIOR_FINAL finds no blocking issues",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "polished chapter files committed to project root",
+        "QUEEN reports: 'BOOK_EDITORIAL complete. Polished manuscript ready for BOOK_PRODUCTION.'"
+      ]
+    },
+    "REVISE": {
+      "trigger": "SENIOR_FINAL identifies fixable issues in voice, concept, style, flow, or cross-axis interactions",
+      "terminal": false,
+      "next": "revision_cycle",
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "qa_cycle_counter >= 3 OR SENIOR_FINAL determines issues require human judgment OR template resolution fails OR compatibility conflict unresolved",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md (cycles taken, findings history, specific blockers)",
+        "QUEEN pauses all worker spawning",
+        "QUEEN reports to human: what's blocked, findings that may represent intentional authorial choices vs. genuine issues, template conflicts if any",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human resolves; QUEEN resumes from appropriate point (re-REVISION, re-editorial, or human edits chapters directly and re-triggers)",
+      "escalation_examples": [
+        "voice break that might be intentional authorial choice (e.g., a chapter deliberately shifts voice for effect)",
+        "concept inconsistency reflecting genuine ambiguity in underlying material",
+        "style violation that the author may prefer over strict template adherence",
+        "persistent cross-axis conflict that REVISION cannot resolve without changing the storyboard"
+      ]
+    }
+  },
+
+  "loop_limits": {
+    "qa_cycles": 3,
+    "counter_semantics": {
+      "qa_cycle_counter": "increments on each REVISE → re-editorial cycle. At 3, auto-escalate."
+    }
+  },
+
+  "context_access": {
+    "full_access_roles": [
+      "QUEEN",
+      "JUNIOR_VOICE", "JUNIOR_CONCEPT", "JUNIOR_STYLE", "JUNIOR_FLOW",
+      "EDITORIAL_SYNTHESIS",
+      "SENIOR_SANITY", "SENIOR_FINAL",
+      "REVISION"
+    ],
+    "isolation_rules": {
+      "junior_isolation": "JUNIOR workers do not see each other's findings. They are independent parallel auditors. Cross-axis interaction detection is EDITORIAL_SYNTHESIS's job, not theirs.",
+      "senior_sees_all": "SENIOR_SANITY and SENIOR_FINAL see the integrated report (all findings from all axes plus cross-axis interactions)"
+    }
+  },
+
+  "hard_rules": {
+    "no_greenlight_without_full_editorial_pipeline": true,
+    "every_revise_reenters_full_pipeline_from_junior": true,
+    "queen_does_not_override_senior_final_verdict": true,
+    "junior_workers_are_parallel_and_independent": true,
+    "junior_workers_do_not_see_each_others_findings": true,
+    "editorial_synthesis_is_the_only_cross_axis_worker": true,
+    "senior_sanity_does_not_produce_new_findings": true,
+    "revision_is_surgical_only_flagged_passages": true,
+    "revision_must_maintain_template_adherence": true,
+    "revision_must_maintain_storyboard_adherence": true,
+    "revision_must_maintain_concept_consistency": true,
+    "template_compatibility_validated_before_workers_spawn": true,
+    "missing_template_is_blocking_error": true,
+    "templates_are_authoritative_workers_do_not_substitute_preferences": true,
+    "storyboard_is_structural_reference_not_modified_by_editorial": true,
+    "inprogress_prepend_only": true,
+    "no_fabricated_findings": true,
+    "subset_preserves_non_subset_chapter_files": true,
+    "subset_invocation_logged_to_inprogress": true,
+    "drafter_origin_chapters_receive_full_audit_checklist": true,
+    "drafter_gap_markers_are_blocking_critical_findings": true,
+    "drafter_gap_ack_markers_downgrade_to_low_severity": true,
+    "drafter_origin_compound_issues_flagged_at_medium_minimum": true,
+    "chapter_subset_parameter_spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md §3.3",
+    "drafter_origin_scrutiny_spec": "workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3"
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "junior_voice": "workflows/BOOK/WORKER_JUNIOR_VOICE.md",
+    "junior_concept": "workflows/BOOK/WORKER_JUNIOR_CONCEPT.md",
+    "junior_style": "workflows/BOOK/WORKER_JUNIOR_STYLE.md",
+    "junior_flow": "workflows/BOOK/WORKER_JUNIOR_FLOW.md",
+    "editorial_synthesis": "workflows/BOOK/WORKER_EDITORIAL_SYNTHESIS.md",
+    "senior_sanity": "workflows/BOOK/WORKER_SENIOR_SANITY.md",
+    "senior_final": "workflows/BOOK/WORKER_SENIOR_FINAL.md",
+    "revision": "workflows/BOOK/WORKER_REVISION.md"
+  },
+
+  "notes": {
+    "complexity_note": "This is the most complex workflow in the BOOK family. 8 distinct worker roles, 4 parallel first-stage workers, cross-axis synthesis, two senior review passes, and a constructive revision worker. The complexity is justified: editorial quality requires multi-dimensional auditing that cannot be reduced to a single-pass check.",
+    "revision_skill_note": "REVISION is the highest-skill worker in the entire BOOK family. It performs actual prose writing under simultaneous template, storyboard, concept, and local-context constraints. If the revision worker cannot satisfy all constraints simultaneously, it should flag the specific conflict in its report rather than silently compromising one constraint.",
+    "template_authority_note": "Templates are authoritative. Workers check against templates, not against their own aesthetic preferences. If a worker believes a template specification is wrong, the correct action is to flag it — not to ignore the template. Template evolution happens outside the workflow.",
+    "storyboard_immutability_note": "BOOK_EDITORIAL does not modify STORYBOARD.md. The storyboard is a fixed reference. If editorial review reveals that the storyboard itself is wrong (the logical structure needs changing), this is an ESCALATE condition that may require returning to BOOK_STORYBOARD."
+  }
+}

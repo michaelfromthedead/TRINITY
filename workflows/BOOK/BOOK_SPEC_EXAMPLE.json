@@ -1,0 +1,143 @@
+{
+  "_comment": "BOOK_SPEC_EXAMPLE.json — A valid sample instance that validates against BOOK_SPEC_SCHEMA.json (Draft 7). Based on the Spin of Gravity walkthrough in PRODUCTION_WALKTHROUGH.md. All calculated fields use LULU_SPEC formulas verbatim.",
+
+  "title": "The Spin of Gravity",
+  "subtitle": "A Field-Theoretic Introduction to Spin and Non-Locality",
+  "author": "Michael Straughan",
+  "isbn": null,
+  "edition": "First Edition",
+
+  "trim_size": {
+    "name": "US Trade 6x9",
+    "width_inches": 6,
+    "height_inches": 9
+  },
+
+  "margins": {
+    "top_inches": 0.75,
+    "bottom_inches": 0.75,
+    "inside_inches": 1.0,
+    "outside_inches": 0.5
+  },
+
+  "bleed_inches": 0.125,
+  "gutter_inches": 0.5,
+  "spine_width_inches": 0.5685,
+
+  "page_count_estimate": 220,
+  "word_count": 52400,
+
+  "fonts": {
+    "body": {
+      "family": "Palatino Linotype",
+      "size_pt": 11,
+      "line_height": 1.3
+    },
+    "heading_1": {
+      "family": "Palatino Linotype",
+      "size_pt": 18
+    },
+    "heading_2": {
+      "family": "Palatino Linotype",
+      "size_pt": 14
+    },
+    "heading_3": {
+      "family": "Palatino Linotype",
+      "size_pt": 12
+    },
+    "caption": {
+      "family": "Palatino Linotype",
+      "size_pt": 9
+    },
+    "footnote": {
+      "family": "Palatino Linotype",
+      "size_pt": 9
+    }
+  },
+
+  "page_numbering": {
+    "front_matter": "roman_lowercase",
+    "body": "arabic",
+    "back_matter": "arabic_continued",
+    "start_page": "recto"
+  },
+
+  "chapter_breaks": "recto",
+
+  "headers_footers": {
+    "odd_header": "{chapter_title}",
+    "even_header": "{book_title}",
+    "odd_footer": "{page_number}",
+    "even_footer": "{page_number}",
+    "first_page_of_chapter": "suppress_header"
+  },
+
+  "color_interior": false,
+
+  "pdf_standard": "lulu_joboptions",
+
+  "cover": {
+    "type": "paperback",
+    "finish": "matte",
+    "cover_file": null
+  },
+
+  "file_manifest": [
+    { "type": "front_matter", "file": "front/title.md", "title": "Title Page", "order": 1 },
+    { "type": "front_matter", "file": "front/copyright.md", "title": "Copyright", "order": 2 },
+    { "type": "front_matter", "file": "front/dedication.md", "title": "Dedication", "order": 3 },
+    { "type": "front_matter", "file": "front/toc.md", "title": "Contents", "order": 4 },
+    { "type": "front_matter", "file": "front/preface.md", "title": "Preface", "order": 5 },
+    { "type": "chapter", "file": "chapters/CH_01_WHY_NON_LOCALITY.md", "title": "Why Non-Locality", "order": 6 },
+    { "type": "chapter", "file": "chapters/CH_02_SPIN_PRECESSION.md", "title": "Spin Precession", "order": 7 },
+    { "type": "chapter", "file": "chapters/CH_03_ANGULAR_MOMENTUM.md", "title": "Angular Momentum", "order": 8 },
+    { "type": "back_matter", "file": "back/bibliography.md", "title": "Bibliography", "order": 9 },
+    { "type": "back_matter", "file": "back/index.md", "title": "Index", "order": 10 },
+    { "type": "back_matter", "file": "back/about_author.md", "title": "About the Author", "order": 11 }
+  ],
+
+  "special_elements": {
+    "equations": true,
+    "figures": false,
+    "tables": false,
+    "code_listings": false,
+    "footnotes": true,
+    "endnotes": false,
+    "margin_notes": false
+  },
+
+  "target_pipeline": "lulu",
+  "target_spec_version": "1.0.0",
+
+  "metadata": {
+    "generated_at": "2026-04-18T12:00:00Z",
+    "formatter_version": "workflows/BOOK/WORKER_FORMATTER.md v1.0.0",
+
+    "spine_calculation_note": "Paperback formula per LULU_SPEC §5.1: spine_in = (page_count / 444) + 0.06. Calculation: (220 / 444) + 0.06 = 0.4955 + 0.06 = 0.5555 in. Rounded to 0.5555 in. Note: page_count_estimate is 220 pages; if actual typeset page count differs, spine width must be recalculated.",
+
+    "gutter_calculation_note": "LULU_SPEC §4 Gutter Addition Table: page_count_estimate = 220, which falls in the 151-400 range. Gutter addition = 0.5 in. Recommended total inside margin = 1.0 in (0.5 in base safety margin + 0.5 in gutter addition). Set margins.inside_inches = 1.0 in, gutter_inches = 0.5.",
+
+    "page_count_note": "Estimated from: body pages = ceil(52400 words / 250 words-per-page) = ceil(209.6) = 210. Front matter: 5 files × 1 page avg = 5 pages (TOC estimated 2 pages for a 3-chapter book, so 6 total). Back matter: 3 files × 1-2 pages avg = 4 pages. Total estimate = 210 + 6 + 4 = 220. Rounded to 220 (divisible by 4 per LULU_SPEC §9 recommendation). LULU_PIPELINE calculates actual page count during typesetting.",
+
+    "pdf_standard_note": "Set to 'lulu_joboptions' per LULU_SPEC §6. LULU_SPEC §6 carries an [UNVERIFIED] marker: the specific PDF/X version (e.g., PDF/X-1a:2001 vs PDF/X-3:2002) is not explicitly named in Lulu's public documentation as of 2026-04-18. Use Lulu's proprietary .joboptions export preset when exporting from Adobe InDesign, Photoshop, or Acrobat Distiller. Verify with Lulu before final production.",
+
+    "cover_spread_dimensions": {
+      "cover_width_inches": 12.861,
+      "cover_height_inches": 9.25,
+      "formula_note": "LULU_SPEC §7 Cover Spread Formula. cover_width = (2 × 6) + 0.5555 + (2 × 0.125) = 12 + 0.5555 + 0.25 = 12.8055 in (≈ 12.806). cover_height = 9 + (2 × 0.125) = 9.25 in. Note: spine_width used here is the estimated value; recalculate cover spread after final typeset page count is known."
+    },
+
+    "lulu_spec_unverified_items": [
+      "pdf_standard: specific PDF/X version not published by Lulu (LULU_SPEC §6 [UNVERIFIED])",
+      "per_paper_type_spine_coefficient: coefficient breakdown for 60# Cream vs 60# White vs 80# White not published; single-coefficient formula (divisor 444) used per LULU_SPEC §5.1 Note [UNVERIFIED]",
+      "hardcover_maximum_pages: 800-page maximum inferred from end of spine table, not explicitly stated for hardcover (LULU_SPEC §9 Note) [UNVERIFIED]",
+      "coil_saddle_stitch_page_limits: minimum and maximum page counts not published in accessible documentation (LULU_SPEC §9 Note) [UNVERIFIED]"
+    ],
+
+    "required_author_actions": [
+      "cover_file: No cover spread PDF has been generated. Cover file must be designed and produced separately conforming to LULU_SPEC §7 cover spread formula and LULU_SPEC §12 cover file requirements.",
+      "isbn: ISBN not yet assigned. Assign ISBN before final print order; update BOOK_SPEC.json and front/copyright.md.",
+      "fonts: Font selection is Palatino Linotype (declared). Verify font is licensed for commercial use and will embed correctly per LULU_SPEC §12 Font Requirements."
+    ]
+  }
+}

@@ -1,0 +1,184 @@
+
+
+    #[test]
+    fn test_history_new_is_empty() {
+        let mgr = HistorySlotManager::new();
+        assert_eq!(mgr.history_length(ResourceHandle(0)), None);
+        assert!(!mgr.is_history(ResourceHandle(0)));
+        assert_eq!(mgr.slot_for(ResourceHandle(0), 0), 0);
+    }
+
+    #[test]
+    fn test_history_from_resources_one_history_n3() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "history_tex",
+            ResourceDesc::Texture2D(TextureDesc {
+                width: 256,
+                height: 256,
+                mip_levels: 1,
+                array_layers: 1,
+                format: "rgba8unorm".into(),
+            }),
+            ResourceLifetime::History(3),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.history_length(ResourceHandle(1)), Some(3));
+        assert!(mgr.is_history(ResourceHandle(1)));
+    }
+
+    #[test]
+    fn test_history_from_resources_ignores_non_history() {
+        let res_t = IrResource::new(
+            ResourceHandle(1),
+            "transient",
+            ResourceDesc::Buffer(BufferDesc { size: 256, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::Transient,
+            ResourceState::Uninitialized,
+        );
+        let res_i = IrResource::new(
+            ResourceHandle(2),
+            "imported",
+            ResourceDesc::Buffer(BufferDesc { size: 256, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::Imported,
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res_t, res_i]);
+        assert!(!mgr.is_history(ResourceHandle(1)));
+        assert!(!mgr.is_history(ResourceHandle(2)));
+        assert_eq!(mgr.history_length(ResourceHandle(1)), None);
+        assert_eq!(mgr.history_length(ResourceHandle(2)), None);
+    }
+
+    #[test]
+    fn test_history_slot_for_frame_0_returns_0_for_n3() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(3),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 0), 0);
+    }
+
+    #[test]
+    fn test_history_slot_for_frame_1_returns_1_for_n3() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(3),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 1), 1);
+    }
+
+    #[test]
+    fn test_history_slot_for_frame_3_wraps_to_0_for_n3() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(3),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 3), 0);
+    }
+
+    #[test]
+    fn test_history_slot_for_frame_5_returns_2_for_n3() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(3),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 5), 2);
+    }
+
+    #[test]
+    fn test_history_non_history_slot_for_always_0() {
+        let res = IrResource::new(
+            ResourceHandle(1),
+            "t",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::Transient,
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res]);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 0), 0);
+        assert_eq!(mgr.slot_for(ResourceHandle(1), 42), 0);
+    }
+
+    #[test]
+    fn test_history_length_returns_some_for_history_none_for_other() {
+        let res_h = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(5),
+            ResourceState::Uninitialized,
+        );
+        let res_t = IrResource::new(
+            ResourceHandle(2),
+            "t",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::Transient,
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res_h, res_t]);
+        assert_eq!(mgr.history_length(ResourceHandle(1)), Some(5));
+        assert_eq!(mgr.history_length(ResourceHandle(2)), None);
+    }
+
+    #[test]
+    fn test_history_is_history_true_for_history_false_for_other() {
+        let res_h = IrResource::new(
+            ResourceHandle(1),
+            "h",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(4),
+            ResourceState::Uninitialized,
+        );
+        let res_i = IrResource::new(
+            ResourceHandle(2),
+            "i",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::Imported,
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res_h, res_i]);
+        assert!(mgr.is_history(ResourceHandle(1)));
+        assert!(!mgr.is_history(ResourceHandle(2)));
+    }
+
+    #[test]
+    fn test_history_multiple_resources_different_lengths() {
+        let res_a = IrResource::new(
+            ResourceHandle(10),
+            "a",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(2),
+            ResourceState::Uninitialized,
+        );
+        let res_b = IrResource::new(
+            ResourceHandle(20),
+            "b",
+            ResourceDesc::Buffer(BufferDesc { size: 64, usage: "storage".into(), is_indirect_arg: false }),
+            ResourceLifetime::History(4),
+            ResourceState::Uninitialized,
+        );
+        let mgr = HistorySlotManager::from_resources(&[res_a, res_b]);
+        assert_eq!(mgr.history_length(ResourceHandle(10)), Some(2));
+        assert_eq!(mgr.history_length(ResourceHandle(20)), Some(4));
+        // Frame 3: a uses 3%2=1, b uses 3%4=3
+        assert_eq!(mgr.slot_for(ResourceHandle(10), 3), 1);
+        assert_eq!(mgr.slot_for(ResourceHandle(20), 3), 3);
+    }

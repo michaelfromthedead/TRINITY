@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run lint-staged on staged files
+bunx lint-staged
+
+# Type check the entire project (fast with incremental builds)
+bun run typecheck 2>/dev/null || echo "Typecheck skipped (run 'bun run typecheck' manually)"

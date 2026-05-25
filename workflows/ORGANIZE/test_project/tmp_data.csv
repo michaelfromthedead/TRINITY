@@ -1,0 +1,5 @@
+run_id,temperature,lattice_n,tau_relaxation
+tmp_001,0.5,16,142.3
+tmp_002,0.7,16,98.1
+tmp_003,1.0,16,61.7
+tmp_004,1.5,16,38.4

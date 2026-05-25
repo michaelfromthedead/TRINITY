@@ -1,0 +1,453 @@
+{
+  "version": "1.0.0",
+  "name": "BOOK_CONSOLIDATION",
+  "description": "Swarm manuscript consolidation workflow. Forked from RDC_WORKFLOW. Transforms a chaotic folder of documents — fragments, drafts, notes, partial chapters of varying quality and epoch — into a structured manuscript with chapter organization and section hierarchy. Sequential temporal-upsert of N source documents into a running MASTER, with COURT mechanism for conflict resolution, then COMPOSITOR carves MASTER into ordered chapter files. Output feeds BOOK_STORYBOARD. Triggered by the phrase 'BOOK_CONSOLIDATION'. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrase": "BOOK_CONSOLIDATION",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/SHARED/WORKER_PROTOCOL.md",
+      "QUEEN reads workflows/SHARED/WORKER.md",
+      "QUEEN reads BOOK_MANIFEST.json from project root",
+      "QUEEN reads chapter_subset parameter (from invocation or from BOOK_MANIFEST.json workflow_settings; invocation takes precedence; if absent or null = full-manuscript pass)",
+      "QUEEN reports: 'BOOK_CONSOLIDATION mode engaged. Ready. Point me to the source directory.'",
+      "QUEEN waits for explicit human direction specifying the source directory path"
+    ],
+    "source_directory_requires": "explicit human direction specifying the directory containing source documents",
+    "chapter_subset_parameter": {
+      "spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md",
+      "format": "null | [array of chapter slugs] | {from: slug, to: slug}",
+      "source_precedence": "invocation parameter overrides BOOK_MANIFEST.json workflow_settings; absent/null = full-manuscript pass",
+      "behavior_when_present": "SCRIBE_LOOP processes only source files mapped to the subset chapters (via triage.per_chapter_state[i].source_files); COMPOSITOR carves only those chapters from MASTER; QA_COMPLETENESS and QA_COHERENCE scope to the subset chapters and their source files",
+      "validation": "QUEEN verifies each slug in subset exists in chapters/ (if pre-existing) or in scope.intended_chapters; invalid slugs block workflow",
+      "unselected_chapters_preserved": "STRUCTURE.md entries and chapter files for non-subset chapters are not modified if they exist from a prior run"
+    }
+  },
+
+  "relationship_to_book_family": {
+    "position": "stage_1",
+    "upstream": "BOOK_TRIAGE (produces BOOK_MANIFEST.json)",
+    "downstream": "BOOK_STORYBOARD (consumes chapters/ + STRUCTURE.md)",
+    "contract": "BOOK_CONSOLIDATION produces structured chapter files and STRUCTURE.md. BOOK_STORYBOARD operates on these to produce the logical skeleton. Manual handoff — human reviews output before triggering BOOK_STORYBOARD."
+  },
+
+  "forked_from": {
+    "workflow": "RDC_WORKFLOW",
+    "version": "1.1.0",
+    "deltas": [
+      "COMPOSITOR replaces TAXONOMIST — output is chapter files + STRUCTURE.md instead of PROJECT/ARCH/TODO",
+      "QA_COHERENCE adapted for manuscript structure instead of engineering structure",
+      "RECOMPOSE verdict replaces RETAXONOMIZE",
+      "Output files are chapters/ directory + STRUCTURE.md",
+      "BOOK_MANIFEST.json read at engagement for genre/structure context",
+      "All other mechanics (SCRIBE, COURT, ADVOCATE, PEDAGOGY, EVALUATIONS, INVENTORY, upsert rules) ported directly from RDC"
+    ]
+  },
+
+  "document_conventions": {
+    "source_docs": "*.md files (and other text formats) in the designated source directory",
+    "master_file": "MASTER.md",
+    "master_description": "Running consolidated document built by sequential SCRIBE passes. Represents the current best-known state of all content from source documents. Grows and mutates with each SCRIBE pass. Intermediate representation from which chapter files are carved. Preserved at project root after GREEN_LIGHT for reference.",
+    "master_update_mode": "upsert_overwrite",
+    "master_update_detail": "SCRIBE reads current MASTER + next source doc. Concepts already in MASTER are updated in place if the source doc contains newer/revised information. New concepts are inserted in the most structurally appropriate location. No concept is deleted — only overwritten with evolved versions. Concepts that were court-resolved carry a back-reference to the INPROGRESS.md court entry.",
+    "pedagogy_file": "PEDAGOGY.md",
+    "pedagogy_description": "Archaeological record of concept evolution. Every time SCRIBE overwrites or significantly revises a concept in MASTER, the prior value, new value, source doc, and reasoning are logged here. Append-only.",
+    "pedagogy_update_mode": "append_only",
+    "pedagogy_entry_format": {
+      "timestamp": "SCRIBE pass number + source doc filename",
+      "concept": "name/path of the concept that changed",
+      "prior_value": "what MASTER said before this pass",
+      "new_value": "what MASTER says after this pass",
+      "reason": "why the change was made (derived from source doc context)",
+      "court_reference": "optional — INPROGRESS.md anchor if this change was court-ruled"
+    },
+    "inventory_file": "INVENTORY.md",
+    "inventory_description": "Manifest of all source documents with temporal ordering, produced during INVENTORY phase.",
+    "evaluation_file": "EVALUATIONS.md",
+    "evaluation_description": "Per-document evaluation produced by SCRIBE during each pass. Append-only.",
+    "structure_file": "STRUCTURE.md",
+    "structure_description": "Manuscript skeleton produced by COMPOSITOR. Contains: table of contents, chapter summaries, section listings per chapter, inter-chapter dependency map. The structural reference document for all downstream workflows.",
+    "chapter_output_pattern": "chapters/CH_<NN>_<TITLE>.md",
+    "chapter_output_description": "One file per discovered chapter. Numbered for ordering. Contains section hierarchy within each chapter. All content carved from MASTER.",
+    "inprogress_file": "INPROGRESS.md",
+    "inprogress_update_mode": "prepend_only_except_checkboxes"
+  },
+
+  "court_mechanism": {
+    "description": "Identical to RDC_WORKFLOW court mechanism. When SCRIBE flags a contradiction between source docs with no clear temporal supersession, the conflicting concept is resolved in a COURT session. Four advocates (2 per side) produce independent briefs; QUEEN rules.",
+    "triggered_by": "SCRIBE flags a conflict during upsert",
+    "batching": "conflicts accumulate during SCRIBE_LOOP; COURT phase processes them all between SCRIBE_LOOP and COMPOSITOR",
+    "participants": {
+      "judge": "QUEEN",
+      "advocates_per_session": 4,
+      "side_a": ["ADVOCATE_A1", "ADVOCATE_A2"],
+      "side_b": ["ADVOCATE_B1", "ADVOCATE_B2"]
+    },
+    "why_two_per_side": "Redundancy strengthens the case. Convergence = strong side. Divergence = richer evidence. Internal disagreement = weak side.",
+    "advocate_discipline": "Advocates argue their assigned side regardless of personal assessment. Concession note optional.",
+    "decision_criteria_ordered": [
+      "1. Explicit supersession — later source doc explicitly says 'replaces X'",
+      "2. Temporal primacy — absent explicit supersession, later doc wins",
+      "3. Evidentiary weight — brief with more and better citations wins",
+      "4. Conceptual consistency — the value that fits the rest of MASTER best wins",
+      "5. Load-bearing-ness — if one value underlies more other content, it wins on inertia"
+    ],
+    "ruling_options": {
+      "SIDE_A_WINS": "MASTER gets value A; side B noted as superseded in PEDAGOGY",
+      "SIDE_B_WINS": "MASTER gets value B; side A noted as superseded in PEDAGOGY",
+      "SYNTHESIS": "QUEEN interjects: neither side cleanly right; MASTER gets a synthesized value. Rationale required.",
+      "DEFER": "Conflict reveals deeper question beyond court scope. Kicked to COMPOSITOR or escalated to human.",
+      "REJECT_BOTH": "Both sides are wrong; MASTER marks concept unresolved. Triggers ESCALATE.",
+      "NO_DECISION": "QUEEN cannot rule; criteria tied. Triggers ESCALATE to human."
+    },
+    "recording": {
+      "location": "INPROGRESS.md",
+      "format": "Dated changelog block, entry-type COURT",
+      "master_back_reference": "Each court-resolved concept in MASTER.md gets a back-reference to the INPROGRESS court entry",
+      "pedagogy_cross_reference": "PEDAGOGY.md gets a short entry noting the court happened with link to INPROGRESS.md"
+    },
+    "automatic_continuation": "On SIDE_A_WINS, SIDE_B_WINS, or SYNTHESIS: QUEEN applies ruling and continues. On DEFER-to-compositor: mark concept for compositor attention. On DEFER-to-human, REJECT_BOTH, NO_DECISION: escalate and pause."
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation when BOOK_CONSOLIDATION is active. Runs inventory, spawns SCRIBE sequentially, presides over COURT, spawns COMPOSITOR, spawns QA, manages MASTER lifecycle.",
+      "responsibilities": [
+        "INVENTORY: list source files, determine temporal sort order, produce INVENTORY.md, await human confirmation",
+        "SCRIBE_LOOP orchestration: spawn SCRIBE once per source doc in temporal order",
+        "COURT adjudication: preside over court sessions for flagged conflicts",
+        "progress tracking: maintain INPROGRESS.md",
+        "COMPOSITOR spawning: after SCRIBE_LOOP + COURT, spawn COMPOSITOR with final MASTER",
+        "QA spawning: after COMPOSITOR, spawn QA_COMPLETENESS then QA_COHERENCE",
+        "verdict execution: act on QA verdicts",
+        "loop counter tracking (qa_cycles)",
+        "escalation to human on loop limits, court escalations, or ESCALATE verdict"
+      ]
+    },
+    "SCRIBE": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_SCRIBE.md",
+      "context_access": "full",
+      "description": "Core upsert worker. Identical mechanics to RDC SCRIBE. Spawned once per source document in temporal order. Reads current MASTER + one source doc. Upserts all concepts into MASTER. Logs changes to PEDAGOGY. Produces evaluation entry. Flags contradictions for COURT.",
+      "inputs": [
+        "MASTER.md (current state)",
+        "source doc (single doc for this pass)",
+        "INVENTORY.md (temporal context)",
+        "PEDAGOGY.md (current state, for append)"
+      ],
+      "produces": [
+        "MASTER.md (updated — concepts upserted, new concepts inserted, conflicts marked)",
+        "PEDAGOGY.md (appended — concept changes logged)",
+        "EVALUATIONS.md entry (appended — what this doc contributed)"
+      ],
+      "upsert_rules": [
+        "new concept not in MASTER → INSERT into structurally appropriate location",
+        "revised concept already in MASTER → OVERWRITE in place, log prior value to PEDAGOGY",
+        "identical concept → NO-OP, note as unchanged in evaluation",
+        "contradicting concept without clear temporal supersession → FLAG for COURT, insert both with conflict marker",
+        "NEVER delete from MASTER — overwrite only; deprecated concepts marked deprecated, not removed"
+      ],
+      "triggered_by": ["QUEEN during SCRIBE_LOOP", "QUEEN during SCRIBE_REVISIT"]
+    },
+    "ADVOCATE": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_ADVOCATE.md",
+      "context_access": "full",
+      "description": "Court advocate. Identical to RDC ADVOCATE. Given a conflicting concept and assigned side, produces a brief arguing for that side. Spawned 4 per court session (2 per side).",
+      "inputs": [
+        "concept under dispute",
+        "assigned side (A or B) with candidate value",
+        "opposing side's candidate value",
+        "all relevant source docs",
+        "MASTER.md (full)",
+        "PEDAGOGY.md"
+      ],
+      "produces": [
+        "brief: structured argument for assigned side",
+        "optional concession note"
+      ],
+      "discipline": "advocate assigned side regardless of personal assessment",
+      "triggered_by": ["QUEEN during COURT phase — 4 spawned in parallel per session"]
+    },
+    "COMPOSITOR": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_COMPOSITOR.md",
+      "context_access": "full",
+      "description": "Replaces RDC's TAXONOMIST. Takes final MASTER.md (after all SCRIBE passes and COURT resolutions) and carves it into a structured manuscript. Discovers chapter structure from MASTER content — chapters are discovered, not predetermined. Produces ordered chapter files with section hierarchy and STRUCTURE.md as the manuscript skeleton.",
+      "inputs": [
+        "MASTER.md (final state after all SCRIBE passes and COURT resolutions)",
+        "PEDAGOGY.md (for context on decision evolution)",
+        "EVALUATIONS.md (for context on source coverage)",
+        "INPROGRESS.md court entries (for understanding resolved conflicts)",
+        "BOOK_MANIFEST.json (for genre/structure context)"
+      ],
+      "produces": [
+        "chapters/CH_<NN>_<TITLE>.md (one per discovered chapter)",
+        "STRUCTURE.md (TOC + chapter summaries + section listings + dependency map)"
+      ],
+      "chapter_discovery_rules": [
+        "chapters are discovered from MASTER content, not predetermined",
+        "chapter boundaries reflect natural conceptual coherence and logical grouping",
+        "chapter ordering reflects conceptual dependency (chapter N+1 builds on chapter N)",
+        "each chapter is a coherent unit — readable as a self-contained section within the larger work",
+        "every concept from MASTER lands in exactly one chapter — no duplication, no loss",
+        "related concepts are placed in the same or adjacent chapters",
+        "section hierarchy within chapters reflects logical sub-grouping of concepts",
+        "STRUCTURE.md dependency map must be acyclic — no circular chapter dependencies"
+      ],
+      "triggered_by": ["QUEEN after SCRIBE_LOOP + COURT completes", "QUEEN during RECOMPOSE"]
+    },
+    "QA_COMPLETENESS": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_QA_COMPLETENESS.md",
+      "context_access": "full",
+      "stance": "adversarial — concept-loss hunter",
+      "description": "Reviews ALL source documents against carved chapter files. Every concept that appeared in any source doc must be present in either (a) chapter files, (b) PEDAGOGY.md as superseded/deprecated, or (c) INPROGRESS.md as court-resolved. Missing concepts are flagged.",
+      "inputs": [
+        "all source documents (original files)",
+        "all chapter files (chapters/CH_<NN>_<TITLE>.md)",
+        "STRUCTURE.md",
+        "PEDAGOGY.md",
+        "INPROGRESS.md (for court-resolved concepts)",
+        "MASTER.md (final state)"
+      ],
+      "produces": [
+        "completeness report: list of all concepts checked, status (present | superseded_in_pedagogy | court_resolved | MISSING)",
+        "if any MISSING: list with source doc reference and concept description"
+      ],
+      "sequence_position": 1
+    },
+    "QA_COHERENCE": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_QA_COHERENCE.md",
+      "context_access": "full",
+      "stance": "adversarial — structural integrity auditor",
+      "description": "Structural coherence check on carved chapter files. Adapted from RDC QA_COHERENCE for manuscript structure.",
+      "inputs": [
+        "all chapter files",
+        "STRUCTURE.md",
+        "MASTER.md (for cross-reference)"
+      ],
+      "produces": [
+        "coherence report: structural issues found",
+        "categories: chapter_ordering_errors | orphaned_concepts | section_misplacement | structure_md_inconsistencies | dependency_violations | conceptual_fragmentation",
+        "verdict recommendation to QUEEN"
+      ],
+      "checks": [
+        "do chapters follow a logical ordering (conceptual dependency respected)?",
+        "are there orphaned concepts (in MASTER but not in any chapter)?",
+        "do sections belong in their chapters (no misplaced content)?",
+        "is STRUCTURE.md consistent with actual chapter files (no phantom entries, no missing chapters)?",
+        "is the dependency map acyclic?",
+        "are related concepts co-located (same or adjacent chapters)?",
+        "is the manuscript structurally ready for storyboarding?"
+      ],
+      "sequence_position": 2
+    }
+  },
+
+  "units": {
+    "COURT_UNIT": {
+      "participants": ["ADVOCATE_A1", "ADVOCATE_A2", "ADVOCATE_B1", "ADVOCATE_B2", "QUEEN (judge)"],
+      "execution": "advocates spawned in parallel (4 at once); QUEEN ruling sequential after all 4 briefs return",
+      "atomic": true,
+      "description": "One court session per flagged conflict. Identical to RDC COURT_UNIT."
+    },
+    "QA_UNIT": {
+      "sequence": ["QA_COMPLETENESS", "QA_COHERENCE"],
+      "atomic": true,
+      "description": "Both QA passes run in sequence. Completeness first, then coherence. Both must pass for GREEN_LIGHT."
+    }
+  },
+
+  "flow": {
+    "inventory": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "list all files in source directory",
+        "pre-read each file: extract filename, date/timestamp headers, creation metadata, first ~100 lines for context",
+        "determine temporal sort order: prefer explicit timestamps > filename conventions > file metadata > content-internal date references",
+        "produce INVENTORY.md: ordered manifest with reading sequence, per-file summary, detected epoch",
+        "initialize MASTER.md as empty structured document",
+        "initialize PEDAGOGY.md with header block",
+        "initialize EVALUATIONS.md with header block",
+        "ensure INPROGRESS.md exists at project root (create skeleton if missing)",
+        "report inventory to human: N files found, proposed reading order, await confirmation or override"
+      ]
+    },
+    "scribe_loop": {
+      "performer": "QUEEN spawns SCRIBE",
+      "type": "sequential_worker_loop",
+      "description": "QUEEN iterates through INVENTORY in temporal order. For each source doc: spawn SCRIBE with current MASTER + doc. SCRIBE returns updated MASTER + PEDAGOGY delta + evaluation entry. QUEEN verifies, appends to INPROGRESS, advances.",
+      "per_iteration": [
+        "QUEEN assembles context packet: current MASTER.md + source doc[i] + INVENTORY.md + PEDAGOGY.md + WORKER_SCRIBE.md + WORKER_PROTOCOL.md",
+        "QUEEN spawns SCRIBE",
+        "SCRIBE returns: updated MASTER.md + PEDAGOGY.md append + EVALUATIONS.md entry",
+        "QUEEN writes SCRIBE report to INPROGRESS.md (prepend dated block)",
+        "QUEEN advances to doc[i+1]"
+      ],
+      "subset_awareness": "when chapter_subset is specified, QUEEN constructs the SCRIBE_LOOP from only source files mapped to subset chapters (from triage.per_chapter_state[i].source_files for each chapter in the subset); source files that span multiple chapters (including both subset and non-subset chapters) are included but SCRIBE is given the chapter_subset as a focus directive so that upsert operations preferentially handle content relevant to the subset chapters",
+      "completion": "after final doc processed, QUEEN reports SCRIBE_LOOP complete with summary stats"
+    },
+    "court": {
+      "performer": "QUEEN presides, spawns ADVOCATEs",
+      "type": "conditional_phase",
+      "description": "Runs only if SCRIBE_LOOP flagged conflicts. Identical mechanics to RDC COURT.",
+      "skip_condition": "if SCRIBE_LOOP flagged zero conflicts, COURT phase is skipped entirely",
+      "per_session": [
+        "QUEEN reads conflict marker from MASTER",
+        "QUEEN assembles context packets for 4 advocates",
+        "QUEEN spawns all 4 ADVOCATEs in parallel",
+        "QUEEN collects all 4 briefs",
+        "QUEEN applies decision criteria in priority order",
+        "QUEEN emits ruling",
+        "QUEEN records to INPROGRESS.md",
+        "QUEEN updates MASTER.md: replaces conflict marker with ruled value + back-reference",
+        "QUEEN cross-references in PEDAGOGY.md",
+        "QUEEN advances to next conflict or ends COURT phase"
+      ],
+      "on_escalation": "NO_DECISION, REJECT_BOTH, or DEFER-to-human: QUEEN pauses, reports to human, waits"
+    },
+    "composition": {
+      "performer": "QUEEN spawns COMPOSITOR",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN assembles context packet: final MASTER.md + PEDAGOGY.md + EVALUATIONS.md + INPROGRESS.md + BOOK_MANIFEST.json + WORKER_COMPOSITOR.md + WORKER_PROTOCOL.md",
+        "if chapter_subset is specified: include chapter_subset in context packet as a carving scope directive — COMPOSITOR carves only the subset chapters from MASTER; existing STRUCTURE.md entries for non-subset chapters are preserved",
+        "QUEEN spawns COMPOSITOR",
+        "COMPOSITOR returns: chapters/CH_<NN>_<TITLE>.md set + STRUCTURE.md",
+        "QUEEN writes COMPOSITOR report to INPROGRESS.md",
+        "QUEEN proceeds to QA"
+      ]
+    },
+    "qa": {
+      "performer": "QUEEN spawns QA_UNIT",
+      "type": "sequential_workers",
+      "actions": [
+        "QUEEN spawns QA_COMPLETENESS with: all source docs (subset-scoped if chapter_subset is specified) + all chapter files (subset only if chapter_subset) + STRUCTURE.md + PEDAGOGY + INPROGRESS + MASTER",
+        "QA_COMPLETENESS returns completeness report",
+        "QUEEN spawns QA_COHERENCE with: all chapter files (subset only if chapter_subset) + STRUCTURE.md + MASTER",
+        "QA_COHERENCE returns coherence report + verdict recommendation",
+        "QUEEN evaluates combined QA results → determines verdict"
+      ],
+      "subset_scoping_note": "when chapter_subset is specified, both QA workers scope their checks to subset chapters and their associated source files only; subset scoping is noted in both QA reports"
+    },
+    "main_sequence": [
+      "INVENTORY: QUEEN scans source directory, builds temporal manifest, awaits human confirmation",
+      "SCRIBE_LOOP: sequential upsert passes, one per source doc in temporal order",
+      "COURT: (conditional) resolve flagged conflicts via 4-advocate sessions",
+      "COMPOSITION: COMPOSITOR carves MASTER into chapter files + STRUCTURE.md",
+      "QA_UNIT: QA_COMPLETENESS then QA_COHERENCE review output set",
+      "QUEEN executes verdict"
+    ]
+  },
+
+  "verdicts": {
+    "GREEN_LIGHT": {
+      "trigger": "QA_COMPLETENESS finds zero MISSING concepts AND QA_COHERENCE finds zero structural issues",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "output files finalized: chapters/, STRUCTURE.md, PEDAGOGY.md, MASTER.md, EVALUATIONS.md, INVENTORY.md",
+        "QUEEN commits output to project root",
+        "QUEEN reports: 'BOOK_CONSOLIDATION complete. Structured manuscript ready for BOOK_STORYBOARD.'"
+      ]
+    },
+    "SCRIBE_REVISIT": {
+      "trigger": "QA_COMPLETENESS finds MISSING concepts",
+      "terminal": false,
+      "actions": [
+        "QUEEN identifies which source doc(s) contain missing concepts",
+        "QUEEN re-spawns SCRIBE with: current MASTER + flagged source doc(s) + QA findings as focus directive",
+        "SCRIBE performs targeted upsert",
+        "QUEEN re-spawns COMPOSITOR (RECOMPOSE) to re-carve with updated MASTER",
+        "QUEEN re-spawns full QA_UNIT",
+        "qa_cycle_counter++"
+      ],
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate"
+    },
+    "RECOMPOSE": {
+      "trigger": "QA_COMPLETENESS passes (no missing concepts) BUT QA_COHERENCE finds structural issues",
+      "terminal": false,
+      "actions": [
+        "QUEEN re-spawns COMPOSITOR with: current MASTER + QA_COHERENCE findings as correction directive",
+        "COMPOSITOR re-carves chapter files and STRUCTURE.md addressing flagged issues",
+        "QUEEN re-spawns full QA_UNIT",
+        "qa_cycle_counter++"
+      ],
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "qa_cycle_counter >= 3 OR court session rules NO_DECISION/REJECT_BOTH/DEFER-to-human OR unresolvable issue",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md",
+        "QUEEN pauses all worker spawning",
+        "QUEEN reports to human with structured escalation report",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human resolves; QUEEN resumes from appropriate point"
+    }
+  },
+
+  "loop_limits": {
+    "qa_cycles": 3,
+    "counter_semantics": {
+      "qa_cycle_counter": "increments on any QA loop-back (SCRIBE_REVISIT or RECOMPOSE). At 3, auto-escalate. Shared across both loop-back types."
+    },
+    "court_sessions_per_concept": "no hard limit, but escalation blocks progress until resolved"
+  },
+
+  "context_access": {
+    "full_access_roles": ["QUEEN", "SCRIBE", "ADVOCATE", "COMPOSITOR", "QA_COMPLETENESS", "QA_COHERENCE"],
+    "note": "no cleanroom roles — all workers need full visibility for consolidation"
+  },
+
+  "hard_rules": {
+    "no_greenlight_without_full_qa_unit": true,
+    "every_loop_back_reenters_full_qa_unit": true,
+    "scribe_loop_is_sequential_not_parallel": true,
+    "scribe_reads_docs_in_temporal_order": true,
+    "master_upsert_never_deletes_only_overwrites": true,
+    "pedagogy_is_append_only": true,
+    "evaluations_is_append_only": true,
+    "inprogress_prepend_only": true,
+    "inventory_requires_human_confirmation_before_scribe_loop": true,
+    "compositor_discovers_chapters_from_content": true,
+    "every_concept_in_master_lands_in_exactly_one_chapter": true,
+    "structure_md_must_be_consistent_with_chapter_files": true,
+    "chapter_ordering_reflects_dependency_not_source_order": true,
+    "no_fabricated_concepts": true,
+    "conflicts_go_through_court_not_silently_resolved": true,
+    "court_rulings_recorded_to_inprogress": true,
+    "advocates_advocate_assigned_side": true,
+    "subset_preserves_unflagged_chapters": true,
+    "subset_invocation_logged_to_inprogress": true,
+    "subset_parameter_spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md §3.1"
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "scribe": "workflows/BOOK/WORKER_SCRIBE.md",
+    "advocate": "workflows/BOOK/WORKER_ADVOCATE.md",
+    "compositor": "workflows/BOOK/WORKER_COMPOSITOR.md",
+    "qa_completeness": "workflows/BOOK/WORKER_QA_COMPLETENESS.md",
+    "qa_coherence": "workflows/BOOK/WORKER_QA_COHERENCE.md"
+  },
+
+  "notes": {
+    "rdc_fork_note": "This workflow is a direct fork of RDC_WORKFLOW v1.1.0. SCRIBE, COURT, ADVOCATE, PEDAGOGY, EVALUATIONS, INVENTORY mechanics are identical. The only structural difference is COMPOSITOR (replaces TAXONOMIST) and the output shape (chapters instead of PHASE/ARCH/TODO). Future refactoring may extract shared mechanics into a base workflow.",
+    "manifest_note": "BOOK_MANIFEST.json is read at engagement for genre/structure context. COMPOSITOR uses manifest genre and structure hints when discovering chapter boundaries. The manifest is not modified by this workflow.",
+    "master_preservation_note": "MASTER.md is preserved at project root after GREEN_LIGHT. It is not consumed by downstream BOOK workflows but serves as a single-file project reference and enables future re-consolidation runs.",
+    "chapter_naming_note": "Chapter files use zero-padded numbering (CH_01, CH_02, ...) for filesystem ordering. TITLE is a short descriptive slug derived from chapter content, not the source doc filename."
+  }
+}

@@ -1,0 +1,479 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/book-spec-schema.json",
+  "title": "BOOK_SPEC",
+  "description": "Schema for BOOK_SPEC.json — the contract between the BOOK_PRODUCTION AI workflow and the LULU_PIPELINE mechanical build system. Every BOOK_SPEC.json instance must validate against this schema before the pipeline consumes it.",
+  "type": "object",
+
+  "required": [
+    "title",
+    "author",
+    "trim_size",
+    "margins",
+    "bleed_inches",
+    "gutter_inches",
+    "spine_width_inches",
+    "page_count_estimate",
+    "word_count",
+    "fonts",
+    "page_numbering",
+    "chapter_breaks",
+    "headers_footers",
+    "color_interior",
+    "pdf_standard",
+    "cover",
+    "file_manifest",
+    "special_elements",
+    "target_pipeline",
+    "target_spec_version",
+    "metadata"
+  ],
+
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Full book title. Derived from BOOK_MANIFEST.json top-level 'title' field.",
+      "minLength": 1
+    },
+
+    "subtitle": {
+      "type": ["string", "null"],
+      "description": "Book subtitle if present; null if none. Derived from BOOK_MANIFEST.json 'subtitle' field."
+    },
+
+    "author": {
+      "type": "string",
+      "description": "Author name(s) as they appear on the cover. Derived from BOOK_MANIFEST.json 'author' field.",
+      "minLength": 1
+    },
+
+    "isbn": {
+      "type": ["string", "null"],
+      "description": "ISBN-13 (preferred) or ISBN-10 if assigned. Null if not yet assigned. Derived from BOOK_MANIFEST.json 'isbn' field."
+    },
+
+    "edition": {
+      "type": ["string", "null"],
+      "description": "Edition descriptor (e.g., 'First Edition', '2nd Edition'). Null if not declared.",
+      "examples": ["First Edition", "2nd Edition", null]
+    },
+
+    "trim_size": {
+      "type": "object",
+      "description": "Physical trim dimensions. width_inches and height_inches must match a named standard size in LULU_SPEC §1.",
+      "required": ["width_inches", "height_inches", "name"],
+      "properties": {
+        "width_inches": {
+          "type": "number",
+          "description": "Trim width in inches. Must exactly match the LULU_SPEC §1 table entry for the declared name.",
+          "exclusiveMinimum": 0,
+          "examples": [6, 5.5, 5, 8.5, 6.14]
+        },
+        "height_inches": {
+          "type": "number",
+          "description": "Trim height in inches. Must exactly match the LULU_SPEC §1 table entry for the declared name.",
+          "exclusiveMinimum": 0,
+          "examples": [9, 8.5, 8, 11, 9.21]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable trim size name matching a row in LULU_SPEC §1 Trim Sizes table.",
+          "examples": ["US Trade 6x9", "Digest 5.5x8.5", "Novella 5x8", "US Letter 8.5x11"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "margins": {
+      "type": "object",
+      "description": "Interior page margins in inches. All values must meet LULU_SPEC §2 minimums. inside_inches must meet LULU_SPEC §4 gutter addition for the declared page count.",
+      "required": ["top_inches", "bottom_inches", "inside_inches", "outside_inches"],
+      "properties": {
+        "top_inches": {
+          "type": "number",
+          "description": "Top margin in inches. Minimum 0.5 in per LULU_SPEC §2.",
+          "minimum": 0.5
+        },
+        "bottom_inches": {
+          "type": "number",
+          "description": "Bottom margin in inches. Minimum 0.5 in per LULU_SPEC §2.",
+          "minimum": 0.5
+        },
+        "inside_inches": {
+          "type": "number",
+          "description": "Inside (spine-side / gutter) margin in inches. Absolute floor 0.2 in per LULU_SPEC §2; practical minimum is the recommended total inside margin from LULU_SPEC §4 gutter table for the declared page count.",
+          "minimum": 0.2
+        },
+        "outside_inches": {
+          "type": "number",
+          "description": "Outside margin in inches. Minimum 0.5 in per LULU_SPEC §2.",
+          "minimum": 0.5
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "bleed_inches": {
+      "type": "number",
+      "description": "Bleed in inches on all sides. Standard Lulu requirement is 0.125 in per LULU_SPEC §3.",
+      "const": 0.125
+    },
+
+    "gutter_inches": {
+      "type": "number",
+      "description": "Gutter addition in inches beyond the base 0.5 in safety margin. Derived from LULU_SPEC §4 Gutter Addition Table by page count bracket. 0 for books under 60 pages.",
+      "minimum": 0
+    },
+
+    "spine_width_inches": {
+      "type": "number",
+      "description": "Calculated spine width in inches. For paperback: (page_count_estimate / 444) + 0.06 per LULU_SPEC §5.1. For hardcover: lookup from LULU_SPEC §5.2 table. Not applicable for coil/saddle stitch.",
+      "minimum": 0
+    },
+
+    "page_count_estimate": {
+      "type": "integer",
+      "description": "Estimated total page count including front matter, body chapters, and back matter. Derived from word count + figure count + supporting file estimates. The mechanical pipeline (LULU_PIPELINE) calculates the actual page count during typesetting. Must be divisible by 4 per LULU_SPEC §9 recommendation. Minimum 32 for paperback, 24 for hardcover per LULU_SPEC §9.",
+      "minimum": 1,
+      "examples": [200, 324, 480]
+    },
+
+    "word_count": {
+      "type": "integer",
+      "description": "Actual word count summed across all chapter files. Used to calculate page_count_estimate.",
+      "minimum": 0
+    },
+
+    "fonts": {
+      "type": "object",
+      "description": "Font specifications for all text roles. All fonts must be embeddable for print per LULU_SPEC §12 Font Requirements.",
+      "required": ["body", "heading_1", "heading_2"],
+      "properties": {
+        "body": {
+          "type": "object",
+          "description": "Primary body text font.",
+          "required": ["family", "size_pt", "line_height"],
+          "properties": {
+            "family": { "type": "string", "description": "Font family name (must be embeddable for print)." },
+            "size_pt": { "type": "number", "description": "Font size in points.", "exclusiveMinimum": 0 },
+            "line_height": { "type": "number", "description": "Line height multiplier (e.g., 1.3 = 130% of font size).", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "heading_1": {
+          "type": "object",
+          "description": "Chapter title / H1 font.",
+          "required": ["family", "size_pt"],
+          "properties": {
+            "family": { "type": "string" },
+            "size_pt": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "heading_2": {
+          "type": "object",
+          "description": "Section heading / H2 font.",
+          "required": ["family", "size_pt"],
+          "properties": {
+            "family": { "type": "string" },
+            "size_pt": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "heading_3": {
+          "type": "object",
+          "description": "Subsection heading / H3 font (optional).",
+          "properties": {
+            "family": { "type": "string" },
+            "size_pt": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "caption": {
+          "type": "object",
+          "description": "Figure/table caption font (optional).",
+          "properties": {
+            "family": { "type": "string" },
+            "size_pt": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "footnote": {
+          "type": "object",
+          "description": "Footnote text font (optional).",
+          "properties": {
+            "family": { "type": "string" },
+            "size_pt": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "page_numbering": {
+      "type": "object",
+      "description": "Page numbering conventions by section type.",
+      "required": ["front_matter", "body", "start_page"],
+      "properties": {
+        "front_matter": {
+          "type": "string",
+          "description": "Page numbering style for front matter.",
+          "enum": ["roman_lowercase", "roman_uppercase", "arabic", "none"]
+        },
+        "body": {
+          "type": "string",
+          "description": "Page numbering style for body chapters. Arabic is standard.",
+          "enum": ["arabic"],
+          "const": "arabic"
+        },
+        "back_matter": {
+          "type": "string",
+          "description": "Page numbering style for back matter.",
+          "enum": ["arabic_continued", "arabic_restart", "none"]
+        },
+        "start_page": {
+          "type": "string",
+          "description": "Whether body chapters start on recto (odd/right-hand) or verso pages.",
+          "enum": ["recto", "verso"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "chapter_breaks": {
+      "type": "string",
+      "description": "How chapters begin: on the next recto page, the next page regardless of recto/verso, or the same page (flow).",
+      "enum": ["recto", "next_page", "same_page"]
+    },
+
+    "headers_footers": {
+      "type": "object",
+      "description": "Running header/footer patterns. Pattern tokens: {chapter_title}, {book_title}, {author}, {page_number}, {section_title}.",
+      "required": ["first_page_of_chapter"],
+      "properties": {
+        "odd_header": {
+          "type": "string",
+          "description": "Running header for odd (recto) pages. Pattern string with tokens.",
+          "examples": ["{chapter_title}", "{section_title}", ""]
+        },
+        "even_header": {
+          "type": "string",
+          "description": "Running header for even (verso) pages.",
+          "examples": ["{book_title}", "{author}", ""]
+        },
+        "odd_footer": {
+          "type": "string",
+          "description": "Running footer for odd pages.",
+          "examples": ["{page_number}", ""]
+        },
+        "even_footer": {
+          "type": "string",
+          "description": "Running footer for even pages.",
+          "examples": ["{page_number}", ""]
+        },
+        "first_page_of_chapter": {
+          "type": "string",
+          "description": "Header behavior on the first page of each chapter.",
+          "enum": ["suppress_header", "show_header"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "color_interior": {
+      "type": "boolean",
+      "description": "Whether the interior uses color printing. true = Standard Color or Premium Color (LULU_SPEC §8). false = Standard B&W or Premium B&W. Affects paper stock requirements."
+    },
+
+    "pdf_standard": {
+      "type": "string",
+      "description": "PDF standard declaration. LULU_SPEC §6 does not name a required PDF/X version. Recommended value is 'lulu_joboptions' (use Lulu's proprietary .joboptions export preset). See metadata.pdf_standard_note for the LULU_SPEC §6 UNVERIFIED caveat.",
+      "examples": ["lulu_joboptions", "PDF/X-1a:2001", "PDF/X-3:2002", "PDF/A-1b", "other"]
+    },
+
+    "cover": {
+      "type": "object",
+      "description": "Cover specification. Cover file generation is outside BOOK_PRODUCTION scope; cover_file is null until a cover is designed.",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Binding/cover type.",
+          "enum": ["paperback", "hardcover_casewrap", "hardcover_linen_dust_jacket"]
+        },
+        "finish": {
+          "type": "string",
+          "description": "Cover laminate finish.",
+          "enum": ["matte", "glossy"]
+        },
+        "cover_file": {
+          "type": ["string", "null"],
+          "description": "Path to cover spread PDF file, or null if not yet generated. Cover file must conform to LULU_SPEC §7 cover spread formula and LULU_SPEC §12 cover file requirements."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "file_manifest": {
+      "type": "array",
+      "description": "Ordered list of all files in the book. Order reflects print order: front matter → chapters → back matter. Every file in this manifest must exist; every existing file must be in this manifest.",
+      "items": {
+        "type": "object",
+        "required": ["type", "file", "title", "order"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Section type classification.",
+            "enum": ["front_matter", "chapter", "back_matter"]
+          },
+          "file": {
+            "type": "string",
+            "description": "Relative path to the file (relative to project root).",
+            "examples": ["front/title.md", "chapters/CH_01_WHY_NON_LOCALITY.md", "back/bibliography.md"]
+          },
+          "title": {
+            "type": "string",
+            "description": "Display title for this entry (used in TOC and pipeline references).",
+            "minLength": 1
+          },
+          "order": {
+            "type": "integer",
+            "description": "Sequential position in the book. 1-indexed. No gaps; no duplicates.",
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+
+    "special_elements": {
+      "type": "object",
+      "description": "Boolean flags for special content types present in the manuscript. These flags inform LULU_PIPELINE about typesetting requirements.",
+      "required": ["equations", "figures", "tables", "code_listings", "footnotes"],
+      "properties": {
+        "equations": {
+          "type": "boolean",
+          "description": "True if manuscript contains mathematical equations (LaTeX or equivalent). Requires math-capable typesetting engine."
+        },
+        "figures": {
+          "type": "boolean",
+          "description": "True if manuscript contains figures/images."
+        },
+        "tables": {
+          "type": "boolean",
+          "description": "True if manuscript contains data tables."
+        },
+        "code_listings": {
+          "type": "boolean",
+          "description": "True if manuscript contains code listings (fenced code blocks)."
+        },
+        "footnotes": {
+          "type": "boolean",
+          "description": "True if manuscript contains footnotes."
+        },
+        "endnotes": {
+          "type": "boolean",
+          "description": "True if manuscript uses endnotes instead of or in addition to footnotes."
+        },
+        "margin_notes": {
+          "type": "boolean",
+          "description": "True if manuscript uses margin/side notes."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "target_pipeline": {
+      "type": "string",
+      "description": "The mechanical pipeline that will consume this BOOK_SPEC.json.",
+      "enum": ["lulu", "other"],
+      "examples": ["lulu"]
+    },
+
+    "target_spec_version": {
+      "type": "string",
+      "description": "Version of the target format specification (LULU_SPEC or other) used when FORMATTER generated this BOOK_SPEC.json. Enables QUEEN to detect spec version drift at next engagement.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0"]
+    },
+
+    "metadata": {
+      "type": "object",
+      "description": "Audit trail and calculation notes. Required for traceability and UNVERIFIED item tracking.",
+      "required": ["generated_at", "formatter_version", "lulu_spec_unverified_items"],
+      "properties": {
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of BOOK_SPEC.json generation by FORMATTER."
+        },
+        "formatter_version": {
+          "type": "string",
+          "description": "Version of WORKER_FORMATTER.md used to generate this spec (for traceability)."
+        },
+        "spine_calculation_note": {
+          "type": "string",
+          "description": "Human-readable record of the spine width calculation, including formula and values. Example: 'Paperback: (240 / 444) + 0.06 = 0.5405 + 0.06 = 0.6005 in. Formula from LULU_SPEC §5.1.'"
+        },
+        "gutter_calculation_note": {
+          "type": "string",
+          "description": "Human-readable record of gutter derivation from LULU_SPEC §4 table."
+        },
+        "page_count_note": {
+          "type": "string",
+          "description": "Human-readable description of how page_count_estimate was calculated."
+        },
+        "pdf_standard_note": {
+          "type": "string",
+          "description": "Note on PDF standard choice, citing LULU_SPEC §6 UNVERIFIED status on specific PDF/X version."
+        },
+        "cover_spread_dimensions": {
+          "type": "object",
+          "description": "Informational cover spread dimensions calculated per LULU_SPEC §7. For use by cover designer and LULU_PIPELINE.",
+          "properties": {
+            "cover_width_inches": {
+              "type": "number",
+              "description": "(2 × trim_width) + spine_width + (2 × 0.125) per LULU_SPEC §7."
+            },
+            "cover_height_inches": {
+              "type": "number",
+              "description": "trim_height + (2 × 0.125) per LULU_SPEC §7."
+            },
+            "formula_note": {
+              "type": "string",
+              "description": "Verbatim formula record: 'cover_width = (2 × W) + spine + 0.25; cover_height = H + 0.25. LULU_SPEC §7.'"
+            }
+          }
+        },
+        "lulu_spec_unverified_items": {
+          "type": "array",
+          "description": "List of UNVERIFIED items from LULU_SPEC that affected this BOOK_SPEC.json. Required field — must document known unverified parameters. QA_PRODUCTION checks this field.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 0,
+          "examples": [
+            [
+              "pdf_standard: specific PDF/X version not published by Lulu (LULU_SPEC §6)",
+              "per_paper_type_spine_coefficient: breakdown not published; single formula used (LULU_SPEC §5.1 Note)",
+              "hardcover_maximum_pages: 800 inferred from spine table, not explicitly stated (LULU_SPEC §9)",
+              "coil_saddle_stitch_page_limits: not published in accessible documentation (LULU_SPEC §9)"
+            ]
+          ]
+        },
+        "required_author_actions": {
+          "type": "array",
+          "description": "List of intentional pending items that the author must resolve before publication (fonts, publisher name, ISBN, dedication text, etc.). These are not blocking production QA but must be resolved before final print order.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+
+  "additionalProperties": false
+}

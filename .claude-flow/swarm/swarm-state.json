@@ -1,0 +1,24 @@
+{
+  "swarms": {
+    "swarm-1779616514532-sxro1v": {
+      "swarmId": "swarm-1779616514532-sxro1v",
+      "topology": "hierarchical",
+      "maxAgents": 15,
+      "status": "running",
+      "agents": [],
+      "tasks": [],
+      "config": {
+        "topology": "hierarchical",
+        "maxAgents": 15,
+        "strategy": "specialized",
+        "communicationProtocol": "message-bus",
+        "autoScaling": true,
+        "consensusMechanism": "majority"
+      },
+      "createdAt": "2026-05-24T09:55:14.532Z",
+      "updatedAt": "2026-05-24T09:55:14.532Z",
+      "pid": 2688
+    }
+  },
+  "version": "3.0.0"
+}

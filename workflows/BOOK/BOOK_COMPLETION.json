@@ -1,0 +1,265 @@
+{
+  "version": "1.0.0",
+  "name": "BOOK_COMPLETION",
+  "description": "Meta-orchestrator workflow for mixed-state manuscript corpus handling. Reads per-chapter state from BOOK_MANIFEST.json (produced by BOOK_TRIAGE v1.1) and routes each intended chapter to the appropriate downstream workflow(s). For chapters with insufficient material, spawns DRAFTER to author prose under template constraint. For chapters with existing material, invokes BOOK_CONSOLIDATION on the relevant subset. Merges outputs and routes the unified chapter set through BOOK_STORYBOARD and BOOK_EDITORIAL. This is the first meta-workflow in the BOOK family — it orchestrates other workflows rather than orchestrating workers directly. Idempotent: can be re-invoked iteratively as chapters progress. Triggered by the phrase 'BOOK_COMPLETION'. Owner: Michael. Orchestrator: QUEEN.",
+
+  "trigger": {
+    "phrase": "BOOK_COMPLETION",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/BOOK/BOOK_COMPLETION_ROUTING.md in full",
+      "QUEEN reads workflows/BOOK/WORKER_DRAFTER.md in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/SHARED/WORKER_PROTOCOL.md",
+      "QUEEN reads workflows/SHARED/WORKER.md",
+      "QUEEN reads BOOK_MANIFEST.json from project root (scope + triage.per_chapter_state required)",
+      "QUEEN verifies scope section is present in manifest — if absent, ESCALATE with instruction to declare scope first",
+      "QUEEN verifies triage.per_chapter_state is present — if absent, instruct human to run BOOK_TRIAGE v1.1 first",
+      "QUEEN reports: 'BOOK_COMPLETION mode engaged. N intended chapters found. Per-chapter states loaded. Producing routing plan.'",
+      "QUEEN proceeds to produce routing plan (no additional human prompt needed)"
+    ],
+    "prerequisites": {
+      "required_manifest_sections": ["scope.intended_chapters", "triage.per_chapter_state"],
+      "required_infrastructure": "templates/ directory with templates declared in manifest (DRAFTER writes under template constraint)",
+      "on_missing_scope": "ESCALATE: scope section absent from manifest. Human must declare intended_chapters in BOOK_MANIFEST.json before BOOK_COMPLETION can run.",
+      "on_missing_per_chapter_state": "ESCALATE: triage.per_chapter_state absent from manifest. Human must run BOOK_TRIAGE v1.1 (with scope declared) before BOOK_COMPLETION can route chapters."
+    }
+  },
+
+  "relationship_to_book_family": {
+    "position": "meta_orchestrator",
+    "nature": "First meta-workflow in the BOOK family. Orchestrates other workflows on per-chapter subsets rather than directly orchestrating workers.",
+    "upstream": "BOOK_TRIAGE v1.1 (produces scope + per_chapter_state in BOOK_MANIFEST.json)",
+    "downstream": [
+      "BOOK_CONSOLIDATION (invoked on subset of chapters with existing material)",
+      "BOOK_STORYBOARD (invoked on merged chapter set)",
+      "BOOK_EDITORIAL (invoked on full or subset of chapters)",
+      "BOOK_PRODUCTION (invoked when all chapters reach POLISHED state)"
+    ],
+    "contract": "BOOK_COMPLETION produces a unified chapters/ directory and STRUCTURE.md containing all intended chapters. Some chapters are produced by DRAFTER; others are produced by CONSOLIDATION. All chapters then flow through STORYBOARD and EDITORIAL as a unified set.",
+    "handoffs": "Each sub-workflow invocation is a manual handoff — QUEEN produces the routing plan and invocation parameters, then waits for human to trigger each sub-workflow. After each sub-workflow GREEN_LIGHTs, COMPLETION checks aggregate state and issues next invocation.",
+    "idempotency": "COMPLETION can be re-invoked at any point. It reads per_chapter_state from the manifest (which should be updated as chapters progress) and re-routes only chapters not yet at POLISHED state."
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation when BOOK_COMPLETION is active. Reads manifest state, produces routing plan, invokes DRAFTER for missing/outline/notes chapters, manages chapter subset invocations of downstream workflows, tracks aggregate completion state, reports human review gates.",
+      "responsibilities": [
+        "read triage.per_chapter_state from manifest at engagement",
+        "produce routing plan: for each chapter, determine which workflow(s) apply and in what order (per BOOK_COMPLETION_ROUTING.md)",
+        "invoke DRAFTER for chapters in MISSING, OUTLINE_ONLY, NOTES_ONLY, PARTIALLY_DRAFTED states",
+        "invoke BOOK_CONSOLIDATION on chapter subset (chapters in DRAFT state) with chapter_subset parameter",
+        "gate on human review of drafter-origin chapter output before STORYBOARD",
+        "invoke BOOK_STORYBOARD on merged chapter set (or subset as needed)",
+        "invoke BOOK_EDITORIAL on full chapter set (or subset as needed)",
+        "track completion_state across chapters",
+        "report status at each gate: which chapters are complete, which are pending, which have outstanding human review requirements",
+        "on re-invocation: re-read manifest state, route only incomplete chapters"
+      ]
+    },
+    "DRAFTER": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_DRAFTER.md",
+      "context_access": "full",
+      "description": "Novel prose-generation worker. Authors complete chapter prose from scope declaration + any available notes/outline material + resolved templates. Produces chapter-shaped markdown files directly into chapters/ directory. Output flagged drafter_origin: true in frontmatter. DRAFTER is invoked once per target chapter (not per-loop — COMPLETION invokes DRAFTER multiple times if multiple chapters need drafting, sequentially).",
+      "inputs": [
+        "scope.intended_chapters[i] entry (target_topic, target_length_words, rationale, slug)",
+        "any associated source files from triage.per_chapter_state[i].source_files",
+        "resolved templates (VOICE + PERSONA + STYLE + PROSE or BUNDLE) from BOOK_MANIFEST.json",
+        "STORYBOARD.md if it exists (for prerequisite-chain awareness when later chapters are being drafted after earlier ones are storyboarded)",
+        "BOOK_MANIFEST.json (genre, structure context)"
+      ],
+      "produces": [
+        "chapters/CH_<NN>_<TITLE>.md with YAML frontmatter including drafter_origin: true and drafter_gaps: [...]",
+        "STRUCTURE.md entries for DRAFTER-produced chapters (appended or created)",
+        "DRAFTER report listing word count, gap-flags, and constraint violations"
+      ],
+      "triggered_by": [
+        "QUEEN for each chapter in MISSING, OUTLINE_ONLY, or NOTES_ONLY state",
+        "QUEEN for gap-filling in PARTIALLY_DRAFTED chapters (with existing partial prose as additional input)"
+      ]
+    }
+  },
+
+  "flow": {
+    "engagement": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify prerequisites (scope, per_chapter_state)",
+        "load all intended_chapters and their per_chapter_state entries",
+        "load resolved templates from manifest (DRAFTER will write under these constraints)",
+        "initialize INPROGRESS.md entry for BOOK_COMPLETION engagement"
+      ]
+    },
+    "routing_plan": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "for each intended chapter, look up detected_state in per_chapter_state",
+        "apply BOOK_COMPLETION_ROUTING.md routing table to determine: which workflow(s), in which order, with which subset parameters",
+        "produce routing plan document (presented to human): table of chapters × workflow path",
+        "identify which chapters need DRAFTER (MISSING, OUTLINE_ONLY, NOTES_ONLY, PARTIALLY_DRAFTED)",
+        "identify chapter subsets for CONSOLIDATION (DRAFT state chapters)",
+        "identify chapters ready for EDITORIAL without prior steps (POLISHED state)",
+        "present routing plan to human; QUEEN proceeds (no approval required — human can intervene if routing looks wrong)"
+      ]
+    },
+    "drafter_phase": {
+      "performer": "QUEEN spawns DRAFTER sequentially",
+      "type": "sequential_worker_loop",
+      "description": "For each chapter requiring DRAFTER, spawn DRAFTER once with the chapter's scope entry and any associated notes. Sequential — DRAFTER does not run in parallel because later chapters may reference concepts established in earlier chapters.",
+      "per_iteration": [
+        "QUEEN assembles context packet: scope.intended_chapters[i] + source_files[i] + resolved templates + STORYBOARD.md (if exists) + BOOK_MANIFEST.json + WORKER_DRAFTER.md + WORKER_PROTOCOL.md",
+        "QUEEN spawns DRAFTER for chapter i",
+        "DRAFTER returns: chapters/CH_<NN>_<TITLE>.md with drafter_origin: true + STRUCTURE.md update + DRAFTER report",
+        "QUEEN writes DRAFTER report to INPROGRESS.md",
+        "QUEEN notes any drafter_gaps for human review",
+        "QUEEN advances to next DRAFTER-needed chapter"
+      ],
+      "completion": "after all DRAFTER chapters produced, QUEEN reports: N chapters produced by DRAFTER; M gap-flags total; human review required before STORYBOARD"
+    },
+    "human_review_gate": {
+      "performer": "QUEEN gates — human reviews",
+      "type": "mandatory_pause",
+      "description": "After all DRAFTER-produced chapters exist, QUEEN presents them for human review. This gate is mandatory per DRAFTER_AUTHORSHIP_STANCE.md Safeguard 2.",
+      "actions": [
+        "QUEEN lists all drafter-origin chapters with their gap-flag counts",
+        "QUEEN presents path to each chapter file for human inspection",
+        "QUEEN instructs: 'Review drafter-origin chapters. Address any [DRAFTER_GAP: ...] markers you can. When ready, trigger BOOK_CONSOLIDATION on chapter subset [list] and/or trigger BOOK_STORYBOARD when consolidation is complete.'",
+        "QUEEN waits for human to proceed"
+      ]
+    },
+    "consolidation_phase": {
+      "performer": "QUEEN instructs human to trigger BOOK_CONSOLIDATION",
+      "type": "sub_workflow_invocation",
+      "description": "BOOK_CONSOLIDATION is invoked on the subset of chapters with source material in DRAFT state. DRAFTER-origin chapters skip CONSOLIDATION.",
+      "actions": [
+        "QUEEN provides the chapter_subset parameter for CONSOLIDATION: list of slugs for DRAFT-state chapters",
+        "Human triggers: BOOK_CONSOLIDATION with chapter_subset=[list of DRAFT chapter slugs]",
+        "BOOK_CONSOLIDATION runs and GREEN_LIGHTs → structured chapter files produced for DRAFT subset",
+        "QUEEN notes CONSOLIDATION complete; merges DRAFT-subset output with DRAFTER-produced chapters"
+      ],
+      "skip_condition": "if no chapters are in DRAFT state, CONSOLIDATION phase is skipped"
+    },
+    "storyboard_phase": {
+      "performer": "QUEEN instructs human to trigger BOOK_STORYBOARD",
+      "type": "sub_workflow_invocation",
+      "description": "After human review gate and CONSOLIDATION (if any), BOOK_STORYBOARD is invoked on the merged chapter set.",
+      "actions": [
+        "QUEEN verifies chapters/ directory contains chapter files for all intended chapters",
+        "QUEEN verifies STRUCTURE.md is consistent with all chapters",
+        "Human triggers: BOOK_STORYBOARD",
+        "BOOK_STORYBOARD runs on full chapter set (may include chapter_subset if only some chapters are new)",
+        "QUEEN notes STORYBOARD complete"
+      ]
+    },
+    "editorial_phase": {
+      "performer": "QUEEN instructs human to trigger BOOK_EDITORIAL",
+      "type": "sub_workflow_invocation",
+      "description": "After STORYBOARD GREEN_LIGHTs and human reviews storyboard, BOOK_EDITORIAL runs on the full chapter set.",
+      "actions": [
+        "Human triggers: BOOK_EDITORIAL",
+        "BOOK_EDITORIAL runs; drafter-origin chapters receive enhanced scrutiny per DRAFTER_AUTHORSHIP_STANCE.md",
+        "QUEEN notes EDITORIAL complete"
+      ]
+    },
+    "completion_check": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "count chapters at POLISHED state",
+        "count chapters still at sub-POLISHED state",
+        "emit verdict: ALL_CHAPTERS_COMPLETE | PARTIAL_COMPLETION | ESCALATE",
+        "if PARTIAL_COMPLETION: report which chapters are still incomplete and why",
+        "if ESCALATE: report what is blocking completion (human-judgment gap-flags, drafter failures, etc.)"
+      ]
+    },
+    "main_sequence": [
+      "ENGAGEMENT: verify prerequisites, load state, initialize",
+      "ROUTING_PLAN: produce per-chapter routing plan",
+      "DRAFTER_PHASE: DRAFTER runs for each MISSING/OUTLINE_ONLY/NOTES_ONLY/PARTIALLY_DRAFTED chapter (sequential)",
+      "HUMAN_REVIEW_GATE: mandatory human review of drafter-origin chapters",
+      "CONSOLIDATION_PHASE: BOOK_CONSOLIDATION on DRAFT-state chapter subset (if any)",
+      "STORYBOARD_PHASE: BOOK_STORYBOARD on merged chapter set",
+      "EDITORIAL_PHASE: BOOK_EDITORIAL on full chapter set",
+      "COMPLETION_CHECK: emit verdict"
+    ]
+  },
+
+  "verdicts": {
+    "ALL_CHAPTERS_COMPLETE": {
+      "trigger": "All intended chapters have passed BOOK_EDITORIAL (all at POLISHED state)",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "QUEEN reports: 'BOOK_COMPLETION complete. All N chapters at POLISHED state. Ready for BOOK_PRODUCTION.'"
+      ]
+    },
+    "PARTIAL_COMPLETION": {
+      "trigger": "Some intended chapters have passed BOOK_EDITORIAL, but some remain at sub-POLISHED state (e.g., drafter gaps not yet resolved, some chapters still in EDITORIAL cycle)",
+      "terminal": false,
+      "actions": [
+        "QUEEN reports: 'PARTIAL_COMPLETION. N of M chapters at POLISHED state. Remaining chapters: [list with current state].'",
+        "QUEEN lists specific blockers for each incomplete chapter",
+        "QUEEN describes next step required per chapter",
+        "QUEEN waits — COMPLETION is re-invokable; human triggers it again after resolving blockers"
+      ]
+    },
+    "ESCALATE": {
+      "trigger": "A chapter cannot proceed due to: unresolvable drafter gap, DRAFTER failure, sub-workflow ESCALATE on a chapter, or human judgment required on content decisions",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md",
+        "QUEEN reports specific blocker: which chapter, which workflow, what is blocking",
+        "QUEEN waits for human direction"
+      ]
+    }
+  },
+
+  "loop_limits": {
+    "drafter_passes_per_chapter": 1,
+    "drafter_passes_note": "DRAFTER does not loop. If DRAFTER output is insufficient after gap-review and human intervention, QUEEN escalates rather than re-running DRAFTER. Additional DRAFTER passes may be triggered by re-invoking BOOK_COMPLETION after human adds source material.",
+    "sub_workflow_loop_limits": "Each sub-workflow (CONSOLIDATION, STORYBOARD, EDITORIAL) has its own loop limits per its own JSON specification."
+  },
+
+  "hard_rules": {
+    "scope_required": "BOOK_COMPLETION cannot run without scope.intended_chapters in manifest",
+    "per_chapter_state_required": "BOOK_COMPLETION cannot route without triage.per_chapter_state in manifest",
+    "completion_never_modifies_completed_chapters": "BOOK_COMPLETION does not re-process chapters already at POLISHED state on re-invocation",
+    "drafter_output_flagged_drafter_origin": "All DRAFTER-produced chapter files must have drafter_origin: true in frontmatter",
+    "human_review_gate_mandatory": "drafter-origin chapters require human review before STORYBOARD — this gate cannot be skipped",
+    "drafter_output_bypasses_consolidation": "DRAFTER-produced chapters go directly to STORYBOARD; they do not go through CONSOLIDATION",
+    "partially_drafted_goes_through_consolidation": "PARTIALLY_DRAFTED chapters, after DRAFTER fills gaps, go through CONSOLIDATION to normalize the merged document before STORYBOARD",
+    "drafter_is_sequential": "DRAFTER is spawned once per chapter in order; not parallelized, because later chapters may reference concepts from earlier ones",
+    "sub_workflows_are_manual_handoffs": "Each sub-workflow (CONSOLIDATION, STORYBOARD, EDITORIAL) is triggered manually by the human after QUEEN provides the invocation parameters",
+    "inprogress_prepend_only": "INPROGRESS.md is prepend-only except checkbox toggles",
+    "idempotent_re_invocation": "BOOK_COMPLETION may be re-invoked multiple times; it routes only chapters not yet at POLISHED state"
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "drafter": "workflows/BOOK/WORKER_DRAFTER.md",
+    "authorship_stance": "workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md",
+    "routing": "workflows/BOOK/BOOK_COMPLETION_ROUTING.md",
+    "state_taxonomy": "workflows/BOOK/CHAPTER_STATE_TAXONOMY.md",
+    "manifest_scope": "workflows/BOOK/BOOK_MANIFEST_SCOPE.md",
+    "subset_protocol": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md"
+  },
+
+  "notes": {
+    "meta_workflow_note": "BOOK_COMPLETION is the first meta-workflow in the BOOK family. Unlike CONSOLIDATION, STORYBOARD, EDITORIAL, and PRODUCTION (which each orchestrate workers), COMPLETION orchestrates other workflows on per-chapter subsets. The distinction: COMPLETION does not spawn SCRIBE, COMPOSITOR, STORYBOARDER, or JUNIOR workers directly. Those are internal to their respective workflows. COMPLETION's job is routing and sequencing.",
+    "drafter_note": "DRAFTER is the only worker COMPLETION directly spawns. All other work is done by invoking downstream BOOK workflows with chapter_subset parameters. This keeps DRAFTER's output format (chapters/CH_<NN>_<TITLE>.md with drafter_origin: true) consistent with what downstream workflows expect.",
+    "consolidation_note": "BOOK_CONSOLIDATION is invoked on DRAFT-state chapters only. It is not invoked on DRAFTER-origin chapters because DRAFTER already produces chapter-shaped output. Invoking CONSOLIDATION on DRAFTER output would treat the chapter file as a source doc and re-carve it unnecessarily.",
+    "storyboard_note": "After DRAFTER + CONSOLIDATION phases both complete, STORYBOARD runs on the full unified chapter set. Both DRAFTER-origin and CONSOLIDATION-origin chapters are treated identically by STORYBOARD. QA_STORYBOARD checks drafter-origin frontmatter for extra accuracy spot-checks (per BOOK_STORYBOARD.json T5.5).",
+    "re_invocation_note": "BOOK_COMPLETION is designed to be triggered multiple times as a manuscript progresses. A typical workflow: invoke COMPLETION, DRAFTER runs for 6 chapters, human reviews and resolves gaps, COMPLETION re-invoked, all 12 chapters now route through EDITORIAL, COMPLETION completes.",
+    "case_a_note": "Case A walkthrough: workflows/BOOK/COMPLETION_CASE_A_WALKTHROUGH.md",
+    "case_b_note": "Case B walkthrough: workflows/BOOK/COMPLETION_CASE_B_WALKTHROUGH.md"
+  }
+}

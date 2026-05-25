@@ -1,0 +1,88 @@
+{
+  "version": "2.0.0",
+  "workflow": "DIRECTORY_SDLC_POOL",
+  "created": "2026-05-23T06:00:00Z",
+  "last_updated": "2026-05-23T06:00:00Z",
+  "status": "ACTIVE",
+
+  "pool": {
+    "max_slots": 4,
+    "active_workers": {}
+  },
+
+  "summary": {
+    "total_directories": 35,
+    "completed": 0,
+    "in_progress": 1,
+    "pending": 34,
+    "blocked": 0
+  },
+
+  "directories": [
+    {
+      "name": "engine_animation_crowds_facial",
+      "status": "IN_PROGRESS",
+      "phase": 1,
+      "phase_count": 3,
+      "qa_cycle_counter": 1,
+      "rewrite_counter": 0,
+      "started_at": "2026-05-23T06:00:00Z",
+      "tasks": [
+        {"id": "T1.1", "stage": "DONE", "worker_id": null, "notes": "11/11 tests pass"},
+        {"id": "T1.2", "stage": "DONE", "worker_id": null, "notes": "20/20 tests pass"},
+        {"id": "T1.3", "stage": "DONE", "worker_id": null, "notes": "20/20 tests pass"},
+        {"id": "T1.5", "stage": "PENDING", "worker_id": null, "notes": "FIX cycle 2/3 (1 left). Awaiting cycle 3 or GREEN_LIGHT override."}
+      ]
+    },
+    {"name": "engine_animation_graph_ik", "status": "IN_PROGRESS", "phase": 1, "phase_count": 4, "qa_cycle_counter": 0, "rewrite_counter": 0, "started_at": "2026-05-23", "tasks": [
+    {"id": "T-AG-1.1", "stage": "PENDING", "worker_id": null, "notes": "FIX cycle 1. FINAL: 4 items — slot tests, connect type validation, all_node_types(), Bone/Skeleton dual-class."},
+    {"id": "T-AG-1.2", "stage": "DONE", "worker_id": null, "notes": "GREEN_LIGHT. 119 tests. Transform/Pose."},
+    {"id": "T-AG-1.3", "stage": "DONE", "worker_id": null, "notes": "GREEN_LIGHT. 241 tests. Skeleton + exports."},
+    {"id": "T-AG-1.4", "stage": "DONE", "worker_id": null, "notes": "bone_mask.py: BoneMask, BoneMaskPresets, MissingBoneMode."},
+    {"id": "T-AG-1.5", "stage": "DONE", "worker_id": null, "notes": "GREEN_LIGHT. 120 tests. AnimationGraph eval/topology/cycles. All 7 FIX resolved."},
+    {"id": "T-AG-1.6", "stage": "DONE", "worker_id": null, "notes": "GREEN_LIGHT. 142 tests. GraphContext + ContextPool. Dual-Skeleton issue noted as separate task."},
+    {"id": "T-AG-1.7", "stage": "TEST", "worker_id": "test-pair-ag1.7", "notes": "WHITEBOX done (45 tests). BLACKBOX running."},
+    {"id": "T-AG-1.8", "stage": "TEST_DONE", "worker_id": null, "notes": "WHITEBOX 25 + BLACKBOX 27 = 52 tests. Ready for QA.", "worker_id": null, "notes": "detect_cycles() with 3-color DFS. Reports all cycles with node names."}
+  ]},
+    {"name": "engine_animation_motionmatching_procedural", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_animation_skeletal_systems", "status": "PENDING", "phase_count": 2, "tasks": []},
+    {"name": "engine_audio_adaptive_core", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_audio_dialogue_dsp", "status": "PENDING", "phase_count": 2, "tasks": []},
+    {"name": "engine_audio_mixing_spatial", "status": "PENDING", "phase_count": 5, "tasks": []},
+    {"name": "engine_debug_resource", "status": "PENDING", "phase_count": 2, "tasks": []},
+    {"name": "engine_gameplay_abilities_ai_camera", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_gameplay_combat_components", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_gameplay_economy_entity_input", "status": "PENDING", "phase_count": 7, "tasks": []},
+    {"name": "engine_gameplay_nav_quest", "status": "PENDING", "phase_count": 6, "tasks": []},
+    {"name": "engine_networking", "status": "PENDING", "phase_count": 5, "tasks": []},
+    {"name": "engine_platform", "status": "PENDING", "phase_count": 7, "tasks": []},
+    {"name": "engine_rendering_demoscene", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_rendering_framegraph", "status": "PENDING", "phase_count": 5, "tasks": []},
+    {"name": "engine_rendering_gpu_driven", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_rendering_lighting", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_rendering_materials", "status": "PENDING", "phase_count": 6, "tasks": []},
+    {"name": "engine_rendering_particles", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_rendering_postprocess", "status": "PENDING", "phase_count": 3, "tasks": []},
+    {"name": "engine_simulation_character_cloth_collision", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_simulation_components_constraints_softbody_vehicles", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_simulation_destruction_fluid_hair", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_simulation_physics_solver", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_tooling", "status": "PENDING", "phase_count": 6, "tasks": []},
+    {"name": "engine_ui_accessibility_animation_binding_framework", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_ui_layout_screens_styling_text", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_ui_widgets", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_world", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "engine_xr", "status": "PENDING", "phase_count": 7, "tasks": []},
+    {"name": "foundation", "status": "PENDING", "phase_count": 4, "tasks": []},
+    {"name": "trinity_decorators_part1", "status": "PENDING", "phase_count": 5, "tasks": []},
+    {"name": "trinity_decorators_part2", "status": "PENDING", "phase_count": 6, "tasks": []},
+    {"name": "trinity_descriptors_metaclasses", "status": "PENDING", "phase_count": 3, "tasks": []}
+  ],
+
+  "rdc_source": "docs/INVESTIGATION_PHASE_X_OUTPUT_CORRECTED/",
+
+  "history": [
+    {"timestamp": "2026-05-23T06:00:00Z", "action": "TRACKER_CREATED", "notes": "35 directories, 143 phases."},
+    {"timestamp": "2026-05-23T06:00:00Z", "action": "MIGRATED_TO_V2", "notes": "Worker pool schema. Per-task stage tracking. pool.max_slots=4."}
+  ]
+}

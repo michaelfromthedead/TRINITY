@@ -1,0 +1,67 @@
+
+
+// ---------------------------------------------------------------------------
+// HistorySlotManager
+// ---------------------------------------------------------------------------
+
+/// Manages the mapping from resource handles to ring-buffer slot indices for
+/// history resources ([`ResourceLifetime::History`]).
+///
+/// For each history resource the manager records the number of available slots
+/// (`n`).  At frame `f` the caller resolves the active slot with
+/// [`slot_for`](Self::slot_for), which returns `f % n`.  Non-history resources
+/// always resolve to slot `0`.
+pub struct HistorySlotManager {
+    /// Maps a resource handle to its history slot count.
+    slots: std::collections::HashMap<ResourceHandle, u32>,
+}
+
+impl HistorySlotManager {
+    /// Creates an empty manager.
+    pub fn new() -> Self {
+        Self {
+            slots: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Builds a manager from an iterator of resources, recording every
+    /// resource whose lifetime is [`ResourceLifetime::History(n)`] and
+    /// ignoring all others.
+    pub fn from_resources<'a>(resources: impl IntoIterator<Item = &'a IrResource>) -> Self {
+        let mut slots = std::collections::HashMap::new();
+        for r in resources {
+            if let ResourceLifetime::History(n) = r.lifetime {
+                slots.insert(r.handle, n);
+            }
+        }
+        Self { slots }
+    }
+
+    /// Returns the ring-buffer slot index for `handle` at `frame_number`.
+    ///
+    /// For history resources this is `frame_number % n` (wrapping arithmetic).
+    /// For non-history resources (or unknown handles) this always returns `0`.
+    pub fn slot_for(&self, handle: ResourceHandle, frame_number: u64) -> usize {
+        match self.slots.get(&handle) {
+            Some(&n) if n > 0 => (frame_number % n as u64) as usize,
+            _ => 0,
+        }
+    }
+
+    /// Returns the history length for `handle` if it is a history resource,
+    /// or [`None`] otherwise.
+    pub fn history_length(&self, handle: ResourceHandle) -> Option<u32> {
+        self.slots.get(&handle).copied()
+    }
+
+    /// Returns `true` if `handle` was registered as a history resource.
+    pub fn is_history(&self, handle: ResourceHandle) -> bool {
+        self.slots.contains_key(&handle)
+    }
+}
+
+impl Default for HistorySlotManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}

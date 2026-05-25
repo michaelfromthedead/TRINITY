@@ -1,0 +1,142 @@
+{
+  "name": "mixed-research",
+  "version": "1.0.0",
+  "applies_to": {
+    "description": "Applied research project where code, prose, and data coexist. Typical structure: src/ for executable code, docs/ for prose and reports, data/ for datasets and outputs, notebooks/ for Jupyter analysis notebooks, tests/ for automated tests. This template is intentionally ASK_USER-heavy because mixed projects have high per-file judgment requirements — the boundary between 'active experiment' and 'orphaned scratch work' is rarely clear from file path alone.",
+    "signals": [
+      "kind:mixed-research",
+      "lang:python",
+      "structure:src_docs_data",
+      "structure:notebooks_present"
+    ]
+  },
+  "default_rules": [
+    {
+      "id": "t1",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "src/**/*",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "All files under src/ are at their canonical location; src/ is the code area and its internal structure is the project's own convention — ORGANIZE does not reorganize within src/"
+    },
+    {
+      "id": "t2",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "docs/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 95,
+      "active": true,
+      "note": "Prose documents under docs/ are at their canonical location; docs/ is the prose area for reports, design notes, and documentation"
+    },
+    {
+      "id": "t3",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "data/**/*",
+      "destination": "IN_PLACE",
+      "priority": 95,
+      "active": true,
+      "note": "All files under data/ are at their canonical location; data/ is the data area for datasets, raw inputs, and processed outputs — ORGANIZE does not reorganize within data/"
+    },
+    {
+      "id": "t4",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "notebooks/**/*.ipynb",
+      "destination": "IN_PLACE",
+      "priority": 90,
+      "active": true,
+      "note": "Jupyter notebooks under notebooks/ are at their canonical location; notebooks/ is the analysis area for exploratory and reporting notebooks"
+    },
+    {
+      "id": "t5",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "tests/**/*",
+      "destination": "IN_PLACE",
+      "priority": 85,
+      "active": true,
+      "note": "Test files under tests/ are at their canonical location; includes Python tests, fixtures, and test data files"
+    },
+    {
+      "id": "t6",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{README,CHANGELOG,LICENSE,CONTRIBUTING}.md",
+      "destination": "IN_PLACE",
+      "priority": 80,
+      "active": true,
+      "note": "Standard root-level orientation files are canonically at project root; must evaluate before the loose-markdown rule to prevent misrouting"
+    },
+    {
+      "id": "t7",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.py",
+      "destination": "src/",
+      "priority": 60,
+      "active": true,
+      "note": "Loose Python files at project root (not in src/) are likely misplaced source code; MOVE_TO src/ — ASK_USER if the file looks like a one-off experiment or setup script that the author intentionally left at root (e.g., setup.py, conftest.py, manage.py); do not auto-move without user confirmation"
+    },
+    {
+      "id": "t8",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "IN_PLACE",
+      "priority": 40,
+      "active": true,
+      "note": "Loose markdown at project root not matched by t6 — ASK_USER always; in a mixed research project, a root-level .md could be a report draft (should go to docs/), an active design note (should stay), or an orphaned memo (should go to .archive); per-file judgment is required"
+    },
+    {
+      "id": "t9",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "^[^/]+\\.(csv|json|parquet|tsv|jsonl)$",
+      "destination": "IN_PLACE",
+      "priority": 40,
+      "active": true,
+      "note": "Loose data files at project root (CSV, JSON, Parquet, etc.) — ASK_USER always; could belong in data/ (dataset), could be a config file (should stay at root), or could be an experiment output that is no longer needed; content and naming context are required to decide"
+    },
+    {
+      "id": "t10",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(tmp|scratch)[^/]*$",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Files whose basename begins with 'tmp' or 'scratch' are temporary work artefacts; quarantine to .delete — always ASK_USER before ratifying in a research context, as scratch files sometimes contain unreplicated experimental results"
+    },
+    {
+      "id": "t11",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "^(old_[^/]+|backup/|v[0-9]+/)",
+      "destination": "IN_PLACE",
+      "priority": 25,
+      "active": true,
+      "note": "Files and directories prefixed old_*, backup/, or v<N>/ are historical snapshots; ASK_USER — likely .archive but research projects may retain these as experiment baselines; user decides"
+    }
+  ],
+  "default_ignore_paths": [
+    ".git/**",
+    ".venv/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    ".ipynb_checkpoints/**",
+    ".pytest_cache/**",
+    ".mypy_cache/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**"
+  ],
+  "notes": "Mixed research template. This template is intentionally ASK_USER-heavy by design: research projects have high per-file judgment requirements that rule patterns alone cannot capture. The boundary between 'active experiment' and 'orphaned scratch work' is rarely clear from file path alone — file content and authorial context are often required to decide correctly. Expect FLAG_NEW_RULE to surface project-specific patterns over time; this is by design. Users may need to add large dataset directories to ignore_paths (e.g., 'data/raw/**' if raw data is too large to enumerate). Rule t7 (loose .py at root → src/) includes an important caveat: setup.py, conftest.py, manage.py, and similar framework convention files are intentionally at root — TRIAGE must ASK_USER rather than auto-move when the filename suggests it could be a convention file.",
+  "inherits_from": null
+}

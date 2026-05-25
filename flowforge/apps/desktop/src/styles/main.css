@@ -1,0 +1,47 @@
+/**
+ * FlowForge Main Stylesheet
+ *
+ * This file imports all stylesheets in the correct order.
+ * Import this single file in your application entry point.
+ *
+ * Order:
+ * 1. Base styles (reset, typography, form elements)
+ * 2. Theme variables (Trinity color scheme)
+ * 3. LiteGraph canvas styles
+ * 4. Component styles (panels, toolbar, etc.)
+ * 5. Animations and transitions
+ */
+
+/* Tailwind CSS v4 */
+@import 'tailwindcss';
+
+/* FlowForge theme tokens for Tailwind */
+@theme {
+  --color-panel-bg: #252526;
+  --color-panel-border: #3d3d3d;
+  --color-base-background: #1e1e1e;
+  --color-base-foreground: #e0e0e0;
+  --color-secondary-background: #2d2d2d;
+  --color-primary-background: #6366f1;
+  --color-primary-background-hover: #818cf8;
+  --color-destructive-background: #dc2626;
+  --color-destructive-background-hover: #ef4444;
+  --color-interface-panel-selected-surface: #3a3a4a;
+  --color-interface-panel-hover-surface: #2a2a3a;
+  --color-content-hover-fg: #ffffff;
+}
+
+/* Base reset and foundational styles */
+@import './base.css';
+
+/* Trinity theme - CSS variables and node colors */
+@import './trinity-theme.css';
+
+/* LiteGraph canvas styles */
+@import './litegraph.css';
+
+/* Common UI components */
+@import './components.css';
+
+/* Animations and transitions */
+@import './animations.css';

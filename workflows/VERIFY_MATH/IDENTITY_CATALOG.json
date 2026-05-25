@@ -1,0 +1,2478 @@
+{
+  "version": "1.0.0",
+  "description": "Comprehensive mathematical identity catalog for GNOSTICA verification",
+  "total_identities": 210,
+  "categories": ["derivative", "integral", "algebraic", "trigonometric", "limit", "series", "matrix", "number_theory"],
+
+  "identities": [
+    {
+      "id": "DERIV_001",
+      "category": "derivative",
+      "name": "Power Rule",
+      "lhs": "D[x^n, x]",
+      "rhs": "n * x^(n-1)",
+      "conditions": ["n is constant"],
+      "test_values": [
+        {"n": 2, "x": 3},
+        {"n": 3, "x": 2},
+        {"n": -1, "x": 2},
+        {"n": 0.5, "x": 4}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "DERIV_002",
+      "category": "derivative",
+      "name": "Product Rule",
+      "lhs": "D[f*g, x]",
+      "rhs": "f*D[g, x] + g*D[f, x]",
+      "conditions": ["f, g are functions of x"],
+      "test_values": [
+        {"f": "x^2", "g": "x^3", "x": 2},
+        {"f": "Sin[x]", "g": "x", "x": 1}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "DERIV_003",
+      "category": "derivative",
+      "name": "Chain Rule",
+      "lhs": "D[f[g[x]], x]",
+      "rhs": "D[f, g[x]] * D[g[x], x]",
+      "conditions": ["f, g are differentiable"],
+      "test_values": [
+        {"f": "Sin", "g": "x^2", "x": 1},
+        {"f": "Exp", "g": "2*x", "x": 0}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "DERIV_004",
+      "category": "derivative",
+      "name": "Quotient Rule",
+      "lhs": "D[f/g, x]",
+      "rhs": "(g*D[f, x] - f*D[g, x]) / g^2",
+      "conditions": ["g != 0"],
+      "test_values": [
+        {"f": "x^2", "g": "x+1", "x": 2},
+        {"f": "Sin[x]", "g": "Cos[x]", "x": 0.5}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "DERIV_005",
+      "category": "derivative",
+      "name": "Constant Rule",
+      "lhs": "D[c, x]",
+      "rhs": "0",
+      "conditions": ["c is constant"],
+      "test_values": [
+        {"c": 5, "x": 1},
+        {"c": -3, "x": 10}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_006",
+      "category": "derivative",
+      "name": "Sum Rule",
+      "lhs": "D[f + g, x]",
+      "rhs": "D[f, x] + D[g, x]",
+      "conditions": [],
+      "test_values": [
+        {"f": "x^2", "g": "x^3", "x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_007",
+      "category": "derivative",
+      "name": "Difference Rule",
+      "lhs": "D[f - g, x]",
+      "rhs": "D[f, x] - D[g, x]",
+      "conditions": [],
+      "test_values": [
+        {"f": "x^3", "g": "x^2", "x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_008",
+      "category": "derivative",
+      "name": "Constant Multiple Rule",
+      "lhs": "D[c*f, x]",
+      "rhs": "c * D[f, x]",
+      "conditions": ["c is constant"],
+      "test_values": [
+        {"c": 3, "f": "x^2", "x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_009",
+      "category": "derivative",
+      "name": "Exponential Derivative",
+      "lhs": "D[Exp[x], x]",
+      "rhs": "Exp[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1},
+        {"x": -1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_010",
+      "category": "derivative",
+      "name": "Natural Log Derivative",
+      "lhs": "D[Log[x], x]",
+      "rhs": "1/x",
+      "conditions": ["x > 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2},
+        {"x": 0.5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_011",
+      "category": "derivative",
+      "name": "Sine Derivative",
+      "lhs": "D[Sin[x], x]",
+      "rhs": "Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1.57079632679},
+        {"x": 3.14159265359}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_012",
+      "category": "derivative",
+      "name": "Cosine Derivative",
+      "lhs": "D[Cos[x], x]",
+      "rhs": "-Sin[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1.57079632679},
+        {"x": 3.14159265359}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_013",
+      "category": "derivative",
+      "name": "Tangent Derivative",
+      "lhs": "D[Tan[x], x]",
+      "rhs": "Sec[x]^2",
+      "conditions": ["Cos[x] != 0"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5},
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_014",
+      "category": "derivative",
+      "name": "Secant Derivative",
+      "lhs": "D[Sec[x], x]",
+      "rhs": "Sec[x] * Tan[x]",
+      "conditions": ["Cos[x] != 0"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_015",
+      "category": "derivative",
+      "name": "Cosecant Derivative",
+      "lhs": "D[Csc[x], x]",
+      "rhs": "-Csc[x] * Cot[x]",
+      "conditions": ["Sin[x] != 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_016",
+      "category": "derivative",
+      "name": "Cotangent Derivative",
+      "lhs": "D[Cot[x], x]",
+      "rhs": "-Csc[x]^2",
+      "conditions": ["Sin[x] != 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_017",
+      "category": "derivative",
+      "name": "Inverse Sine Derivative",
+      "lhs": "D[ArcSin[x], x]",
+      "rhs": "1/Sqrt[1 - x^2]",
+      "conditions": ["-1 < x < 1"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5},
+        {"x": -0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_018",
+      "category": "derivative",
+      "name": "Inverse Cosine Derivative",
+      "lhs": "D[ArcCos[x], x]",
+      "rhs": "-1/Sqrt[1 - x^2]",
+      "conditions": ["-1 < x < 1"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_019",
+      "category": "derivative",
+      "name": "Inverse Tangent Derivative",
+      "lhs": "D[ArcTan[x], x]",
+      "rhs": "1/(1 + x^2)",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1},
+        {"x": -1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_020",
+      "category": "derivative",
+      "name": "Hyperbolic Sine Derivative",
+      "lhs": "D[Sinh[x], x]",
+      "rhs": "Cosh[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_021",
+      "category": "derivative",
+      "name": "Hyperbolic Cosine Derivative",
+      "lhs": "D[Cosh[x], x]",
+      "rhs": "Sinh[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_022",
+      "category": "derivative",
+      "name": "General Exponential Derivative",
+      "lhs": "D[a^x, x]",
+      "rhs": "a^x * Log[a]",
+      "conditions": ["a > 0", "a != 1"],
+      "test_values": [
+        {"a": 2, "x": 1},
+        {"a": 10, "x": 0}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_023",
+      "category": "derivative",
+      "name": "General Log Derivative",
+      "lhs": "D[Log[a, x], x]",
+      "rhs": "1/(x * Log[a])",
+      "conditions": ["a > 0", "a != 1", "x > 0"],
+      "test_values": [
+        {"a": 10, "x": 1},
+        {"a": 2, "x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_024",
+      "category": "derivative",
+      "name": "Power Function General",
+      "lhs": "D[x^x, x]",
+      "rhs": "x^x * (Log[x] + 1)",
+      "conditions": ["x > 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "DERIV_025",
+      "category": "derivative",
+      "name": "Second Derivative",
+      "lhs": "D[D[x^n, x], x]",
+      "rhs": "n * (n-1) * x^(n-2)",
+      "conditions": ["n is constant"],
+      "test_values": [
+        {"n": 3, "x": 2},
+        {"n": 4, "x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_026",
+      "category": "derivative",
+      "name": "Implicit Chain",
+      "lhs": "D[f[g[h[x]]], x]",
+      "rhs": "D[f, g[h[x]]] * D[g, h[x]] * D[h[x], x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "DERIV_027",
+      "category": "derivative",
+      "name": "Absolute Value Derivative",
+      "lhs": "D[Abs[x], x]",
+      "rhs": "Sign[x]",
+      "conditions": ["x != 0"],
+      "test_values": [
+        {"x": 2},
+        {"x": -2}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "DERIV_028",
+      "category": "derivative",
+      "name": "Square Root Derivative",
+      "lhs": "D[Sqrt[x], x]",
+      "rhs": "1/(2*Sqrt[x])",
+      "conditions": ["x > 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 4},
+        {"x": 9}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "DERIV_029",
+      "category": "derivative",
+      "name": "Nth Root Derivative",
+      "lhs": "D[x^(1/n), x]",
+      "rhs": "x^(1/n - 1) / n",
+      "conditions": ["n != 0", "x > 0"],
+      "test_values": [
+        {"n": 3, "x": 8},
+        {"n": 4, "x": 16}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "DERIV_030",
+      "category": "derivative",
+      "name": "Error Function Derivative",
+      "lhs": "D[Erf[x], x]",
+      "rhs": "2 * Exp[-x^2] / Sqrt[Pi]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "LOW"
+    },
+
+    {
+      "id": "INTEG_001",
+      "category": "integral",
+      "name": "Power Integral",
+      "lhs": "Integrate[x^n, x]",
+      "rhs": "x^(n+1)/(n+1)",
+      "conditions": ["n != -1"],
+      "test_values": [
+        {"n": 2, "x": 2},
+        {"n": 3, "x": 1},
+        {"n": 0.5, "x": 4}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "INTEG_002",
+      "category": "integral",
+      "name": "Linearity of Integration",
+      "lhs": "Integrate[a*f + b*g, x]",
+      "rhs": "a*Integrate[f, x] + b*Integrate[g, x]",
+      "conditions": ["a, b constants"],
+      "test_values": [],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "INTEG_003",
+      "category": "integral",
+      "name": "Fundamental Theorem",
+      "lhs": "D[Integrate[f[x], x], x]",
+      "rhs": "f[x]",
+      "conditions": ["f continuous"],
+      "test_values": [
+        {"f": "x^2"},
+        {"f": "Sin[x]"}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "INTEG_004",
+      "category": "integral",
+      "name": "Reciprocal Integral",
+      "lhs": "Integrate[1/x, x]",
+      "rhs": "Log[Abs[x]]",
+      "conditions": ["x != 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_005",
+      "category": "integral",
+      "name": "Exponential Integral",
+      "lhs": "Integrate[Exp[x], x]",
+      "rhs": "Exp[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_006",
+      "category": "integral",
+      "name": "Sine Integral",
+      "lhs": "Integrate[Sin[x], x]",
+      "rhs": "-Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1.57079632679}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_007",
+      "category": "integral",
+      "name": "Cosine Integral",
+      "lhs": "Integrate[Cos[x], x]",
+      "rhs": "Sin[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1.57079632679}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_008",
+      "category": "integral",
+      "name": "Secant Squared Integral",
+      "lhs": "Integrate[Sec[x]^2, x]",
+      "rhs": "Tan[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_009",
+      "category": "integral",
+      "name": "Cosecant Squared Integral",
+      "lhs": "Integrate[Csc[x]^2, x]",
+      "rhs": "-Cot[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_010",
+      "category": "integral",
+      "name": "Secant Tangent Integral",
+      "lhs": "Integrate[Sec[x]*Tan[x], x]",
+      "rhs": "Sec[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_011",
+      "category": "integral",
+      "name": "Cosecant Cotangent Integral",
+      "lhs": "Integrate[Csc[x]*Cot[x], x]",
+      "rhs": "-Csc[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_012",
+      "category": "integral",
+      "name": "Arctangent Form",
+      "lhs": "Integrate[1/(1 + x^2), x]",
+      "rhs": "ArcTan[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_013",
+      "category": "integral",
+      "name": "Arcsine Form",
+      "lhs": "Integrate[1/Sqrt[1 - x^2], x]",
+      "rhs": "ArcSin[x]",
+      "conditions": ["-1 < x < 1"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_014",
+      "category": "integral",
+      "name": "General Exponential Integral",
+      "lhs": "Integrate[a^x, x]",
+      "rhs": "a^x / Log[a]",
+      "conditions": ["a > 0", "a != 1"],
+      "test_values": [
+        {"a": 2, "x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_015",
+      "category": "integral",
+      "name": "Integration by Parts Formula",
+      "lhs": "Integrate[u * D[v, x], x]",
+      "rhs": "u*v - Integrate[v * D[u, x], x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_016",
+      "category": "integral",
+      "name": "Substitution Rule",
+      "lhs": "Integrate[f[g[x]] * D[g[x], x], x]",
+      "rhs": "Integrate[f[u], u] /. u -> g[x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_017",
+      "category": "integral",
+      "name": "Sinh Integral",
+      "lhs": "Integrate[Sinh[x], x]",
+      "rhs": "Cosh[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_018",
+      "category": "integral",
+      "name": "Cosh Integral",
+      "lhs": "Integrate[Cosh[x], x]",
+      "rhs": "Sinh[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_019",
+      "category": "integral",
+      "name": "Tangent Integral",
+      "lhs": "Integrate[Tan[x], x]",
+      "rhs": "-Log[Abs[Cos[x]]]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_020",
+      "category": "integral",
+      "name": "Cotangent Integral",
+      "lhs": "Integrate[Cot[x], x]",
+      "rhs": "Log[Abs[Sin[x]]]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_021",
+      "category": "integral",
+      "name": "Secant Integral",
+      "lhs": "Integrate[Sec[x], x]",
+      "rhs": "Log[Abs[Sec[x] + Tan[x]]]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_022",
+      "category": "integral",
+      "name": "Cosecant Integral",
+      "lhs": "Integrate[Csc[x], x]",
+      "rhs": "-Log[Abs[Csc[x] + Cot[x]]]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_023",
+      "category": "integral",
+      "name": "Partial Fractions Linear",
+      "lhs": "Integrate[1/((x-a)*(x-b)), x]",
+      "rhs": "(Log[Abs[x-a]] - Log[Abs[x-b]])/(a-b)",
+      "conditions": ["a != b"],
+      "test_values": [
+        {"a": 1, "b": 2, "x": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_024",
+      "category": "integral",
+      "name": "Gaussian Integral",
+      "lhs": "Integrate[Exp[-x^2], {x, -Infinity, Infinity}]",
+      "rhs": "Sqrt[Pi]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "INTEG_025",
+      "category": "integral",
+      "name": "Beta Function Form",
+      "lhs": "Integrate[x^(a-1) * (1-x)^(b-1), {x, 0, 1}]",
+      "rhs": "Beta[a, b]",
+      "conditions": ["a > 0", "b > 0"],
+      "test_values": [
+        {"a": 2, "b": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_026",
+      "category": "integral",
+      "name": "Gamma Function Form",
+      "lhs": "Integrate[x^(n-1) * Exp[-x], {x, 0, Infinity}]",
+      "rhs": "Gamma[n]",
+      "conditions": ["n > 0"],
+      "test_values": [
+        {"n": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_027",
+      "category": "integral",
+      "name": "Log Integral",
+      "lhs": "Integrate[Log[x], x]",
+      "rhs": "x * Log[x] - x",
+      "conditions": ["x > 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_028",
+      "category": "integral",
+      "name": "Sqrt Linear Integral",
+      "lhs": "Integrate[Sqrt[a*x + b], x]",
+      "rhs": "(2/3) * (a*x + b)^(3/2) / a",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 1, "b": 0, "x": 4}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_029",
+      "category": "integral",
+      "name": "Arcsin Form General",
+      "lhs": "Integrate[1/Sqrt[a^2 - x^2], x]",
+      "rhs": "ArcSin[x/a]",
+      "conditions": ["a > 0", "-a < x < a"],
+      "test_values": [
+        {"a": 2, "x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_030",
+      "category": "integral",
+      "name": "Arctan Form General",
+      "lhs": "Integrate[1/(a^2 + x^2), x]",
+      "rhs": "ArcTan[x/a] / a",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 2, "x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_031",
+      "category": "integral",
+      "name": "Dirichlet Integral",
+      "lhs": "Integrate[Sin[x]/x, {x, 0, Infinity}]",
+      "rhs": "Pi/2",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "INTEG_032",
+      "category": "integral",
+      "name": "Fresnel S Asymptotic",
+      "lhs": "Integrate[Sin[x^2], {x, 0, Infinity}]",
+      "rhs": "Sqrt[Pi/8]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "INTEG_033",
+      "category": "integral",
+      "name": "Fresnel C Asymptotic",
+      "lhs": "Integrate[Cos[x^2], {x, 0, Infinity}]",
+      "rhs": "Sqrt[Pi/8]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "INTEG_034",
+      "category": "integral",
+      "name": "Exponential Sin Integral",
+      "lhs": "Integrate[Exp[-a*x] * Sin[b*x], x]",
+      "rhs": "Exp[-a*x] * (a*Sin[b*x] - b*Cos[b*x]) / (a^2 + b^2)",
+      "conditions": ["a != 0 or b != 0"],
+      "test_values": [
+        {"a": 1, "b": 1, "x": 0}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "INTEG_035",
+      "category": "integral",
+      "name": "Exponential Cos Integral",
+      "lhs": "Integrate[Exp[-a*x] * Cos[b*x], x]",
+      "rhs": "Exp[-a*x] * (a*Cos[b*x] + b*Sin[b*x]) / (a^2 + b^2)",
+      "conditions": ["a != 0 or b != 0"],
+      "test_values": [
+        {"a": 1, "b": 1, "x": 0}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "INTEG_036",
+      "category": "integral",
+      "name": "Sin^n Reduction",
+      "lhs": "Integrate[Sin[x]^n, x]",
+      "rhs": "-Sin[x]^(n-1)*Cos[x]/n + ((n-1)/n)*Integrate[Sin[x]^(n-2), x]",
+      "conditions": ["n > 1"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_037",
+      "category": "integral",
+      "name": "Cos^n Reduction",
+      "lhs": "Integrate[Cos[x]^n, x]",
+      "rhs": "Cos[x]^(n-1)*Sin[x]/n + ((n-1)/n)*Integrate[Cos[x]^(n-2), x]",
+      "conditions": ["n > 1"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_038",
+      "category": "integral",
+      "name": "Tan^n Reduction",
+      "lhs": "Integrate[Tan[x]^n, x]",
+      "rhs": "Tan[x]^(n-1)/(n-1) - Integrate[Tan[x]^(n-2), x]",
+      "conditions": ["n > 1"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_039",
+      "category": "integral",
+      "name": "x^n Exp Integral",
+      "lhs": "Integrate[x^n * Exp[a*x], x]",
+      "rhs": "x^n * Exp[a*x]/a - (n/a) * Integrate[x^(n-1) * Exp[a*x], x]",
+      "conditions": ["a != 0"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "INTEG_040",
+      "category": "integral",
+      "name": "x^n Log Integral",
+      "lhs": "Integrate[x^n * Log[x], x]",
+      "rhs": "x^(n+1) * (Log[x]/(n+1) - 1/(n+1)^2)",
+      "conditions": ["n != -1", "x > 0"],
+      "test_values": [
+        {"n": 2, "x": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "ALG_001",
+      "category": "algebraic",
+      "name": "Distributive Law",
+      "lhs": "a * (b + c)",
+      "rhs": "a*b + a*c",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "b": 3, "c": 4},
+        {"a": -1, "b": 5, "c": 7}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "ALG_002",
+      "category": "algebraic",
+      "name": "Difference of Squares",
+      "lhs": "a^2 - b^2",
+      "rhs": "(a + b) * (a - b)",
+      "conditions": [],
+      "test_values": [
+        {"a": 5, "b": 3},
+        {"a": 10, "b": 7}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "ALG_003",
+      "category": "algebraic",
+      "name": "Binomial Square",
+      "lhs": "(a + b)^2",
+      "rhs": "a^2 + 2*a*b + b^2",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "b": 3},
+        {"a": 5, "b": -2}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "ALG_004",
+      "category": "algebraic",
+      "name": "Binomial Difference Square",
+      "lhs": "(a - b)^2",
+      "rhs": "a^2 - 2*a*b + b^2",
+      "conditions": [],
+      "test_values": [
+        {"a": 5, "b": 2},
+        {"a": 7, "b": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_005",
+      "category": "algebraic",
+      "name": "Sum of Cubes",
+      "lhs": "a^3 + b^3",
+      "rhs": "(a + b) * (a^2 - a*b + b^2)",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "b": 1},
+        {"a": 3, "b": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_006",
+      "category": "algebraic",
+      "name": "Difference of Cubes",
+      "lhs": "a^3 - b^3",
+      "rhs": "(a - b) * (a^2 + a*b + b^2)",
+      "conditions": [],
+      "test_values": [
+        {"a": 3, "b": 1},
+        {"a": 4, "b": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_007",
+      "category": "algebraic",
+      "name": "Binomial Cube",
+      "lhs": "(a + b)^3",
+      "rhs": "a^3 + 3*a^2*b + 3*a*b^2 + b^3",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 1},
+        {"a": 2, "b": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_008",
+      "category": "algebraic",
+      "name": "Binomial Theorem (n=4)",
+      "lhs": "(a + b)^4",
+      "rhs": "a^4 + 4*a^3*b + 6*a^2*b^2 + 4*a*b^3 + b^4",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_009",
+      "category": "algebraic",
+      "name": "Commutative Addition",
+      "lhs": "a + b",
+      "rhs": "b + a",
+      "conditions": [],
+      "test_values": [
+        {"a": 3, "b": 7}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_010",
+      "category": "algebraic",
+      "name": "Commutative Multiplication",
+      "lhs": "a * b",
+      "rhs": "b * a",
+      "conditions": [],
+      "test_values": [
+        {"a": 4, "b": 5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_011",
+      "category": "algebraic",
+      "name": "Associative Addition",
+      "lhs": "(a + b) + c",
+      "rhs": "a + (b + c)",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 2, "c": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_012",
+      "category": "algebraic",
+      "name": "Associative Multiplication",
+      "lhs": "(a * b) * c",
+      "rhs": "a * (b * c)",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "b": 3, "c": 4}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_013",
+      "category": "algebraic",
+      "name": "Additive Identity",
+      "lhs": "a + 0",
+      "rhs": "a",
+      "conditions": [],
+      "test_values": [
+        {"a": 7}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_014",
+      "category": "algebraic",
+      "name": "Multiplicative Identity",
+      "lhs": "a * 1",
+      "rhs": "a",
+      "conditions": [],
+      "test_values": [
+        {"a": 9}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_015",
+      "category": "algebraic",
+      "name": "Additive Inverse",
+      "lhs": "a + (-a)",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [
+        {"a": 5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_016",
+      "category": "algebraic",
+      "name": "Multiplicative Inverse",
+      "lhs": "a * (1/a)",
+      "rhs": "1",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 4}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_017",
+      "category": "algebraic",
+      "name": "Zero Product",
+      "lhs": "a * 0",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [
+        {"a": 100}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_018",
+      "category": "algebraic",
+      "name": "Exponent Product",
+      "lhs": "a^m * a^n",
+      "rhs": "a^(m+n)",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "m": 3, "n": 4}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_019",
+      "category": "algebraic",
+      "name": "Exponent Quotient",
+      "lhs": "a^m / a^n",
+      "rhs": "a^(m-n)",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 2, "m": 5, "n": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_020",
+      "category": "algebraic",
+      "name": "Power of Power",
+      "lhs": "(a^m)^n",
+      "rhs": "a^(m*n)",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "m": 2, "n": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_021",
+      "category": "algebraic",
+      "name": "Power of Product",
+      "lhs": "(a*b)^n",
+      "rhs": "a^n * b^n",
+      "conditions": [],
+      "test_values": [
+        {"a": 2, "b": 3, "n": 2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_022",
+      "category": "algebraic",
+      "name": "Power of Quotient",
+      "lhs": "(a/b)^n",
+      "rhs": "a^n / b^n",
+      "conditions": ["b != 0"],
+      "test_values": [
+        {"a": 4, "b": 2, "n": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_023",
+      "category": "algebraic",
+      "name": "Negative Exponent",
+      "lhs": "a^(-n)",
+      "rhs": "1 / a^n",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 2, "n": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_024",
+      "category": "algebraic",
+      "name": "Zero Exponent",
+      "lhs": "a^0",
+      "rhs": "1",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 5},
+        {"a": -3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_025",
+      "category": "algebraic",
+      "name": "Fractional Exponent",
+      "lhs": "a^(1/n)",
+      "rhs": "Root[a, n]",
+      "conditions": ["n > 0"],
+      "test_values": [
+        {"a": 8, "n": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_026",
+      "category": "algebraic",
+      "name": "Log Product",
+      "lhs": "Log[a*b]",
+      "rhs": "Log[a] + Log[b]",
+      "conditions": ["a > 0", "b > 0"],
+      "test_values": [
+        {"a": 2, "b": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_027",
+      "category": "algebraic",
+      "name": "Log Quotient",
+      "lhs": "Log[a/b]",
+      "rhs": "Log[a] - Log[b]",
+      "conditions": ["a > 0", "b > 0"],
+      "test_values": [
+        {"a": 8, "b": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_028",
+      "category": "algebraic",
+      "name": "Log Power",
+      "lhs": "Log[a^n]",
+      "rhs": "n * Log[a]",
+      "conditions": ["a > 0"],
+      "test_values": [
+        {"a": 2, "n": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_029",
+      "category": "algebraic",
+      "name": "Log One",
+      "lhs": "Log[1]",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_030",
+      "category": "algebraic",
+      "name": "Log E",
+      "lhs": "Log[E]",
+      "rhs": "1",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_031",
+      "category": "algebraic",
+      "name": "Log Exp Inverse",
+      "lhs": "Log[Exp[x]]",
+      "rhs": "x",
+      "conditions": [],
+      "test_values": [
+        {"x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_032",
+      "category": "algebraic",
+      "name": "Exp Log Inverse",
+      "lhs": "Exp[Log[x]]",
+      "rhs": "x",
+      "conditions": ["x > 0"],
+      "test_values": [
+        {"x": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_033",
+      "category": "algebraic",
+      "name": "Change of Base",
+      "lhs": "Log[a, x]",
+      "rhs": "Log[x] / Log[a]",
+      "conditions": ["a > 0", "a != 1", "x > 0"],
+      "test_values": [
+        {"a": 10, "x": 100}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "ALG_034",
+      "category": "algebraic",
+      "name": "Quadratic Formula",
+      "lhs": "Solve[a*x^2 + b*x + c == 0, x]",
+      "rhs": "{(-b + Sqrt[b^2 - 4*a*c])/(2*a), (-b - Sqrt[b^2 - 4*a*c])/(2*a)}",
+      "conditions": ["a != 0"],
+      "test_values": [
+        {"a": 1, "b": -5, "c": 6}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "ALG_035",
+      "category": "algebraic",
+      "name": "Sum of n Terms Arithmetic",
+      "lhs": "Sum[a + (k-1)*d, {k, 1, n}]",
+      "rhs": "n * (2*a + (n-1)*d) / 2",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "d": 1, "n": 10}
+      ],
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "TRIG_001",
+      "category": "trigonometric",
+      "name": "Pythagorean Identity",
+      "lhs": "Sin[x]^2 + Cos[x]^2",
+      "rhs": "1",
+      "conditions": [],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.785398163397},
+        {"x": 1.57079632679}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "TRIG_002",
+      "category": "trigonometric",
+      "name": "Double Angle Sine",
+      "lhs": "Sin[2*x]",
+      "rhs": "2 * Sin[x] * Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.5},
+        {"x": 1}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "TRIG_003",
+      "category": "trigonometric",
+      "name": "Double Angle Cosine",
+      "lhs": "Cos[2*x]",
+      "rhs": "Cos[x]^2 - Sin[x]^2",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.5},
+        {"x": 1}
+      ],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "TRIG_004",
+      "category": "trigonometric",
+      "name": "Tangent Definition",
+      "lhs": "Tan[x]",
+      "rhs": "Sin[x] / Cos[x]",
+      "conditions": ["Cos[x] != 0"],
+      "test_values": [
+        {"x": 0.5},
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_005",
+      "category": "trigonometric",
+      "name": "Secant Definition",
+      "lhs": "Sec[x]",
+      "rhs": "1 / Cos[x]",
+      "conditions": ["Cos[x] != 0"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_006",
+      "category": "trigonometric",
+      "name": "Cosecant Definition",
+      "lhs": "Csc[x]",
+      "rhs": "1 / Sin[x]",
+      "conditions": ["Sin[x] != 0"],
+      "test_values": [
+        {"x": 1},
+        {"x": 1.57079632679}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_007",
+      "category": "trigonometric",
+      "name": "Cotangent Definition",
+      "lhs": "Cot[x]",
+      "rhs": "Cos[x] / Sin[x]",
+      "conditions": ["Sin[x] != 0"],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_008",
+      "category": "trigonometric",
+      "name": "Pythagorean Tan",
+      "lhs": "1 + Tan[x]^2",
+      "rhs": "Sec[x]^2",
+      "conditions": ["Cos[x] != 0"],
+      "test_values": [
+        {"x": 0},
+        {"x": 0.5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_009",
+      "category": "trigonometric",
+      "name": "Pythagorean Cot",
+      "lhs": "1 + Cot[x]^2",
+      "rhs": "Csc[x]^2",
+      "conditions": ["Sin[x] != 0"],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_010",
+      "category": "trigonometric",
+      "name": "Sum Sine",
+      "lhs": "Sin[a + b]",
+      "rhs": "Sin[a]*Cos[b] + Cos[a]*Sin[b]",
+      "conditions": [],
+      "test_values": [
+        {"a": 0.5, "b": 0.3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_011",
+      "category": "trigonometric",
+      "name": "Sum Cosine",
+      "lhs": "Cos[a + b]",
+      "rhs": "Cos[a]*Cos[b] - Sin[a]*Sin[b]",
+      "conditions": [],
+      "test_values": [
+        {"a": 0.5, "b": 0.3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_012",
+      "category": "trigonometric",
+      "name": "Difference Sine",
+      "lhs": "Sin[a - b]",
+      "rhs": "Sin[a]*Cos[b] - Cos[a]*Sin[b]",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_013",
+      "category": "trigonometric",
+      "name": "Difference Cosine",
+      "lhs": "Cos[a - b]",
+      "rhs": "Cos[a]*Cos[b] + Sin[a]*Sin[b]",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_014",
+      "category": "trigonometric",
+      "name": "Sum Tangent",
+      "lhs": "Tan[a + b]",
+      "rhs": "(Tan[a] + Tan[b]) / (1 - Tan[a]*Tan[b])",
+      "conditions": ["1 - Tan[a]*Tan[b] != 0"],
+      "test_values": [
+        {"a": 0.3, "b": 0.2}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_015",
+      "category": "trigonometric",
+      "name": "Double Angle Cosine Alt 1",
+      "lhs": "Cos[2*x]",
+      "rhs": "2*Cos[x]^2 - 1",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_016",
+      "category": "trigonometric",
+      "name": "Double Angle Cosine Alt 2",
+      "lhs": "Cos[2*x]",
+      "rhs": "1 - 2*Sin[x]^2",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_017",
+      "category": "trigonometric",
+      "name": "Double Angle Tangent",
+      "lhs": "Tan[2*x]",
+      "rhs": "2*Tan[x] / (1 - Tan[x]^2)",
+      "conditions": ["Tan[x]^2 != 1"],
+      "test_values": [
+        {"x": 0.3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_018",
+      "category": "trigonometric",
+      "name": "Half Angle Sine",
+      "lhs": "Sin[x/2]",
+      "rhs": "Sqrt[(1 - Cos[x])/2]",
+      "conditions": ["0 <= x <= 2*Pi"],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_019",
+      "category": "trigonometric",
+      "name": "Half Angle Cosine",
+      "lhs": "Cos[x/2]",
+      "rhs": "Sqrt[(1 + Cos[x])/2]",
+      "conditions": ["0 <= x <= 2*Pi"],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_020",
+      "category": "trigonometric",
+      "name": "Product to Sum Sin*Cos",
+      "lhs": "Sin[a]*Cos[b]",
+      "rhs": "(Sin[a+b] + Sin[a-b])/2",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_021",
+      "category": "trigonometric",
+      "name": "Product to Sum Cos*Cos",
+      "lhs": "Cos[a]*Cos[b]",
+      "rhs": "(Cos[a+b] + Cos[a-b])/2",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_022",
+      "category": "trigonometric",
+      "name": "Product to Sum Sin*Sin",
+      "lhs": "Sin[a]*Sin[b]",
+      "rhs": "(Cos[a-b] - Cos[a+b])/2",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_023",
+      "category": "trigonometric",
+      "name": "Sum to Product Sin+Sin",
+      "lhs": "Sin[a] + Sin[b]",
+      "rhs": "2*Sin[(a+b)/2]*Cos[(a-b)/2]",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "TRIG_024",
+      "category": "trigonometric",
+      "name": "Sum to Product Cos+Cos",
+      "lhs": "Cos[a] + Cos[b]",
+      "rhs": "2*Cos[(a+b)/2]*Cos[(a-b)/2]",
+      "conditions": [],
+      "test_values": [
+        {"a": 1, "b": 0.5}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "TRIG_025",
+      "category": "trigonometric",
+      "name": "Sine Odd Function",
+      "lhs": "Sin[-x]",
+      "rhs": "-Sin[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_026",
+      "category": "trigonometric",
+      "name": "Cosine Even Function",
+      "lhs": "Cos[-x]",
+      "rhs": "Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "TRIG_027",
+      "category": "trigonometric",
+      "name": "Sine Cofunction",
+      "lhs": "Sin[Pi/2 - x]",
+      "rhs": "Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_028",
+      "category": "trigonometric",
+      "name": "Cosine Cofunction",
+      "lhs": "Cos[Pi/2 - x]",
+      "rhs": "Sin[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 0.3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_029",
+      "category": "trigonometric",
+      "name": "Sine Period",
+      "lhs": "Sin[x + 2*Pi]",
+      "rhs": "Sin[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "TRIG_030",
+      "category": "trigonometric",
+      "name": "Cosine Period",
+      "lhs": "Cos[x + 2*Pi]",
+      "rhs": "Cos[x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 1}
+      ],
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "LIM_001",
+      "category": "limit",
+      "name": "Constant Limit",
+      "lhs": "Limit[c, x -> a]",
+      "rhs": "c",
+      "conditions": ["c is constant"],
+      "test_values": [
+        {"c": 5, "a": 0}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_002",
+      "category": "limit",
+      "name": "Identity Limit",
+      "lhs": "Limit[x, x -> a]",
+      "rhs": "a",
+      "conditions": [],
+      "test_values": [
+        {"a": 3}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_003",
+      "category": "limit",
+      "name": "Sum of Limits",
+      "lhs": "Limit[f + g, x -> a]",
+      "rhs": "Limit[f, x -> a] + Limit[g, x -> a]",
+      "conditions": ["both limits exist"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_004",
+      "category": "limit",
+      "name": "Product of Limits",
+      "lhs": "Limit[f * g, x -> a]",
+      "rhs": "Limit[f, x -> a] * Limit[g, x -> a]",
+      "conditions": ["both limits exist"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_005",
+      "category": "limit",
+      "name": "Quotient of Limits",
+      "lhs": "Limit[f / g, x -> a]",
+      "rhs": "Limit[f, x -> a] / Limit[g, x -> a]",
+      "conditions": ["both limits exist", "Limit[g, x->a] != 0"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_006",
+      "category": "limit",
+      "name": "Constant Multiple Limit",
+      "lhs": "Limit[c * f, x -> a]",
+      "rhs": "c * Limit[f, x -> a]",
+      "conditions": ["c is constant"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_007",
+      "category": "limit",
+      "name": "Power Limit",
+      "lhs": "Limit[f^n, x -> a]",
+      "rhs": "(Limit[f, x -> a])^n",
+      "conditions": ["limit exists", "n constant"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_008",
+      "category": "limit",
+      "name": "Sin x over x",
+      "lhs": "Limit[Sin[x]/x, x -> 0]",
+      "rhs": "1",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_009",
+      "category": "limit",
+      "name": "(1-Cos x)/x",
+      "lhs": "Limit[(1 - Cos[x])/x, x -> 0]",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_010",
+      "category": "limit",
+      "name": "(1-Cos x)/x^2",
+      "lhs": "Limit[(1 - Cos[x])/x^2, x -> 0]",
+      "rhs": "1/2",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_011",
+      "category": "limit",
+      "name": "e Definition",
+      "lhs": "Limit[(1 + 1/n)^n, n -> Infinity]",
+      "rhs": "E",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "LIM_012",
+      "category": "limit",
+      "name": "e Definition Alt",
+      "lhs": "Limit[(1 + x)^(1/x), x -> 0]",
+      "rhs": "E",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_013",
+      "category": "limit",
+      "name": "Exponential Growth",
+      "lhs": "Limit[Exp[x], x -> Infinity]",
+      "rhs": "Infinity",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_014",
+      "category": "limit",
+      "name": "Exponential Decay",
+      "lhs": "Limit[Exp[x], x -> -Infinity]",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_015",
+      "category": "limit",
+      "name": "Log at Infinity",
+      "lhs": "Limit[Log[x], x -> Infinity]",
+      "rhs": "Infinity",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_016",
+      "category": "limit",
+      "name": "Log at Zero",
+      "lhs": "Limit[Log[x], x -> 0, Direction -> 1]",
+      "rhs": "-Infinity",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_017",
+      "category": "limit",
+      "name": "Polynomial Dominance",
+      "lhs": "Limit[x^n / Exp[x], x -> Infinity]",
+      "rhs": "0",
+      "conditions": ["n constant"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "LIM_018",
+      "category": "limit",
+      "name": "Log vs Polynomial",
+      "lhs": "Limit[Log[x] / x^a, x -> Infinity]",
+      "rhs": "0",
+      "conditions": ["a > 0"],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "LIM_019",
+      "category": "limit",
+      "name": "Tan at Pi/2",
+      "lhs": "Limit[Tan[x], x -> Pi/2, Direction -> -1]",
+      "rhs": "Infinity",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "LIM_020",
+      "category": "limit",
+      "name": "Squeeze Theorem Form",
+      "lhs": "Limit[x * Sin[1/x], x -> 0]",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "SER_001",
+      "category": "series",
+      "name": "Geometric Sum Finite",
+      "lhs": "Sum[r^k, {k, 0, n-1}]",
+      "rhs": "(1 - r^n) / (1 - r)",
+      "conditions": ["r != 1"],
+      "test_values": [
+        {"r": 2, "n": 5},
+        {"r": 0.5, "n": 10}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_002",
+      "category": "series",
+      "name": "Geometric Sum Infinite",
+      "lhs": "Sum[r^k, {k, 0, Infinity}]",
+      "rhs": "1 / (1 - r)",
+      "conditions": ["|r| < 1"],
+      "test_values": [
+        {"r": 0.5}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_003",
+      "category": "series",
+      "name": "Arithmetic Sum",
+      "lhs": "Sum[k, {k, 1, n}]",
+      "rhs": "n * (n + 1) / 2",
+      "conditions": [],
+      "test_values": [
+        {"n": 10},
+        {"n": 100}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_004",
+      "category": "series",
+      "name": "Sum of Squares",
+      "lhs": "Sum[k^2, {k, 1, n}]",
+      "rhs": "n * (n + 1) * (2*n + 1) / 6",
+      "conditions": [],
+      "test_values": [
+        {"n": 10}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_005",
+      "category": "series",
+      "name": "Sum of Cubes",
+      "lhs": "Sum[k^3, {k, 1, n}]",
+      "rhs": "(n * (n + 1) / 2)^2",
+      "conditions": [],
+      "test_values": [
+        {"n": 10}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_006",
+      "category": "series",
+      "name": "Sum of Fourth Powers",
+      "lhs": "Sum[k^4, {k, 1, n}]",
+      "rhs": "n * (n + 1) * (2*n + 1) * (3*n^2 + 3*n - 1) / 30",
+      "conditions": [],
+      "test_values": [
+        {"n": 5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_007",
+      "category": "series",
+      "name": "Telescoping Sum",
+      "lhs": "Sum[f[k+1] - f[k], {k, 1, n}]",
+      "rhs": "f[n+1] - f[1]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_008",
+      "category": "series",
+      "name": "Exponential Series",
+      "lhs": "Sum[x^k / k!, {k, 0, Infinity}]",
+      "rhs": "Exp[x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_009",
+      "category": "series",
+      "name": "Sine Series",
+      "lhs": "Sum[(-1)^k * x^(2*k+1) / (2*k+1)!, {k, 0, Infinity}]",
+      "rhs": "Sin[x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_010",
+      "category": "series",
+      "name": "Cosine Series",
+      "lhs": "Sum[(-1)^k * x^(2*k) / (2*k)!, {k, 0, Infinity}]",
+      "rhs": "Cos[x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_011",
+      "category": "series",
+      "name": "Log Series",
+      "lhs": "Sum[(-1)^(k+1) * x^k / k, {k, 1, Infinity}]",
+      "rhs": "Log[1 + x]",
+      "conditions": ["-1 < x <= 1"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_012",
+      "category": "series",
+      "name": "Binomial Series",
+      "lhs": "Sum[Binomial[n, k] * x^k, {k, 0, n}]",
+      "rhs": "(1 + x)^n",
+      "conditions": ["n non-negative integer"],
+      "test_values": [
+        {"n": 4, "x": 2}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "SER_013",
+      "category": "series",
+      "name": "Basel Problem",
+      "lhs": "Sum[1/k^2, {k, 1, Infinity}]",
+      "rhs": "Pi^2 / 6",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_014",
+      "category": "series",
+      "name": "Alternating Harmonic",
+      "lhs": "Sum[(-1)^(k+1) / k, {k, 1, Infinity}]",
+      "rhs": "Log[2]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_015",
+      "category": "series",
+      "name": "Partial Fraction Telescoping",
+      "lhs": "Sum[1/(k*(k+1)), {k, 1, n}]",
+      "rhs": "n / (n + 1)",
+      "conditions": [],
+      "test_values": [
+        {"n": 10}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_016",
+      "category": "series",
+      "name": "Product Telescoping",
+      "lhs": "Product[(k+1)/k, {k, 1, n}]",
+      "rhs": "n + 1",
+      "conditions": [],
+      "test_values": [
+        {"n": 10}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_017",
+      "category": "series",
+      "name": "Fibonacci Generating",
+      "lhs": "Sum[F[k] * x^k, {k, 0, Infinity}]",
+      "rhs": "x / (1 - x - x^2)",
+      "conditions": ["|x| < (Sqrt[5]-1)/2"],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "SER_018",
+      "category": "series",
+      "name": "Arctangent Series",
+      "lhs": "Sum[(-1)^k * x^(2*k+1) / (2*k+1), {k, 0, Infinity}]",
+      "rhs": "ArcTan[x]",
+      "conditions": ["|x| <= 1"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_019",
+      "category": "series",
+      "name": "Riemann Zeta at 4",
+      "lhs": "Sum[1/k^4, {k, 1, Infinity}]",
+      "rhs": "Pi^4 / 90",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "SER_020",
+      "category": "series",
+      "name": "Harmonic Number Asymptotic",
+      "lhs": "Limit[Sum[1/k, {k, 1, n}] - Log[n], n -> Infinity]",
+      "rhs": "EulerGamma",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "SER_021",
+      "category": "series",
+      "name": "Stirling Approximation",
+      "lhs": "Limit[n! / (Sqrt[2*Pi*n] * (n/E)^n), n -> Infinity]",
+      "rhs": "1",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "SER_022",
+      "category": "series",
+      "name": "Central Binomial Sum",
+      "lhs": "Sum[Binomial[2*k, k] / 4^k, {k, 0, Infinity}]",
+      "rhs": "Sqrt[Pi] / Gamma[1/2]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "LOW"
+    },
+    {
+      "id": "SER_023",
+      "category": "series",
+      "name": "Double Factorial Even",
+      "lhs": "(2*n)!!",
+      "rhs": "2^n * n!",
+      "conditions": [],
+      "test_values": [
+        {"n": 5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_024",
+      "category": "series",
+      "name": "Double Factorial Odd",
+      "lhs": "(2*n-1)!!",
+      "rhs": "(2*n)! / (2^n * n!)",
+      "conditions": [],
+      "test_values": [
+        {"n": 5}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "SER_025",
+      "category": "series",
+      "name": "Catalan Number Generating",
+      "lhs": "Sum[C[n] * x^n, {n, 0, Infinity}]",
+      "rhs": "(1 - Sqrt[1 - 4*x]) / (2*x)",
+      "conditions": ["|x| < 1/4"],
+      "test_values": [],
+      "severity": "LOW"
+    },
+
+    {
+      "id": "MAT_001",
+      "category": "matrix",
+      "name": "Transpose of Transpose",
+      "lhs": "Transpose[Transpose[A]]",
+      "rhs": "A",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_002",
+      "category": "matrix",
+      "name": "Determinant Product",
+      "lhs": "Det[A . B]",
+      "rhs": "Det[A] * Det[B]",
+      "conditions": ["A, B square matrices"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_003",
+      "category": "matrix",
+      "name": "Determinant Transpose",
+      "lhs": "Det[Transpose[A]]",
+      "rhs": "Det[A]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_004",
+      "category": "matrix",
+      "name": "Inverse Product",
+      "lhs": "Inverse[A . B]",
+      "rhs": "Inverse[B] . Inverse[A]",
+      "conditions": ["A, B invertible"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_005",
+      "category": "matrix",
+      "name": "Inverse Transpose",
+      "lhs": "Inverse[Transpose[A]]",
+      "rhs": "Transpose[Inverse[A]]",
+      "conditions": ["A invertible"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_006",
+      "category": "matrix",
+      "name": "Determinant Inverse",
+      "lhs": "Det[Inverse[A]]",
+      "rhs": "1 / Det[A]",
+      "conditions": ["A invertible"],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_007",
+      "category": "matrix",
+      "name": "Trace Sum",
+      "lhs": "Tr[A + B]",
+      "rhs": "Tr[A] + Tr[B]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_008",
+      "category": "matrix",
+      "name": "Trace Scalar",
+      "lhs": "Tr[c * A]",
+      "rhs": "c * Tr[A]",
+      "conditions": ["c scalar"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_009",
+      "category": "matrix",
+      "name": "Trace Cyclic",
+      "lhs": "Tr[A . B . C]",
+      "rhs": "Tr[B . C . A]",
+      "conditions": ["dimensions compatible"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_010",
+      "category": "matrix",
+      "name": "Determinant Scalar",
+      "lhs": "Det[c * A]",
+      "rhs": "c^n * Det[A]",
+      "conditions": ["A is n×n"],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_011",
+      "category": "matrix",
+      "name": "Matrix Exponential Identity",
+      "lhs": "MatrixExp[0]",
+      "rhs": "IdentityMatrix[n]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_012",
+      "category": "matrix",
+      "name": "Eigenvalue Sum",
+      "lhs": "Sum[eigenvalues]",
+      "rhs": "Tr[A]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_013",
+      "category": "matrix",
+      "name": "Eigenvalue Product",
+      "lhs": "Product[eigenvalues]",
+      "rhs": "Det[A]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "HIGH"
+    },
+    {
+      "id": "MAT_014",
+      "category": "matrix",
+      "name": "Cayley-Hamilton",
+      "lhs": "CharacteristicPolynomial[A] /. x -> A",
+      "rhs": "0",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "MAT_015",
+      "category": "matrix",
+      "name": "Vandermonde Determinant",
+      "lhs": "Det[VandermondeMatrix[{x1, x2, ..., xn}]]",
+      "rhs": "Product[(xj - xi), {i,j} with j > i]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "NT_001",
+      "category": "number_theory",
+      "name": "GCD Commutativity",
+      "lhs": "GCD[a, b]",
+      "rhs": "GCD[b, a]",
+      "conditions": [],
+      "test_values": [
+        {"a": 12, "b": 18}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_002",
+      "category": "number_theory",
+      "name": "GCD Associativity",
+      "lhs": "GCD[GCD[a, b], c]",
+      "rhs": "GCD[a, GCD[b, c]]",
+      "conditions": [],
+      "test_values": [
+        {"a": 12, "b": 18, "c": 24}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_003",
+      "category": "number_theory",
+      "name": "GCD LCM Product",
+      "lhs": "GCD[a, b] * LCM[a, b]",
+      "rhs": "Abs[a * b]",
+      "conditions": [],
+      "test_values": [
+        {"a": 12, "b": 18}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_004",
+      "category": "number_theory",
+      "name": "Bezout Identity",
+      "lhs": "GCD[a, b]",
+      "rhs": "a*s + b*t (for some integers s, t)",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_005",
+      "category": "number_theory",
+      "name": "Euclidean Algorithm",
+      "lhs": "GCD[a, b]",
+      "rhs": "GCD[b, Mod[a, b]]",
+      "conditions": ["b != 0"],
+      "test_values": [
+        {"a": 48, "b": 18}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_006",
+      "category": "number_theory",
+      "name": "Mod Sum",
+      "lhs": "Mod[a + b, n]",
+      "rhs": "Mod[Mod[a, n] + Mod[b, n], n]",
+      "conditions": ["n > 0"],
+      "test_values": [
+        {"a": 17, "b": 23, "n": 7}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_007",
+      "category": "number_theory",
+      "name": "Mod Product",
+      "lhs": "Mod[a * b, n]",
+      "rhs": "Mod[Mod[a, n] * Mod[b, n], n]",
+      "conditions": ["n > 0"],
+      "test_values": [
+        {"a": 17, "b": 23, "n": 7}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_008",
+      "category": "number_theory",
+      "name": "Fermat Little Theorem",
+      "lhs": "Mod[a^p, p]",
+      "rhs": "Mod[a, p]",
+      "conditions": ["p prime"],
+      "test_values": [
+        {"a": 3, "p": 7}
+      ],
+      "severity": "HIGH"
+    },
+    {
+      "id": "NT_009",
+      "category": "number_theory",
+      "name": "Fermat Inverse",
+      "lhs": "Mod[a^(p-1), p]",
+      "rhs": "1",
+      "conditions": ["p prime", "GCD[a, p] = 1"],
+      "test_values": [
+        {"a": 3, "p": 7}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_010",
+      "category": "number_theory",
+      "name": "Wilson Theorem",
+      "lhs": "Mod[(p-1)!, p]",
+      "rhs": "-1",
+      "conditions": ["p prime"],
+      "test_values": [
+        {"p": 7}
+      ],
+      "severity": "LOW"
+    },
+    {
+      "id": "NT_011",
+      "category": "number_theory",
+      "name": "Floor Definition",
+      "lhs": "n - 1 < Floor[x] <= n",
+      "rhs": "True when n = Floor[x]",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_012",
+      "category": "number_theory",
+      "name": "Floor Add Integer",
+      "lhs": "Floor[x + n]",
+      "rhs": "Floor[x] + n",
+      "conditions": ["n integer"],
+      "test_values": [
+        {"x": 2.7, "n": 3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_013",
+      "category": "number_theory",
+      "name": "Ceiling Definition",
+      "lhs": "n <= Ceiling[x] < n + 1",
+      "rhs": "True when n = Ceiling[x] - 1",
+      "conditions": [],
+      "test_values": [],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_014",
+      "category": "number_theory",
+      "name": "Floor Ceiling Relation",
+      "lhs": "Ceiling[x]",
+      "rhs": "-Floor[-x]",
+      "conditions": [],
+      "test_values": [
+        {"x": 2.3}
+      ],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "NT_015",
+      "category": "number_theory",
+      "name": "Divisor Count Multiplicative",
+      "lhs": "DivisorSigma[0, m*n]",
+      "rhs": "DivisorSigma[0, m] * DivisorSigma[0, n]",
+      "conditions": ["GCD[m, n] = 1"],
+      "test_values": [
+        {"m": 3, "n": 4}
+      ],
+      "severity": "LOW"
+    }
+  ]
+}

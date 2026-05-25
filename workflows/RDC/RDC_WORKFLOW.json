@@ -1,0 +1,506 @@
+{
+  "version": "1.2.0",
+  "name": "RDC_WORKFLOW",
+  "description": "Swarm research and documentation consolidation workflow. Sequential temporal-upsert of N markdown documents into structured SDLC-ready output. AI swarm reads all docs in temporal order, builds a running MASTER via lossless concept upsert, then carves into PROJECT/PHASE_ARCH/PHASE_TODO/CLARIFICATION documents. Output of this workflow is the input to SDLC_WORKFLOW. Conflicts flagged during SCRIBE are resolved via a COURT phase before TAXONOMY. Triggered by the phrase 'RDC_WORKFLOW'. Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent). v1.2.0 adds MULTI_PARALLEL mode: when source directory contains independent clusters (separate sub-projects sharing a directory), QUEEN detects clusters during INVENTORY and spawns one CLUSTER_CONSOLIDATOR per cluster in parallel, each running a full sequential SCRIBE_LOOP internally. Outputs are namespaced by cluster suffix. Single-cluster behavior preserved as default.",
+
+  "trigger": {
+    "phrase": "RDC_WORKFLOW",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reports: 'RDC_WORKFLOW mode engaged. Ready. Point me to the source directory.'",
+      "QUEEN waits for explicit human direction specifying the source directory path"
+    ],
+    "source_directory_requires": "explicit human direction specifying the directory containing .md source documents"
+  },
+
+  "relationship_to_sdlc": {
+    "position": "upstream",
+    "output_is_input_to": "SDLC_WORKFLOW",
+    "contract": "RDC_WORKFLOW output documents (PROJECT.md, PHASE_N_ARCH.md, PHASE_N_TODO.md, CLARIFICATION.md) are the exact documents SDLC_WORKFLOW expects to find when a task is initiated. RDC produces the roadmap; SDLC executes it.",
+    "handoff": "On RDC GREEN_LIGHT, output docs are committed to main. SDLC_WORKFLOW can then be triggered against the same repository. Transition is manual — human confirms output looks right before engaging SDLC."
+  },
+
+  "document_conventions": {
+    "source_docs": "*.md files in the designated source directory",
+    "master_file": "MASTER.md",
+    "master_description": "Running consolidated document built by sequential SCRIBE passes. Represents the current best-known state of the project architecture, scope, and decisions. Grows and mutates with each SCRIBE pass. Not a final deliverable — it is the intermediate representation from which output docs are carved. Preserved at repo root after GREEN_LIGHT for future RDC runs and single-file project overview.",
+    "master_update_mode": "upsert_overwrite",
+    "master_update_detail": "SCRIBE reads current MASTER + next source doc. Concepts already in MASTER are updated in place if the source doc contains newer/revised information. New concepts are inserted in the most structurally appropriate location. No concept is deleted — only overwritten with evolved versions. The MASTER after the final SCRIBE pass represents the fully consolidated end-state. Concepts that were court-resolved carry a back-reference to the INPROGRESS.md court entry.",
+    "pedagogy_file": "PEDAGOGY.md",
+    "pedagogy_description": "Archaeological record of concept evolution. Every time SCRIBE overwrites or significantly revises a concept in MASTER, the prior value, new value, source doc, and reasoning are logged here. Append-only. Court rulings get a cross-reference entry here; full court transcript lives in INPROGRESS.md.",
+    "pedagogy_update_mode": "append_only",
+    "pedagogy_entry_format": {
+      "timestamp": "SCRIBE pass number + source doc filename",
+      "concept": "name/path of the concept that changed",
+      "prior_value": "what MASTER said before this pass",
+      "new_value": "what MASTER says after this pass",
+      "reason": "why the change was made (derived from source doc context)",
+      "court_reference": "optional — INPROGRESS.md anchor if this change was court-ruled"
+    },
+    "inventory_file": "INVENTORY.md",
+    "inventory_description": "Manifest of all source documents with temporal ordering, produced during INVENTORY phase. Includes filename, detected epoch/date, document summary, and reading order assignment.",
+    "evaluation_file": "EVALUATIONS.md",
+    "evaluation_description": "Per-document evaluation produced by SCRIBE during each pass. Records what was found in each source doc, what was new, what was updated, what was unchanged, what was flagged as conflict. Append-only.",
+    "inprogress_file": "INPROGRESS.md",
+    "inprogress_description": "Root-level swarm progress dumping ground. All workflow progress (SDLC task completions, RDC phase reports, COURT transcripts) lands here as dated changelog blocks. COURT entries are one entry type among several.",
+    "output_documents": {
+      "project": "PROJECT.md",
+      "phase_arch_pattern": "PHASE_<N>_ARCH.md",
+      "phase_todo_pattern": "PHASE_<N>_TODO.md",
+      "clarification": "CLARIFICATION.md",
+      "pedagogy": "PEDAGOGY.md",
+      "master": "MASTER.md (preserved, not consumed by SDLC)"
+    },
+    "output_description": "TAXONOMIST carves MASTER.md into the output document set. Phase structure is discovered from MASTER content — TAXONOMIST identifies natural phase boundaries and creates one PHASE_N pair per identified phase. PEDAGOGY.md and MASTER.md pass through as-is (already complete from SCRIBE_LOOP). COURT transcripts live in INPROGRESS.md — not a separate output file."
+  },
+
+  "cluster_strategy": {
+    "description": "Added v1.2.0. Enables MULTI_PARALLEL mode when a source directory contains multiple independent sub-projects. QUEEN runs a cluster-detection pass during INVENTORY; if N>1 clusters detected, INVENTORY manifest lists each cluster with its doc set and temporal order. Each cluster is then processed by an independent CLUSTER_CONSOLIDATOR worker in parallel, producing its own namespaced output set.",
+    "when_to_enable": "INVENTORY detects documents belonging to topically independent projects (distinct codebases, orthogonal scope, no shared concept vocabulary). Typical signal: multiple root-level docs referencing different hardware targets, different languages, different problem domains.",
+    "detection_heuristic_ordered": [
+      "1. Directory boundary — sub-directories are cluster seeds unless content says otherwise",
+      "2. Content topical match — root docs grouped by topical overlap (hardware refs, language refs, domain vocabulary)",
+      "3. Orphan detection — a doc with zero topical overlap with the majority set is its own cluster",
+      "4. Human override — QUEEN may propose clusters, human confirms/adjusts"
+    ],
+    "output_namespacing": {
+      "master": "MASTER_<CLUSTER>.md",
+      "pedagogy": "PEDAGOGY_<CLUSTER>.md",
+      "evaluations": "EVALUATIONS_<CLUSTER>.md",
+      "project": "PROJECT_<CLUSTER>.md",
+      "phase_arch": "PHASE_<N>_<CLUSTER>_<NAME>_ARCH.md",
+      "phase_todo": "PHASE_<N>_<CLUSTER>_<NAME>_TODO.md",
+      "clarification": "CLARIFICATION_<CLUSTER>.md"
+    },
+    "shared_files_across_clusters": [
+      "INPROGRESS.md — one at repo root, per-cluster sections + cross-cluster summary",
+      "INVENTORY.md — one at repo root, documents all clusters and the detection rationale"
+    ],
+    "no_cross_cluster_upsert": "By definition clusters are independent; MASTER_A.md concepts are never upserted into MASTER_B.md. Cross-cluster concept appearance indicates misclassification — QUEEN re-examines cluster boundaries.",
+    "no_cross_cluster_court": "Conflicts are intra-cluster only; there is no inter-cluster COURT. Each cluster may run its own COURT phase if conflicts are flagged within it.",
+    "parallel_execution_discipline": "All CLUSTER_CONSOLIDATOR spawns go in ONE message (Agent tool calls, run_in_background:true). QUEEN does NOT poll — waits for results.",
+    "single_cluster_degenerate_case": "If INVENTORY detects only 1 cluster, MULTI_PARALLEL mode is inactive and workflow falls back to the standard flow.main_sequence."
+  },
+
+  "court_mechanism": {
+    "description": "When SCRIBE flags a contradiction between source docs with no clear temporal supersession, the conflicting concept is resolved in a COURT session. Four advocates (2 per side) produce independent briefs; QUEEN rules. Courts are batched — they run after SCRIBE_LOOP completes, before TAXONOMY.",
+    "triggered_by": "SCRIBE flags a conflict during upsert (source doc contradicts MASTER without clear supersession)",
+    "batching": "conflicts accumulate in MASTER with conflict-markers during SCRIBE_LOOP; COURT phase processes them all between SCRIBE_LOOP and TAXONOMY",
+    "participants": {
+      "judge": "QUEEN",
+      "advocates_per_session": 4,
+      "side_a": ["ADVOCATE_A1", "ADVOCATE_A2"],
+      "side_b": ["ADVOCATE_B1", "ADVOCATE_B2"]
+    },
+    "why_two_per_side": "Redundancy strengthens the case. If two independent advocates converge on the same argument, the side is strong. If they diverge, QUEEN sees richer evidence. If advocates disagree about their own side's best argument, the side is weak.",
+    "advocate_discipline": "Advocates argue their assigned side regardless of personal assessment. A concession note in the brief is permitted but not required — primary job is the strongest case for the side.",
+    "decision_criteria_ordered": [
+      "1. Explicit supersession — if a later source doc explicitly says 'replaces X' or similar, the later one wins",
+      "2. Temporal primacy — absent explicit supersession, temporally later source doc wins",
+      "3. Evidentiary weight — brief with more and better citations wins",
+      "4. Architectural consistency — the value that fits the rest of MASTER best wins",
+      "5. Load-bearing-ness — if one value underlies more other decisions, it wins on inertia"
+    ],
+    "ruling_options": {
+      "SIDE_A_WINS": "MASTER gets value A; side B noted as superseded in PEDAGOGY",
+      "SIDE_B_WINS": "MASTER gets value B; side A noted as superseded in PEDAGOGY",
+      "SYNTHESIS": "QUEEN interjects: neither side cleanly right; MASTER gets a synthesized value combining elements of both. Rationale required.",
+      "DEFER": "QUEEN interjects: conflict reveals deeper architectural question beyond court scope. Kicked to TAXONOMIST or escalated to human.",
+      "REJECT_BOTH": "QUEEN interjects: both sides are wrong; MASTER marks concept 'unresolved — needs human design.' Triggers ESCALATE.",
+      "NO_DECISION": "QUEEN cannot rule; criteria are all tied and no interjection applies. Triggers ESCALATE to human."
+    },
+    "recording": {
+      "location": "INPROGRESS.md (repo root)",
+      "format": "Dated changelog block, entry-type COURT",
+      "entry_template": "## <YYYY-MM-DD> — COURT #<N>: concept <name>\n**Triggered by:** SCRIBE pass <k>\n**Conflict:** <source docs and their values>\n**Side A advocates:** ADVOCATE_A1 brief summary + ADVOCATE_A2 brief summary\n**Side B advocates:** ADVOCATE_B1 brief summary + ADVOCATE_B2 brief summary\n**QUEEN ruling:** <one of ruling_options>\n**Rationale:** <1-3 sentences>\n**Decision criterion applied:** <which of the 5 criteria, or which interjection>\n**Effect on MASTER:** <concept value after ruling>\n**Status:** RESOLVED | ESCALATED",
+      "master_back_reference": "Each court-resolved concept in MASTER.md gets a back-reference: `> See [COURT #<N>](INPROGRESS.md#court-<N>) for resolution history.`",
+      "pedagogy_cross_reference": "PEDAGOGY.md gets a short entry noting the court happened with a link to INPROGRESS.md; no duplication of the full transcript."
+    },
+    "automatic_continuation": "On SIDE_A_WINS, SIDE_B_WINS, or SYNTHESIS rulings: QUEEN applies the ruling to MASTER and the swarm continues automatically to the next conflict or to TAXONOMY. On DEFER-to-taxonomist: mark the concept for taxonomist attention and continue. On DEFER-to-human, REJECT_BOTH, or NO_DECISION: escalate and pause.",
+    "escalation_trigger": "NO_DECISION, REJECT_BOTH, and DEFER-to-human all escalate to human. Court sessions that escalate pause the workflow until human resolves."
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation when RDC_WORKFLOW is active. Runs inventory, determines temporal ordering, spawns SCRIBE sequentially, presides over COURT sessions as judge, spawns TAXONOMIST, spawns QA, manages the MASTER document lifecycle.",
+      "responsibilities": [
+        "INVENTORY: list all .md source files, pre-read headers/metadata, determine temporal sort order, produce INVENTORY.md manifest",
+        "SCRIBE_LOOP orchestration: spawn SCRIBE once per source doc in temporal order, passing current MASTER + next doc",
+        "COURT adjudication: preside over court sessions for flagged conflicts; apply decision criteria; rule or escalate",
+        "progress tracking: maintain INPROGRESS.md with dated blocks per SCRIBE pass and per COURT session",
+        "TAXONOMY spawning: after SCRIBE_LOOP (+ any COURT sessions) completes, spawn TAXONOMIST with final MASTER",
+        "QA spawning: after TAXONOMY completes, spawn QA_COMPLETENESS then QA_COHERENCE",
+        "verdict execution: act on QA verdicts (GREEN_LIGHT, SCRIBE_REVISIT, RETAXONOMIZE, ESCALATE)",
+        "loop counter tracking (qa_cycles)",
+        "escalation to human on loop limits, court NO_DECISION/REJECT_BOTH/DEFER, or ESCALATE verdict"
+      ]
+    },
+    "CLUSTER_CONSOLIDATOR": {
+      "type": "worker",
+      "doc": "inline (see §cluster_strategy and prompt template in QUEEN spawn)",
+      "context_access": "full within assigned cluster, forbidden from reading other clusters' source docs",
+      "added_in_version": "1.2.0",
+      "description": "Added v1.2.0. Given one cluster's full source-doc list and temporal order, performs the equivalent of the full RDC flow internally: SCRIBE_LOOP (sequential upsert), COURT (if conflicts), TAXONOMY (carving), QA_UNIT (completeness + coherence). Produces the cluster's namespaced output set. Implementation may be direct (single agent doing upserts itself) or delegating (agent spawns internal SCRIBEs); outcome contract is the same. Returns a structured report to QUEEN with: source docs processed, concepts total, conflicts resolved (with court transcripts if any), phases discovered, QA verdict.",
+      "inputs": [
+        "cluster name",
+        "cluster source-doc list with absolute paths, in temporal order",
+        "output filename conventions (namespaced)",
+        "relevant root files: INVENTORY.md, WORKER_SCRIBE.md, WORKER_TAXONOMIST.md, WORKER_QA_COMPLETENESS.md, WORKER_QA_COHERENCE.md, WORKER_PROTOCOL.md, WORKER.md, cluster_strategy section of this JSON",
+        "explicit forbidden list — other clusters' source docs"
+      ],
+      "produces": [
+        "MASTER_<CLUSTER>.md (running upsert, final state)",
+        "PEDAGOGY_<CLUSTER>.md (append-only concept evolution log)",
+        "EVALUATIONS_<CLUSTER>.md (append-only per-doc evaluation)",
+        "PROJECT_<CLUSTER>.md (scope/goals/constraints)",
+        "PHASE_<N>_<CLUSTER>_<NAME>_ARCH.md (one per discovered phase)",
+        "PHASE_<N>_<CLUSTER>_<NAME>_TODO.md (one per discovered phase)",
+        "CLARIFICATION_<CLUSTER>.md (philosophical/pedagogical framing)",
+        "append-block to shared root INPROGRESS.md summarizing cluster progress + verdict",
+        "structured report to QUEEN"
+      ],
+      "internal_discipline": [
+        "Process source docs in the exact temporal order provided",
+        "Upsert-overwrite MASTER_<CLUSTER>; never delete concepts",
+        "Append to PEDAGOGY_<CLUSTER> on overwrites; include prior value, new value, source doc, reason",
+        "Append to EVALUATIONS_<CLUSTER> per source doc (what was new/updated/unchanged/conflict)",
+        "Flag conflicts that can't resolve by temporal supersession; run intra-cluster COURT per court_mechanism",
+        "TAXONOMIST work: discover phases from MASTER_<CLUSTER> content, don't impose a predetermined structure",
+        "QA_UNIT: run QA_COMPLETENESS first (zero missing concepts), then QA_COHERENCE (zero structural issues); both must pass for GREEN_LIGHT",
+        "On cross-cluster concept appearance (violation): stop, report misclassification to QUEEN, do NOT proceed",
+        "Use Write/Edit tools for file creation; Read for source docs; Bash only if a file system op requires it"
+      ],
+      "reports_to_queen": "structured block with: cluster name, docs processed count, concepts total, conflicts flagged, conflicts resolved (ruling per court), phases discovered (N and names), QA verdict (GREEN_LIGHT | SCRIBE_REVISIT | RETAXONOMIZE | ESCALATE), output files list with sizes or line counts, any blockers or misclassification findings",
+      "triggered_by": ["QUEEN during MULTI_PARALLEL mode — spawned N in parallel, one per cluster"]
+    },
+    "SCRIBE": {
+      "type": "worker",
+      "doc": "workflows/RDC/WORKER_SCRIBE.md",
+      "context_access": "full",
+      "description": "The core worker. Spawned once per source document in temporal order. Receives current MASTER.md + one source doc. Reads the source doc thoroughly, then upserts all concepts into MASTER. When a concept is overwritten, logs the change to PEDAGOGY.md. Produces a per-doc evaluation entry for EVALUATIONS.md. When contradiction detected without clear temporal supersession, flags as conflict (to be resolved in COURT phase).",
+      "inputs": [
+        "MASTER.md (current state)",
+        "source doc (the single doc for this pass)",
+        "INVENTORY.md (for context on where this doc sits in the temporal sequence)",
+        "PEDAGOGY.md (current state, for append)"
+      ],
+      "produces": [
+        "MASTER.md (updated — concepts upserted, new concepts inserted, conflicts marked)",
+        "PEDAGOGY.md (appended — any concept changes logged)",
+        "EVALUATIONS.md entry (appended — what this doc contributed, including conflict flags)"
+      ],
+      "upsert_rules": [
+        "if source doc introduces a concept not in MASTER: INSERT into structurally appropriate location",
+        "if source doc revises a concept already in MASTER: OVERWRITE in place, log prior value to PEDAGOGY",
+        "if source doc contains a concept identical to MASTER: NO-OP, note as 'unchanged' in evaluation",
+        "if source doc contains a concept that CONTRADICTS MASTER with no clear temporal supersession: FLAG in evaluation, insert both versions into MASTER with conflict marker, log to PEDAGOGY. COURT phase will resolve.",
+        "NEVER delete a concept from MASTER. Overwrite only. If a source doc explicitly deprecates a concept, mark it deprecated in MASTER rather than removing."
+      ],
+      "triggered_by": ["QUEEN during SCRIBE_LOOP", "QUEEN during SCRIBE_REVISIT (targeted re-pass after QA finding)"]
+    },
+    "ADVOCATE": {
+      "type": "worker",
+      "doc": "workflows/RDC/WORKER_ADVOCATE.md",
+      "context_access": "full",
+      "description": "Court advocate. Given a conflicting concept and an assigned side (A or B), produces a brief arguing for that side's value. Spawned 4 times per court session (2 per side). Advocates their assigned side regardless of personal assessment; concession note optional.",
+      "inputs": [
+        "concept under dispute (from MASTER conflict marker)",
+        "assigned side (A or B) with its candidate value",
+        "opposing side's candidate value (for reference)",
+        "all source docs relevant to the concept",
+        "MASTER.md (full, for architectural-consistency arguments)",
+        "PEDAGOGY.md (for prior-evolution context)"
+      ],
+      "produces": [
+        "brief: structured argument for assigned side with claims, evidence citations, and rebuttal of opposing side's likely arguments",
+        "optional concession note: if advocate genuinely believes their side is weaker, may include honest assessment after the primary brief"
+      ],
+      "discipline": "advocate the assigned side. Do NOT return 'I don't think my side is right' as the main output. Primary brief is the strongest case for the side.",
+      "triggered_by": ["QUEEN during COURT phase — spawned 4 in parallel per court session"]
+    },
+    "TAXONOMIST": {
+      "type": "worker",
+      "doc": "workflows/RDC/WORKER_TAXONOMIST.md",
+      "context_access": "full",
+      "description": "Post-synthesis carver. Takes final MASTER.md (after SCRIBE_LOOP and any COURT resolutions) and produces the SDLC-ready output document set. Discovers phase structure from MASTER content — identifies natural phase boundaries based on scope, dependency order, and architectural layers. Creates PROJECT.md (scope/goals/constraints), PHASE_N_ARCH.md (one per phase), PHASE_N_TODO.md (task breakdown per phase), and CLARIFICATION.md (philosophical/pedagogical framing).",
+      "inputs": [
+        "MASTER.md (final state after all SCRIBE passes and COURT resolutions)",
+        "PEDAGOGY.md (for context on decision evolution)",
+        "EVALUATIONS.md (for context on source coverage)",
+        "INPROGRESS.md court entries (for understanding resolved conflicts)"
+      ],
+      "produces": [
+        "PROJECT.md",
+        "PHASE_N_ARCH.md (one per discovered phase)",
+        "PHASE_N_TODO.md (one per discovered phase)",
+        "CLARIFICATION.md"
+      ],
+      "phase_discovery_rules": [
+        "phases are discovered, not predetermined — TAXONOMIST identifies them from MASTER content",
+        "phase boundaries should reflect natural dependency ordering (phase N+1 depends on phase N outputs)",
+        "each phase should be a coherent scope unit — buildable as a work unit by SDLC_WORKFLOW",
+        "ARCH docs must contain enough context for SDLC workers (DEV, TESTDEV, QA) to operate independently",
+        "TODO docs must contain concrete, actionable task entries with acceptance criteria — these become the TASK_IDs that SDLC_WORKFLOW consumes",
+        "TODO tasks should be scoped small enough for a single SDLC task cycle (DEV → TEST → QA)"
+      ],
+      "triggered_by": ["QUEEN after SCRIBE_LOOP + COURT completes", "QUEEN during RETAXONOMIZE"]
+    },
+    "QA_COMPLETENESS": {
+      "type": "worker",
+      "doc": "workflows/RDC/WORKER_QA_COMPLETENESS.md",
+      "context_access": "full",
+      "stance": "adversarial — concept-loss hunter",
+      "description": "Concept-loss detection. Reviews ALL source documents against the carved output documents. Every concept that appeared in any source doc must be present in either (a) the output documents or (b) PEDAGOGY.md as a superseded/deprecated entry or (c) INPROGRESS.md as a court-resolved entry. If a concept is in none of these, it's a loss — flag it.",
+      "inputs": [
+        "all source documents (original .md files)",
+        "all output documents (PROJECT, PHASE_N_ARCH, PHASE_N_TODO, CLARIFICATION)",
+        "PEDAGOGY.md",
+        "INPROGRESS.md (for court-resolved concepts)",
+        "MASTER.md (final state)"
+      ],
+      "produces": [
+        "completeness report: list of all concepts checked, status (present|superseded_in_pedagogy|court_resolved|MISSING)",
+        "if any MISSING: list with source doc reference and concept description"
+      ],
+      "sequence_position": 1
+    },
+    "QA_COHERENCE": {
+      "type": "worker",
+      "doc": "workflows/RDC/WORKER_QA_COHERENCE.md",
+      "context_access": "full",
+      "stance": "adversarial — structural integrity auditor",
+      "description": "Structural coherence check on carved output documents. Do PHASE docs reference concepts defined in PROJECT? Do TODO items trace to ARCH decisions? Do phases have correct dependency ordering? Are there circular references or orphaned concepts? Is the output set self-consistent and ready for SDLC consumption?",
+      "inputs": [
+        "all output documents (PROJECT, PHASE_N_ARCH, PHASE_N_TODO, CLARIFICATION)",
+        "MASTER.md (for cross-reference)"
+      ],
+      "produces": [
+        "coherence report: structural issues found",
+        "categories: cross-reference_failures | dependency_ordering_errors | orphaned_concepts | TODO_ARCH_mismatches | scope_leaks_between_phases",
+        "verdict recommendation to QUEEN"
+      ],
+      "sequence_position": 2
+    }
+  },
+
+  "units": {
+    "COURT_UNIT": {
+      "participants": ["ADVOCATE_A1", "ADVOCATE_A2", "ADVOCATE_B1", "ADVOCATE_B2", "QUEEN (judge)"],
+      "execution": "advocates spawned in parallel (4 at once); QUEEN ruling is sequential after all 4 briefs return",
+      "atomic": true,
+      "description": "One court session per flagged conflict. All 4 advocates run in parallel. QUEEN waits for all 4 briefs, then rules. Outcome recorded to INPROGRESS.md."
+    },
+    "QA_UNIT": {
+      "sequence": ["QA_COMPLETENESS", "QA_COHERENCE"],
+      "atomic": true,
+      "description": "Both QA passes run in sequence. QA_COMPLETENESS first (are all concepts captured?), then QA_COHERENCE (is the output structurally sound?). Both must pass for GREEN_LIGHT."
+    }
+  },
+
+  "flow": {
+    "inventory": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "list all .md files in source directory",
+        "pre-read each file: extract filename, any date/timestamp headers, creation metadata, first ~50 lines for context",
+        "determine temporal sort order: prefer explicit timestamps > filename conventions > file metadata > content-internal date references",
+        "produce INVENTORY.md: ordered manifest with reading sequence, per-file summary, detected epoch",
+        "initialize MASTER.md as empty structured document",
+        "initialize PEDAGOGY.md with header block",
+        "initialize EVALUATIONS.md with header block",
+        "ensure INPROGRESS.md exists at repo root (create skeleton if missing)",
+        "report inventory to human: N files found, proposed reading order, await confirmation or override"
+      ]
+    },
+    "scribe_loop": {
+      "performer": "QUEEN spawns SCRIBE",
+      "type": "sequential_worker_loop",
+      "description": "QUEEN iterates through INVENTORY in temporal order. For each source doc: spawn SCRIBE with current MASTER + doc. SCRIBE returns updated MASTER + PEDAGOGY delta + evaluation entry. QUEEN verifies outputs, appends to INPROGRESS, advances to next doc.",
+      "per_iteration": [
+        "QUEEN assembles context packet: current MASTER.md + source doc[i] + INVENTORY.md + PEDAGOGY.md + workflows/RDC/WORKER_SCRIBE.md + workflows/SHARED/WORKER_PROTOCOL.md",
+        "QUEEN spawns SCRIBE",
+        "SCRIBE returns: updated MASTER.md + PEDAGOGY.md append + EVALUATIONS.md entry",
+        "QUEEN writes SCRIBE report to INPROGRESS.md (prepend dated block: doc processed, concepts added/updated/unchanged/conflicts count)",
+        "QUEEN advances to doc[i+1]"
+      ],
+      "completion": "after final doc processed, QUEEN reports SCRIBE_LOOP complete with summary stats (total concepts, total updates, total conflicts flagged)"
+    },
+    "court": {
+      "performer": "QUEEN presides, spawns ADVOCATEs",
+      "type": "conditional_phase",
+      "description": "Runs only if SCRIBE_LOOP flagged conflicts. QUEEN processes each flagged conflict as a separate court session. Sessions are sequential (one at a time) but advocates within a session are spawned in parallel (4 at once).",
+      "per_session": [
+        "QUEEN reads the conflict marker from MASTER (which source docs disagreed, what each said)",
+        "QUEEN assembles context packet for each advocate: concept + assigned side + opposing side + all relevant source docs + MASTER + PEDAGOGY + workflows/RDC/WORKER_ADVOCATE.md",
+        "QUEEN spawns all 4 ADVOCATEs in parallel (single message, 4 tool calls): ADVOCATE_A1, ADVOCATE_A2 (both arguing for side A), ADVOCATE_B1, ADVOCATE_B2 (both arguing for side B)",
+        "QUEEN collects all 4 briefs",
+        "QUEEN applies decision criteria in priority order (see court_mechanism.decision_criteria_ordered)",
+        "QUEEN emits ruling: SIDE_A_WINS | SIDE_B_WINS | SYNTHESIS | DEFER | REJECT_BOTH | NO_DECISION",
+        "QUEEN records to INPROGRESS.md per court_mechanism.recording.entry_template",
+        "QUEEN updates MASTER.md: replaces conflict marker with ruled value + back-reference to INPROGRESS court entry",
+        "QUEEN cross-references in PEDAGOGY.md",
+        "QUEEN advances to next conflict OR ends COURT phase if no more"
+      ],
+      "on_escalation": "If any court session rules NO_DECISION, REJECT_BOTH, or DEFER-to-human: QUEEN pauses the workflow, reports to human, waits. Human resolves. On resumption, QUEEN resumes from next conflict or next phase.",
+      "skip_condition": "if SCRIBE_LOOP flagged zero conflicts, COURT phase is skipped entirely"
+    },
+    "taxonomy": {
+      "performer": "QUEEN spawns TAXONOMIST",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN assembles context packet: final MASTER.md + PEDAGOGY.md + EVALUATIONS.md + INPROGRESS.md (for court entries) + workflows/RDC/WORKER_TAXONOMIST.md + workflows/SHARED/WORKER_PROTOCOL.md",
+        "QUEEN spawns TAXONOMIST",
+        "TAXONOMIST returns: PROJECT.md + PHASE_N_ARCH.md set + PHASE_N_TODO.md set + CLARIFICATION.md",
+        "QUEEN writes TAXONOMIST report to INPROGRESS.md",
+        "QUEEN proceeds to QA"
+      ]
+    },
+    "qa": {
+      "performer": "QUEEN spawns QA_UNIT",
+      "type": "sequential_workers",
+      "actions": [
+        "QUEEN spawns QA_COMPLETENESS with: all source docs + all output docs + PEDAGOGY + INPROGRESS + MASTER",
+        "QA_COMPLETENESS returns completeness report",
+        "QUEEN spawns QA_COHERENCE with: all output docs + MASTER",
+        "QA_COHERENCE returns coherence report + verdict recommendation",
+        "QUEEN evaluates combined QA results → determines verdict"
+      ]
+    },
+    "main_sequence": [
+      "INVENTORY: QUEEN scans source directory, builds temporal manifest, awaits human confirmation",
+      "SCRIBE_LOOP: sequential upsert passes, one per source doc in temporal order",
+      "COURT: (conditional) resolve flagged conflicts via 4-advocate sessions",
+      "TAXONOMY: TAXONOMIST carves MASTER into SDLC-ready output documents",
+      "QA_UNIT: QA_COMPLETENESS then QA_COHERENCE review output set",
+      "QUEEN executes verdict"
+    ],
+    "multi_parallel_sequence": {
+      "description": "Added v1.2.0. Engaged when INVENTORY detects N>1 independent clusters. QUEEN orchestrates a fan-out/fan-in pattern.",
+      "steps": [
+        "INVENTORY_WITH_CLUSTERS: QUEEN scans, detects clusters, writes multi-cluster manifest, awaits human confirmation of cluster boundaries",
+        "PARALLEL_SPAWN: QUEEN spawns N CLUSTER_CONSOLIDATOR agents in ONE message (Agent tool calls, run_in_background:true), one per cluster",
+        "WAIT: QUEEN does not poll — waits for all N reports to arrive",
+        "PER_CLUSTER_VERDICT: for each returned report, QUEEN records outcome to INPROGRESS.md; GREEN_LIGHT clusters are finalized; SCRIBE_REVISIT/RETAXONOMIZE/ESCALATE trigger standard verdict execution within that cluster only",
+        "CROSS_CLUSTER_SYNTHESIS: QUEEN writes INVENTORY_CROSS.md (or appends a cross-cluster section to INPROGRESS.md) summarizing what each cluster produced; no concept merging across clusters",
+        "FINAL_REPORT: QUEEN reports to human with per-cluster verdicts and aggregate status"
+      ],
+      "parallelism_constraint": "Cluster work is fully parallel. Sequential work (SCRIBE_LOOP discipline) happens INSIDE each CLUSTER_CONSOLIDATOR, not at QUEEN level."
+    }
+  },
+
+  "verdicts": {
+    "GREEN_LIGHT": {
+      "trigger": "QA_COMPLETENESS finds zero MISSING concepts AND QA_COHERENCE finds zero structural issues",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "output documents finalized: PROJECT.md, PHASE_N_ARCH.md set, PHASE_N_TODO.md set, CLARIFICATION.md, PEDAGOGY.md, MASTER.md",
+        "QUEEN commits output documents to main",
+        "QUEEN reports: 'RDC complete. Output documents ready for SDLC_WORKFLOW.'",
+        "handoff: SDLC_WORKFLOW can now be triggered against this repository (manual transition — human engages SDLC when ready)"
+      ]
+    },
+    "SCRIBE_REVISIT": {
+      "trigger": "QA_COMPLETENESS finds MISSING concepts — source doc(s) contain concepts that failed to land in output, PEDAGOGY, or court entries",
+      "terminal": false,
+      "actions": [
+        "QUEEN identifies which source doc(s) contain the missing concepts",
+        "QUEEN re-spawns SCRIBE with: current MASTER + specific source doc(s) + QA_COMPLETENESS findings as focus directive",
+        "SCRIBE performs targeted upsert (standard upsert on the full doc, with focus directive narrowing attention to flagged concepts)",
+        "QUEEN re-spawns TAXONOMIST (RETAXONOMIZE) to re-carve with updated MASTER",
+        "QUEEN re-spawns full QA_UNIT",
+        "qa_cycle_counter++"
+      ],
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate"
+    },
+    "RETAXONOMIZE": {
+      "trigger": "QA_COMPLETENESS passes (no missing concepts) BUT QA_COHERENCE finds structural issues in carved output (wrong phase assignments, TODO-ARCH mismatches, dependency ordering errors)",
+      "terminal": false,
+      "actions": [
+        "QUEEN re-spawns TAXONOMIST with: current MASTER + QA_COHERENCE findings as correction directive",
+        "TAXONOMIST re-carves output documents addressing flagged structural issues",
+        "QUEEN re-spawns full QA_UNIT",
+        "qa_cycle_counter++"
+      ],
+      "loop_guard": "qa_cycle_counter; at 3, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "qa_cycle_counter >= 3 OR court session rules NO_DECISION/REJECT_BOTH/DEFER-to-human OR unresolvable conflict OR QUEEN determines human judgment needed",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md (cycles taken, findings history, court escalations, specific blockers)",
+        "QUEEN pauses all worker spawning",
+        "QUEEN reports to human with structured escalation report: what's blocked, what's ambiguous, what decisions are needed",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human resolves ambiguity; QUEEN resumes from appropriate point (re-SCRIBE, re-COURT, re-TAXONOMY, or re-QA)"
+    }
+  },
+
+  "loop_limits": {
+    "qa_cycles": 3,
+    "counter_semantics": {
+      "qa_cycle_counter": "increments on any QA loop-back (SCRIBE_REVISIT or RETAXONOMIZE). At 3, auto-escalate. Counter is shared across both loop-back types — 3 total attempts, not 3 per type."
+    },
+    "court_sessions_per_concept": "no hard limit, but any session that escalates to human blocks further RDC progress until resolved"
+  },
+
+  "context_access": {
+    "full_access_roles": [
+      "QUEEN",
+      "SCRIBE",
+      "ADVOCATE",
+      "TAXONOMIST",
+      "QA_COMPLETENESS",
+      "QA_COHERENCE"
+    ],
+    "note": "no cleanroom roles in this workflow — all workers need full visibility to perform consolidation accurately"
+  },
+
+  "hard_rules": {
+    "no_greenlight_without_full_qa_unit": true,
+    "every_loop_back_reenters_full_qa_unit": true,
+    "scribe_loop_is_sequential_not_parallel": true,
+    "scribe_reads_docs_in_temporal_order": true,
+    "master_upsert_never_deletes_only_overwrites": true,
+    "pedagogy_is_append_only": true,
+    "evaluations_is_append_only": true,
+    "inprogress_prepend_only": true,
+    "inventory_requires_human_confirmation_before_scribe_loop": true,
+    "taxonomist_discovers_phases_from_content": true,
+    "output_docs_must_be_sdlc_consumable": true,
+    "no_fabricated_concepts": true,
+    "conflicts_go_through_court_not_silently_resolved": true,
+    "court_rulings_recorded_to_inprogress": true,
+    "court_resolved_master_concepts_have_back_references": true,
+    "advocates_advocate_assigned_side_regardless_of_personal_view": true,
+    "queen_may_interject_synthesis_defer_reject_both": true,
+    "no_decision_escalates_to_human": true
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "scribe": "workflows/RDC/WORKER_SCRIBE.md",
+    "advocate": "workflows/RDC/WORKER_ADVOCATE.md",
+    "taxonomist": "workflows/RDC/WORKER_TAXONOMIST.md",
+    "qa_completeness": "workflows/RDC/WORKER_QA_COMPLETENESS.md",
+    "qa_coherence": "workflows/RDC/WORKER_QA_COHERENCE.md"
+  },
+
+  "notes": {
+    "trigger_note": "When Michael types 'RDC_WORKFLOW' at the start of a conversation or in a message, QUEEN (Claude) enters this mode. QUEEN does not begin work until explicitly given a source directory path.",
+    "upstream_note": "This workflow produces the documents that SDLC_WORKFLOW consumes. The two workflows form a pipeline: RDC → SDLC. RDC consolidates chaotic knowledge into structured roadmap; SDLC executes that roadmap as code. Handoff is manual — human reviews RDC output before engaging SDLC.",
+    "temporal_ordering_note": "Source docs represent conversation-epoch artifacts — snapshots of architecture understanding at different points in time. Earlier docs are less refined; later docs supersede. The SCRIBE_LOOP replays this evolution sequentially, so the MASTER naturally converges on the final intended state.",
+    "pedagogy_note": "PEDAGOGY.md is the archaeological record of concept evolution. It is not consumed by SDLC_WORKFLOW but is invaluable for understanding architectural decisions. Court rulings get cross-references here; full transcripts live in INPROGRESS.md.",
+    "phase_discovery_note": "Phase structure is NOT predetermined. TAXONOMIST discovers phases from MASTER content. This means the number and scope of phases is an output of RDC, not an input. Human confirms phase structure during TAXONOMY review or overrides via ESCALATE.",
+    "court_note": "COURT is the mechanism for resolving genuine contradictions that SCRIBE cannot resolve via temporal supersession. Advocates argue with adversarial rigor for assigned sides; QUEEN rules as judge. Recording lives in INPROGRESS.md — not a separate file — because INPROGRESS is the unified dumping ground for all swarm progress."
+  }
+}

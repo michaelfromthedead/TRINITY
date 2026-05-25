@@ -1,0 +1,14 @@
+[project]
+name = "trinity-engine"
+version = "0.1.0"
+description = "TRINITY Game Engine - Python subsystem"
+requires-python = ">=3.13,<3.14"
+
+# CRITICAL: This project targets a statically-linked Python 3.13 interpreter.
+# The system may have Python 3.14, but this project MUST use 3.13.
+#
+# Usage:
+#   uv run python script.py   # Correct
+#   python script.py          # WRONG - may use system 3.14
+#
+# See: docs/PYTHON_VERSION_PLAN.md

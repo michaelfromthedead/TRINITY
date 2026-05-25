@@ -1,0 +1,36 @@
+# FlowForge Code Owners
+# These owners will be requested for review when someone opens a pull request.
+# Order matters - the last matching pattern takes precedence.
+
+# Default owners for everything in the repo
+*                                   @yourorg/flowforge-maintainers
+
+# Core packages - require core team review
+/packages/core/                     @yourorg/flowforge-core
+/packages/engine/                   @yourorg/flowforge-core
+/packages/sdk/                      @yourorg/flowforge-core
+
+# Built-in nodes
+/packages/nodes-builtin/            @yourorg/flowforge-nodes
+
+# Desktop application (Tauri)
+/apps/desktop/                      @yourorg/flowforge-desktop
+/apps/desktop/src-tauri/            @yourorg/flowforge-desktop @yourorg/flowforge-rust
+
+# Configuration files - require maintainer review
+/.github/                           @yourorg/flowforge-maintainers
+/turbo.json                         @yourorg/flowforge-maintainers
+/tsconfig.base.json                 @yourorg/flowforge-maintainers
+/package.json                       @yourorg/flowforge-maintainers
+/bun.lockb                          @yourorg/flowforge-maintainers
+
+# CI/CD workflows - require extra scrutiny
+/.github/workflows/                 @yourorg/flowforge-maintainers @yourorg/flowforge-security
+
+# Documentation
+/docs/                              @yourorg/flowforge-docs
+*.md                                @yourorg/flowforge-docs
+
+# Security-sensitive files
+/.github/CODEOWNERS                 @yourorg/flowforge-maintainers
+/.github/dependabot.yml             @yourorg/flowforge-maintainers @yourorg/flowforge-security

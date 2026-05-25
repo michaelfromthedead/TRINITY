@@ -1,0 +1,473 @@
+/**
+ * FlowForge Trinity Theme
+ * A dark theme with vibrant node colors for visual clarity
+ *
+ * Color System:
+ * - Primary (Indigo): Actions, highlights, interactive elements
+ * - Component Nodes (Blue): Reusable game components
+ * - System Nodes (Green): Core engine systems
+ * - Resource Nodes (Purple): Assets, data, resources
+ * - Event Nodes (Orange): Triggers, signals, events
+ */
+
+:root {
+  /* ========================================
+   * Primary Brand Colors
+   * ======================================== */
+  --flowforge-primary: #6366f1;
+  --flowforge-primary-light: #818cf8;
+  --flowforge-primary-dark: #4f46e5;
+  --flowforge-primary-rgb: 99, 102, 241;
+
+  /* ========================================
+   * Node Type Colors (Trinity System)
+   * ======================================== */
+
+  /* Component Nodes - Blue (Reusable game components) */
+  --flowforge-node-component: #3b82f6;
+  --flowforge-node-component-light: #60a5fa;
+  --flowforge-node-component-dark: #2563eb;
+  --flowforge-node-component-bg: rgba(59, 130, 246, 0.15);
+
+  /* System Nodes - Green (Core engine systems) */
+  --flowforge-node-system: #22c55e;
+  --flowforge-node-system-light: #4ade80;
+  --flowforge-node-system-dark: #16a34a;
+  --flowforge-node-system-bg: rgba(34, 197, 94, 0.15);
+
+  /* Resource Nodes - Purple (Assets, data, resources) */
+  --flowforge-node-resource: #a855f7;
+  --flowforge-node-resource-light: #c084fc;
+  --flowforge-node-resource-dark: #9333ea;
+  --flowforge-node-resource-bg: rgba(168, 85, 247, 0.15);
+
+  /* Event Nodes - Orange (Triggers, signals, events) */
+  --flowforge-node-event: #f97316;
+  --flowforge-node-event-light: #fb923c;
+  --flowforge-node-event-dark: #ea580c;
+  --flowforge-node-event-bg: rgba(249, 115, 22, 0.15);
+
+  /* ========================================
+   * Canvas & Background
+   * ======================================== */
+  --flowforge-canvas-bg: #1a1a2e;
+  --flowforge-canvas-grid: #252540;
+  --flowforge-canvas-grid-major: #303050;
+
+  /* ========================================
+   * Panel & Surface Colors
+   * ======================================== */
+  --flowforge-panel-bg: #252530;
+  --flowforge-panel-secondary: #1e1e28;
+  --flowforge-surface: #2a2a3a;
+  --flowforge-surface-elevated: #323245;
+
+  /* ========================================
+   * Text Colors
+   * ======================================== */
+  --flowforge-text: #e0e0e0;
+  --flowforge-text-secondary: #a0a0a0;
+  --flowforge-text-muted: #666680;
+  --flowforge-text-bright: #ffffff;
+
+  /* ========================================
+   * Border Colors
+   * ======================================== */
+  --flowforge-border: #3a3a4a;
+  --flowforge-border-light: #4a4a5a;
+  --flowforge-border-focus: var(--flowforge-primary);
+
+  /* ========================================
+   * Interactive States
+   * ======================================== */
+  --flowforge-hover-bg: #3a3a4a;
+  --flowforge-hover-text: #ffffff;
+  --flowforge-active-bg: #4a4a5a;
+  --flowforge-selected-bg: rgba(99, 102, 241, 0.2);
+  --flowforge-selected-border: var(--flowforge-primary);
+
+  /* ========================================
+   * Input & Form Elements
+   * ======================================== */
+  --flowforge-input-bg: #1a1a24;
+  --flowforge-input-border: #3a3a4a;
+  --flowforge-input-focus-border: var(--flowforge-primary);
+  --flowforge-input-text: #e0e0e0;
+  --flowforge-input-placeholder: #666680;
+
+  /* ========================================
+   * Button Colors
+   * ======================================== */
+  --flowforge-btn-bg: #3a3a4a;
+  --flowforge-btn-hover: #4a4a5a;
+  --flowforge-btn-primary: var(--flowforge-primary);
+  --flowforge-btn-primary-hover: var(--flowforge-primary-light);
+
+  /* ========================================
+   * Semantic Colors
+   * ======================================== */
+  --flowforge-success: #22c55e;
+  --flowforge-warning: #eab308;
+  --flowforge-danger: #dc2626;
+  --flowforge-info: #3b82f6;
+
+  /* ========================================
+   * Menu Colors
+   * ======================================== */
+  --flowforge-menu-bg: #2e2e3e;
+  --flowforge-menu-text: #c0c0d0;
+  --flowforge-menu-hover: #3e3e4e;
+
+  /* ========================================
+   * UI Component Variables (used by SidebarIcon, Splitter, etc.)
+   * ======================================== */
+  --interface-panel-selected-surface: #3a3a4a;
+  --interface-panel-hover-surface: #2a2a3a;
+  --content-hover-fg: #ffffff;
+  --p-primary-color: #6366f1;
+  --sidebar-width: 48px;
+  --sidebar-icon-size: 1.25rem;
+  --sidebar-item-height: 48px;
+  --base-foreground: #e0e0e0;
+
+  /* ========================================
+   * Shadows
+   * ======================================== */
+  --flowforge-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --flowforge-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --flowforge-shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --flowforge-shadow-node: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  /* ========================================
+   * Connection/Link Colors
+   * ======================================== */
+  --flowforge-link-default: #666680;
+  --flowforge-link-hover: var(--flowforge-primary);
+  --flowforge-link-selected: var(--flowforge-primary-light);
+  --flowforge-link-executing: var(--flowforge-success);
+
+  /* ========================================
+   * Slot/Port Colors by Type
+   * ======================================== */
+  --flowforge-slot-exec: #ffffff;
+  --flowforge-slot-number: #22c55e;
+  --flowforge-slot-string: #f97316;
+  --flowforge-slot-boolean: #dc2626;
+  --flowforge-slot-vector: #a855f7;
+  --flowforge-slot-object: #3b82f6;
+  --flowforge-slot-array: #eab308;
+  --flowforge-slot-any: #888888;
+}
+
+/* ========================================
+ * Canvas Background
+ * ======================================== */
+.lgraphcanvas {
+  background-color: var(--flowforge-canvas-bg);
+}
+
+/* ========================================
+ * Node Base Styles
+ * ======================================== */
+.litegraph .litegraph-node {
+  border-radius: 6px;
+  box-shadow: var(--flowforge-shadow-node);
+}
+
+/* ========================================
+ * Node Type Specific Styles
+ * ======================================== */
+
+/* Component Nodes */
+.litegraph .litegraph-node.component-node,
+.litegraph .litegraph-node[data-type="component"] {
+  --node-color: var(--flowforge-node-component);
+  --node-bg: var(--flowforge-node-component-bg);
+}
+
+/* System Nodes */
+.litegraph .litegraph-node.system-node,
+.litegraph .litegraph-node[data-type="system"] {
+  --node-color: var(--flowforge-node-system);
+  --node-bg: var(--flowforge-node-system-bg);
+}
+
+/* Resource Nodes */
+.litegraph .litegraph-node.resource-node,
+.litegraph .litegraph-node[data-type="resource"] {
+  --node-color: var(--flowforge-node-resource);
+  --node-bg: var(--flowforge-node-resource-bg);
+}
+
+/* Event Nodes */
+.litegraph .litegraph-node.event-node,
+.litegraph .litegraph-node[data-type="event"] {
+  --node-color: var(--flowforge-node-event);
+  --node-bg: var(--flowforge-node-event-bg);
+}
+
+/* ========================================
+ * Selected Node State
+ * ======================================== */
+.litegraph .litegraph-node.selected {
+  box-shadow:
+    0 0 0 2px var(--flowforge-selected-border),
+    var(--flowforge-shadow-node);
+}
+
+/* ========================================
+ * Node Title Bar
+ * ======================================== */
+.litegraph .litegraph-node .node-title {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ========================================
+ * Slot/Port Styles
+ * ======================================== */
+.litegraph .litegraph-node .slot {
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+
+.litegraph .litegraph-node .slot:hover {
+  transform: scale(1.2);
+}
+
+/* ========================================
+ * Widget Styles
+ * ======================================== */
+.litegraph .litegraph-node .widget {
+  background-color: var(--flowforge-input-bg);
+  border: 1px solid var(--flowforge-input-border);
+  border-radius: 4px;
+}
+
+.litegraph .litegraph-node .widget:focus {
+  border-color: var(--flowforge-input-focus-border);
+  outline: none;
+}
+
+/* ========================================
+ * Connection Link Styles
+ * ======================================== */
+.litegraph .link {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.litegraph .link:hover {
+  stroke: var(--flowforge-link-hover);
+  stroke-width: 4;
+}
+
+.litegraph .link.selected {
+  stroke: var(--flowforge-link-selected);
+  stroke-width: 4;
+}
+
+/* ========================================
+ * Context Menu Trinity Theme
+ * ======================================== */
+.litegraph.litecontextmenu {
+  background-color: var(--flowforge-menu-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 8px;
+  box-shadow: var(--flowforge-shadow-lg);
+}
+
+.litegraph .litemenu-entry:hover:not(.disabled):not(.separator) {
+  background-color: var(--flowforge-menu-hover);
+  color: var(--flowforge-text-bright);
+}
+
+/* ========================================
+ * Search Box Trinity Theme
+ * ======================================== */
+.litegraph.litesearchbox {
+  background-color: var(--flowforge-panel-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 8px;
+  box-shadow: var(--flowforge-shadow-lg);
+}
+
+.litegraph.litesearchbox input {
+  background-color: var(--flowforge-input-bg);
+  border: 1px solid var(--flowforge-input-border);
+  border-radius: 4px;
+  color: var(--flowforge-input-text);
+}
+
+.litegraph.litesearchbox input:focus {
+  border-color: var(--flowforge-input-focus-border);
+  outline: none;
+}
+
+.litegraph.lite-search-item:hover,
+.litegraph.lite-search-item.selected {
+  background-color: var(--flowforge-primary);
+  color: var(--flowforge-text-bright);
+}
+
+/* ========================================
+ * Dialog Trinity Theme
+ * ======================================== */
+.litegraph .dialog {
+  background-color: var(--flowforge-panel-bg);
+  border: 1px solid var(--flowforge-border);
+  border-radius: 8px;
+  box-shadow: var(--flowforge-shadow-lg);
+}
+
+.litegraph .dialog .dialog-header {
+  background-color: var(--flowforge-panel-secondary);
+  border-radius: 8px 8px 0 0;
+}
+
+.litegraph .dialog .btn {
+  background-color: var(--flowforge-btn-bg);
+  border: 1px solid var(--flowforge-border);
+  color: var(--flowforge-text);
+  transition: all 0.2s ease;
+}
+
+.litegraph .dialog .btn:hover {
+  background-color: var(--flowforge-btn-hover);
+}
+
+.litegraph .dialog .btn.primary {
+  background-color: var(--flowforge-btn-primary);
+  border-color: var(--flowforge-btn-primary);
+  color: white;
+}
+
+.litegraph .dialog .btn.primary:hover {
+  background-color: var(--flowforge-btn-primary-hover);
+}
+
+/* ========================================
+ * Scrollbar Styling
+ * ======================================== */
+.litegraph ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.litegraph ::-webkit-scrollbar-track {
+  background: var(--flowforge-panel-secondary);
+  border-radius: 4px;
+}
+
+.litegraph ::-webkit-scrollbar-thumb {
+  background: var(--flowforge-border-light);
+  border-radius: 4px;
+}
+
+.litegraph ::-webkit-scrollbar-thumb:hover {
+  background: var(--flowforge-primary);
+}
+
+/* ========================================
+ * PrimeVue Dialog Trinity Theme
+ * Ensures dialogs have opaque dark backgrounds
+ * ======================================== */
+
+/* Dialog overlay/mask - dark semi-transparent backdrop */
+.p-dialog-mask {
+  background-color: rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Dialog container - dark panel background */
+.p-dialog {
+  background-color: var(--flowforge-panel-bg, #252530) !important;
+  border: 1px solid var(--flowforge-border, #3a3a4a) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--flowforge-shadow-lg, 0 10px 15px rgba(0, 0, 0, 0.5)) !important;
+  color: var(--flowforge-text, #e0e0e0) !important;
+  overflow: hidden;
+}
+
+/* Dialog header */
+.p-dialog-header {
+  background-color: var(--flowforge-panel-bg, #252530) !important;
+  border-bottom: 1px solid var(--flowforge-border, #3a3a4a) !important;
+  color: var(--flowforge-text-bright, #ffffff) !important;
+  padding: 1rem !important;
+}
+
+.p-dialog-title {
+  color: var(--flowforge-text-bright, #ffffff) !important;
+  font-weight: 600;
+}
+
+/* Dialog header close button */
+.p-dialog-header-close {
+  color: var(--flowforge-text-muted, #666680) !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 4px !important;
+}
+
+.p-dialog-header-close:hover {
+  color: var(--flowforge-text, #e0e0e0) !important;
+  background-color: var(--flowforge-hover-bg, rgba(255, 255, 255, 0.1)) !important;
+}
+
+/* Dialog content */
+.p-dialog-content {
+  background-color: var(--flowforge-panel-bg, #252530) !important;
+  color: var(--flowforge-text, #e0e0e0) !important;
+  padding: 1rem !important;
+}
+
+/* Dialog footer */
+.p-dialog-footer {
+  background-color: var(--flowforge-panel-bg, #252530) !important;
+  border-top: 1px solid var(--flowforge-border, #3a3a4a) !important;
+  padding: 1rem !important;
+}
+
+/* ========================================
+ * Animations
+ * ======================================== */
+@keyframes flowforge-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes flowforge-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--flowforge-primary);
+  }
+  50% {
+    box-shadow: 0 0 20px var(--flowforge-primary);
+  }
+}
+
+/* Executing node animation */
+.litegraph .litegraph-node.executing {
+  animation: flowforge-glow 1s ease-in-out infinite;
+}
+
+/* ========================================
+ * Accessibility: Reduced Motion
+ * ======================================== */
+@media (prefers-reduced-motion: reduce) {
+  .litegraph .litegraph-node.executing {
+    animation: none;
+    box-shadow: 0 0 10px var(--flowforge-primary);
+  }
+
+  .litegraph .litegraph-node .slot:hover {
+    transform: none;
+  }
+}

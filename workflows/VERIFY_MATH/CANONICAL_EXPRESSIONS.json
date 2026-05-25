@@ -1,0 +1,618 @@
+{
+  "version": "1.0.0",
+  "description": "Canonical expressions with known-correct outputs for regression detection",
+  "total_expressions": 100,
+  "categories": ["derivative", "integral", "algebraic", "trigonometric", "limit", "series", "matrix", "number_theory"],
+
+  "expressions": [
+    {
+      "id": "CAN_DERIV_001",
+      "category": "derivative",
+      "input": "D[x^2, x]",
+      "expected": "2*x",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_002",
+      "category": "derivative",
+      "input": "D[x^3, x]",
+      "expected": "3*x^2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_003",
+      "category": "derivative",
+      "input": "D[Sin[x], x]",
+      "expected": "Cos[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_004",
+      "category": "derivative",
+      "input": "D[Cos[x], x]",
+      "expected": "-Sin[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_005",
+      "category": "derivative",
+      "input": "D[Exp[x], x]",
+      "expected": "Exp[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_006",
+      "category": "derivative",
+      "input": "D[Log[x], x]",
+      "expected": "1/x",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_007",
+      "category": "derivative",
+      "input": "D[x^n, x]",
+      "expected": "n*x^(n-1)",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_DERIV_008",
+      "category": "derivative",
+      "input": "D[Tan[x], x]",
+      "expected": "Sec[x]^2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_DERIV_009",
+      "category": "derivative",
+      "input": "D[ArcTan[x], x]",
+      "expected": "1/(1 + x^2)",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_DERIV_010",
+      "category": "derivative",
+      "input": "D[Sqrt[x], x]",
+      "expected": "1/(2*Sqrt[x])",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_DERIV_011",
+      "category": "derivative",
+      "input": "D[x*Sin[x], x]",
+      "expected": "Sin[x] + x*Cos[x]",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_DERIV_012",
+      "category": "derivative",
+      "input": "D[Sin[x^2], x]",
+      "expected": "2*x*Cos[x^2]",
+      "severity": "HIGH"
+    },
+
+    {
+      "id": "CAN_INTEG_001",
+      "category": "integral",
+      "input": "Integrate[x, x]",
+      "expected": "x^2/2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_002",
+      "category": "integral",
+      "input": "Integrate[x^2, x]",
+      "expected": "x^3/3",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_003",
+      "category": "integral",
+      "input": "Integrate[1/x, x]",
+      "expected": "Log[Abs[x]]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_004",
+      "category": "integral",
+      "input": "Integrate[Exp[x], x]",
+      "expected": "Exp[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_005",
+      "category": "integral",
+      "input": "Integrate[Sin[x], x]",
+      "expected": "-Cos[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_006",
+      "category": "integral",
+      "input": "Integrate[Cos[x], x]",
+      "expected": "Sin[x]",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_007",
+      "category": "integral",
+      "input": "Integrate[x^n, x]",
+      "expected": "x^(n+1)/(n+1)",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_INTEG_008",
+      "category": "integral",
+      "input": "Integrate[1/(1 + x^2), x]",
+      "expected": "ArcTan[x]",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_INTEG_009",
+      "category": "integral",
+      "input": "Integrate[1/Sqrt[1 - x^2], x]",
+      "expected": "ArcSin[x]",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_INTEG_010",
+      "category": "integral",
+      "input": "Integrate[Sec[x]^2, x]",
+      "expected": "Tan[x]",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_INTEG_011",
+      "category": "integral",
+      "input": "Integrate[Log[x], x]",
+      "expected": "x*Log[x] - x",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_INTEG_012",
+      "category": "integral",
+      "input": "Integrate[x*Exp[x], x]",
+      "expected": "Exp[x]*(x - 1)",
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "CAN_ALG_001",
+      "category": "algebraic",
+      "input": "Expand[(x + 1)^2]",
+      "expected": "x^2 + 2*x + 1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_002",
+      "category": "algebraic",
+      "input": "Expand[(x + y)^2]",
+      "expected": "x^2 + 2*x*y + y^2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_003",
+      "category": "algebraic",
+      "input": "Factor[x^2 - 1]",
+      "expected": "(x - 1)*(x + 1)",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_004",
+      "category": "algebraic",
+      "input": "Factor[x^2 - 4]",
+      "expected": "(x - 2)*(x + 2)",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_005",
+      "category": "algebraic",
+      "input": "Simplify[x + x]",
+      "expected": "2*x",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_006",
+      "category": "algebraic",
+      "input": "Simplify[x * x]",
+      "expected": "x^2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_007",
+      "category": "algebraic",
+      "input": "Simplify[x^2 / x]",
+      "expected": "x",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_ALG_008",
+      "category": "algebraic",
+      "input": "Simplify[(x^2 - 1)/(x - 1)]",
+      "expected": "x + 1",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_ALG_009",
+      "category": "algebraic",
+      "input": "Expand[(a + b)^3]",
+      "expected": "a^3 + 3*a^2*b + 3*a*b^2 + b^3",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_ALG_010",
+      "category": "algebraic",
+      "input": "Factor[x^3 - 1]",
+      "expected": "(x - 1)*(x^2 + x + 1)",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_ALG_011",
+      "category": "algebraic",
+      "input": "Simplify[Log[Exp[x]]]",
+      "expected": "x",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_ALG_012",
+      "category": "algebraic",
+      "input": "Simplify[Exp[Log[x]]]",
+      "expected": "x",
+      "severity": "HIGH"
+    },
+
+    {
+      "id": "CAN_TRIG_001",
+      "category": "trigonometric",
+      "input": "Simplify[Sin[x]^2 + Cos[x]^2]",
+      "expected": "1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_TRIG_002",
+      "category": "trigonometric",
+      "input": "Sin[0]",
+      "expected": "0",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_TRIG_003",
+      "category": "trigonometric",
+      "input": "Cos[0]",
+      "expected": "1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_TRIG_004",
+      "category": "trigonometric",
+      "input": "Sin[Pi/2]",
+      "expected": "1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_TRIG_005",
+      "category": "trigonometric",
+      "input": "Cos[Pi]",
+      "expected": "-1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_TRIG_006",
+      "category": "trigonometric",
+      "input": "TrigExpand[Sin[2*x]]",
+      "expected": "2*Sin[x]*Cos[x]",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_007",
+      "category": "trigonometric",
+      "input": "TrigExpand[Cos[2*x]]",
+      "expected": "Cos[x]^2 - Sin[x]^2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_008",
+      "category": "trigonometric",
+      "input": "Simplify[Tan[x] - Sin[x]/Cos[x]]",
+      "expected": "0",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_009",
+      "category": "trigonometric",
+      "input": "Sin[Pi/6]",
+      "expected": "1/2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_010",
+      "category": "trigonometric",
+      "input": "Cos[Pi/3]",
+      "expected": "1/2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_011",
+      "category": "trigonometric",
+      "input": "Tan[Pi/4]",
+      "expected": "1",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_TRIG_012",
+      "category": "trigonometric",
+      "input": "Simplify[1 + Tan[x]^2 - Sec[x]^2]",
+      "expected": "0",
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "CAN_LIM_001",
+      "category": "limit",
+      "input": "Limit[Sin[x]/x, x -> 0]",
+      "expected": "1",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_LIM_002",
+      "category": "limit",
+      "input": "Limit[(1 + 1/n)^n, n -> Infinity]",
+      "expected": "E",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_LIM_003",
+      "category": "limit",
+      "input": "Limit[x^2, x -> 3]",
+      "expected": "9",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_LIM_004",
+      "category": "limit",
+      "input": "Limit[1/x, x -> Infinity]",
+      "expected": "0",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_LIM_005",
+      "category": "limit",
+      "input": "Limit[Exp[x], x -> -Infinity]",
+      "expected": "0",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_LIM_006",
+      "category": "limit",
+      "input": "Limit[(1 - Cos[x])/x^2, x -> 0]",
+      "expected": "1/2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_LIM_007",
+      "category": "limit",
+      "input": "Limit[x/Exp[x], x -> Infinity]",
+      "expected": "0",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_LIM_008",
+      "category": "limit",
+      "input": "Limit[Log[x]/x, x -> Infinity]",
+      "expected": "0",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_LIM_009",
+      "category": "limit",
+      "input": "Limit[(Exp[x] - 1)/x, x -> 0]",
+      "expected": "1",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_LIM_010",
+      "category": "limit",
+      "input": "Limit[x * Sin[1/x], x -> 0]",
+      "expected": "0",
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "CAN_SER_001",
+      "category": "series",
+      "input": "Sum[k, {k, 1, n}]",
+      "expected": "n*(n+1)/2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_SER_002",
+      "category": "series",
+      "input": "Sum[k^2, {k, 1, n}]",
+      "expected": "n*(n+1)*(2*n+1)/6",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_SER_003",
+      "category": "series",
+      "input": "Sum[r^k, {k, 0, n-1}]",
+      "expected": "(1 - r^n)/(1 - r)",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_SER_004",
+      "category": "series",
+      "input": "Sum[1, {k, 1, n}]",
+      "expected": "n",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_SER_005",
+      "category": "series",
+      "input": "Sum[k^3, {k, 1, n}]",
+      "expected": "(n*(n+1)/2)^2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_SER_006",
+      "category": "series",
+      "input": "Product[k, {k, 1, n}]",
+      "expected": "n!",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_SER_007",
+      "category": "series",
+      "input": "Sum[1/(k*(k+1)), {k, 1, n}]",
+      "expected": "n/(n+1)",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_SER_008",
+      "category": "series",
+      "input": "Sum[x^k/k!, {k, 0, Infinity}]",
+      "expected": "Exp[x]",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_SER_009",
+      "category": "series",
+      "input": "Sum[(-1)^k * x^(2*k+1)/(2*k+1)!, {k, 0, Infinity}]",
+      "expected": "Sin[x]",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_SER_010",
+      "category": "series",
+      "input": "Binomial[n, k]",
+      "expected": "n!/(k!*(n-k)!)",
+      "severity": "HIGH"
+    },
+
+    {
+      "id": "CAN_MAT_001",
+      "category": "matrix",
+      "input": "Det[{{a, b}, {c, d}}]",
+      "expected": "a*d - b*c",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_MAT_002",
+      "category": "matrix",
+      "input": "Transpose[Transpose[A]]",
+      "expected": "A",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_MAT_003",
+      "category": "matrix",
+      "input": "Det[IdentityMatrix[n]]",
+      "expected": "1",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_MAT_004",
+      "category": "matrix",
+      "input": "Tr[{{a, b}, {c, d}}]",
+      "expected": "a + d",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_MAT_005",
+      "category": "matrix",
+      "input": "Inverse[{{a, 0}, {0, b}}]",
+      "expected": "{{1/a, 0}, {0, 1/b}}",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_MAT_006",
+      "category": "matrix",
+      "input": "Det[{{1, 2}, {3, 4}}]",
+      "expected": "-2",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_MAT_007",
+      "category": "matrix",
+      "input": "Eigenvalues[{{2, 1}, {1, 2}}]",
+      "expected": "{3, 1}",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_MAT_008",
+      "category": "matrix",
+      "input": "MatrixPower[{{a, 0}, {0, b}}, n]",
+      "expected": "{{a^n, 0}, {0, b^n}}",
+      "severity": "MEDIUM"
+    },
+
+    {
+      "id": "CAN_NT_001",
+      "category": "number_theory",
+      "input": "GCD[12, 18]",
+      "expected": "6",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_NT_002",
+      "category": "number_theory",
+      "input": "LCM[4, 6]",
+      "expected": "12",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_NT_003",
+      "category": "number_theory",
+      "input": "Mod[17, 5]",
+      "expected": "2",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_NT_004",
+      "category": "number_theory",
+      "input": "Factorial[5]",
+      "expected": "120",
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CAN_NT_005",
+      "category": "number_theory",
+      "input": "Floor[3.7]",
+      "expected": "3",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_NT_006",
+      "category": "number_theory",
+      "input": "Ceiling[3.2]",
+      "expected": "4",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_NT_007",
+      "category": "number_theory",
+      "input": "PrimeQ[17]",
+      "expected": "True",
+      "severity": "HIGH"
+    },
+    {
+      "id": "CAN_NT_008",
+      "category": "number_theory",
+      "input": "PowerMod[3, 5, 7]",
+      "expected": "5",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_NT_009",
+      "category": "number_theory",
+      "input": "EulerPhi[12]",
+      "expected": "4",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CAN_NT_010",
+      "category": "number_theory",
+      "input": "Divisors[12]",
+      "expected": "{1, 2, 3, 4, 6, 12}",
+      "severity": "MEDIUM"
+    }
+  ]
+}

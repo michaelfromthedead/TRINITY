@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-25T02:10:11.757Z",
+  "projectRoot": "/home/user/dev/USER/PROJECTS_VOID/TRINITY",
+  "structure": {
+    "hasPackageJson": true,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1779675011757
+}

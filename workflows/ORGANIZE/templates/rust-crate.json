@@ -1,0 +1,129 @@
+{
+  "name": "rust-crate",
+  "version": "1.0.0",
+  "applies_to": {
+    "description": "Rust library crate with src/lib.rs as the library entry point, tests/ for integration tests, benches/ for benchmarks, and examples/ for usage examples. Managed by Cargo (Cargo.toml at root). Cargo.toml and Cargo.lock are load-bearing at root and must not be moved.",
+    "signals": [
+      "lang:rust",
+      "kind:library",
+      "manifest:Cargo.toml",
+      "structure:src_lib_rs"
+    ]
+  },
+  "default_rules": [
+    {
+      "id": "t1",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "src/**/*.rs",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Rust source files under src/ are at their canonical location; src/lib.rs is the crate root and every file under src/ is part of the module tree"
+    },
+    {
+      "id": "t2",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "tests/**/*.rs",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Integration test files under tests/ are at their canonical location; Cargo discovers integration tests here automatically"
+    },
+    {
+      "id": "t3",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "benches/**/*.rs",
+      "destination": "IN_PLACE",
+      "priority": 90,
+      "active": true,
+      "note": "Benchmark files under benches/ are at their canonical location; Cargo discovers criterion/iai benchmarks here automatically"
+    },
+    {
+      "id": "t4",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "examples/**/*.rs",
+      "destination": "IN_PLACE",
+      "priority": 90,
+      "active": true,
+      "note": "Example programs under examples/ are at their canonical location; cargo run --example <name> discovers them here"
+    },
+    {
+      "id": "t5",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "**/test_*.rs",
+      "destination": "tests/",
+      "priority": 85,
+      "active": true,
+      "note": "Rust test files not already under tests/ should be relocated there; convention: integration tests (using the public API) live in tests/, while unit tests (using #[cfg(test)] mod) live in src/ inline — ASK_USER if the file appears to be a unit-test module that should stay in src/; hint: integration tests live in tests/"
+    },
+    {
+      "id": "t6",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{README,CHANGELOG,LICENSE,CONTRIBUTING,SECURITY}.md",
+      "destination": "IN_PLACE",
+      "priority": 80,
+      "active": true,
+      "note": "Standard root-level documentation files are canonically at project root; must evaluate before the loose-markdown rule t7 to prevent misrouting"
+    },
+    {
+      "id": "t7",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "docs/",
+      "priority": 50,
+      "active": true,
+      "note": "Loose markdown at project root not matched by t6 should move to docs/; if docs/ does not yet exist, TRIAGE should ASK_USER whether to create it or route to an alternative location"
+    },
+    {
+      "id": "t8",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(tmp|scratch)[^/]*$",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Files whose basename begins with 'tmp' or 'scratch' are temporary work artefacts; quarantine to .delete — always ASK_USER before ratifying .delete moves"
+    },
+    {
+      "id": "t9",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": ".*\\.bak$",
+      "destination": ".delete",
+      "priority": 28,
+      "active": true,
+      "note": "Backup files (.bak) are editor/tool artefacts that should not accumulate in the crate; quarantine to .delete"
+    },
+    {
+      "id": "t10",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "^(old_.*|backup/|v[0-9]+/)",
+      "destination": ".archive",
+      "priority": 20,
+      "active": true,
+      "note": "Files and directories named old_*, backup/, or v<N>/ are historical snapshots that predate proper version control; ASK_USER — likely .archive but the user decides whether to delete or archive since these may contain unreleased experiment code"
+    }
+  ],
+  "default_ignore_paths": [
+    "target/**",
+    "Cargo.lock",
+    ".git/**",
+    ".cargo/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**"
+  ],
+  "notes": "Rust library crate template. Cargo.toml is load-bearing at root — ORGANIZE must never propose moving it. Cargo.lock is listed in ignore_paths because ORGANIZE should not classify or move it, but Cargo expects it at root for reproducible builds; its presence/absence is a project decision, not an organization issue. Rule t5 (**/test_*.rs → tests/) must be applied with care: Rust unit tests are typically inline (#[cfg(test)] mod tests) inside src/ files, while integration tests live in tests/ as separate files. A .rs file named test_*.rs that lives outside tests/ is likely an integration test that was misplaced. If TRIAGE is uncertain, emit ASK_USER with the rationale.",
+  "inherits_from": null
+}

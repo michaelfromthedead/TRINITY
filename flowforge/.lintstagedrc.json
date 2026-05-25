@@ -1,0 +1,26 @@
+{
+  "*.{ts,tsx}": [
+    "eslint --fix --max-warnings=0",
+    "prettier --write"
+  ],
+  "*.{js,jsx,cjs,mjs}": [
+    "eslint --fix --max-warnings=0",
+    "prettier --write"
+  ],
+  "*.{json,md,yaml,yml}": [
+    "prettier --write"
+  ],
+  "*.vue": [
+    "eslint --fix --max-warnings=0",
+    "prettier --write"
+  ],
+  "*.rs": [
+    "rustfmt"
+  ],
+  "*.css": [
+    "prettier --write"
+  ],
+  "*.html": [
+    "prettier --write"
+  ]
+}

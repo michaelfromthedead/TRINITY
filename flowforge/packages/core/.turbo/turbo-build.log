@@ -1,0 +1,6 @@
+
+[0m[2m[35m$[0m [2m[1mbun build ./src/index.ts --outdir ./dist --target bun && tsc --emitDeclarationOnly[0m
+[32mBundled 23 modules in 10ms[0m
+
+  [34mindex.js[33m  141.96 KB  [2m(entry point)[0m
+

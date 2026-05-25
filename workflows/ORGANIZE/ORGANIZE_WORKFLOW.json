@@ -1,0 +1,419 @@
+{
+  "version": "1.0.0",
+  "name": "ORGANIZE_WORKFLOW",
+  "description": "Periodic structural cleanup of a cluttered project. Given a target directory (CWD), runs a bounded sweep that classifies each loose/suspicious file against a project-specific template + ruleset stored in `.organize.json`, proposes moves to the user, and executes approved moves via `git mv`. Two modes: BOOTSTRAP (no config → wizard proposes a template and seed rules from observed project shape) and MAINTENANCE (config exists → apply rules + surface new-rule candidates). Quarantine destinations are `.delete/` (garbage, any file type) and `.archive/` (historical threads, mostly markdown). Nothing is ever `rm`'d; the workflow moves and records only. Bounded by N circuits per invocation — no loops. Triggered by the phrase 'ORGANIZE_WORKFLOW' or natural-language invocation ('organize', 'tidy project', 'clean up'). Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent). Status: v1.0.0 IMPLEMENTED — schema infrastructure, canonical template library (5 templates), protocol formalizations, test project + 4 E2E walkthroughs, all 8 TBDs resolved or deferred with criteria. See ORGANIZE_WORKFLOW_DISSERTATION.md for full architectural rationale.",
+
+  "trigger": {
+    "phrases": [
+      "ORGANIZE_WORKFLOW",
+      "organize",
+      "tidy",
+      "tidy project",
+      "clean up project",
+      "cleanup project"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_detect_or_ask",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/ORGANIZE/WORKER_INSPECTOR.md and workflows/ORGANIZE/WORKER_TRIAGE.md",
+      "QUEEN checks for `.organize.json` at the session-summon directory root",
+      "QUEEN reports: 'ORGANIZE_WORKFLOW mode engaged. <BOOTSTRAP | MAINTENANCE> pass queued. Config: <path or \"absent\">. Circuits: <N>. Proceeding.'",
+      "QUEEN asks for circuit count if ambiguous (default N=1 for first implementation; user may override)"
+    ],
+    "parameters": {
+      "circuits": "integer >= 1 — how many full passes this invocation performs. Default 1. No upper bound enforced by workflow, but user decides; the workflow is NOT a loop.",
+      "target_dir": "absolute path to session-summon directory (CWD). Always the root of the project being organized.",
+      "mode_override": "optional: force BOOTSTRAP or MAINTENANCE even if config state suggests the other. Used for re-running the wizard."
+    }
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "parallel-altitude to RDC, RECON; downstream-optional to RECON",
+    "rdc_coupling": "ORGANIZE may invoke a SHORT_RDC sub-procedure when it needs to evaluate the relevance/staleness of prose documents it is considering quarantining. SHORT_RDC is NOT full RDC_WORKFLOW — it is a compressed per-file relevance check (TBD: exact shape; v0.1.0-DRAFT defers this to the TRIAGE worker's own judgment, with full RDC as an escape hatch the user can invoke manually).",
+    "recon_coupling": "A prior RECON report on the target may inform BOOTSTRAP's template choice. RECON reports in /RECON/ at the target root, if present, are read by INSPECTOR as orientation input.",
+    "sdlc_coupling": "None. ORGANIZE never modifies code semantics — it only moves files. Any rule that would rename a file (not just move) requires human confirmation.",
+    "does_not_auto_trigger": [
+      "RDC_WORKFLOW",
+      "RECON_WORKFLOW",
+      "SDLC_WORKFLOW"
+    ]
+  },
+
+  "modes": {
+    "BOOTSTRAP": {
+      "description": "No `.organize.json` exists at project root. INSPECTOR surveys the project, detects type signals (language, artefact type, existing structure), and proposes a template draft + seed ruleset + initial classification of loose files. QUEEN presents the proposal interactively; user ratifies/edits; QUEEN writes `.organize.json`. The same invocation then proceeds into MAINTENANCE mode using the freshly-written config, unless user halts.",
+      "phases": ["inspect", "wizard_ratify", "materialize_config", "maintenance_cascade"],
+      "produces": [
+        "<target_dir>/.organize.json (new file)",
+        "Optional: <target_dir>/.delete/ and <target_dir>/.archive/ directories created (only if first maintenance cascade decides to quarantine anything)"
+      ],
+      "verdict_catalog": [
+        "CONFIG_CREATED",
+        "CONFIG_CREATED_AND_CLEAN_RUN",
+        "ABORTED_DURING_WIZARD"
+      ]
+    },
+    "MAINTENANCE": {
+      "description": "`.organize.json` exists. QUEEN loads it, enumerates target tree, groups files into parallel-safe batches (DAG by non-blocking directory subtrees), spawns TRIAGE workers per batch, aggregates verdicts, presents proposed moves to user for ratification, executes approved moves via `git mv`, appends quarantine log + any ratified new rules to `.organize.json`. Runs N circuits (default 1); each circuit is a fresh scan + triage + propose + execute pass.",
+      "phases": ["load_config", "plan_circuits", "per_circuit{scan, triage_wave, aggregate, propose, ratify, execute, record}", "finalize_config"],
+      "produces": [
+        "File moves under target (code/docs/assets relocated per ratified verdicts; garbage to .delete/; historical to .archive/)",
+        "Updates to `.organize.json`: last_run, runs counter, quarantine_log entries, pending_rule_candidates, ratified rule additions (append-only)",
+        "Commit(s) with message `organize: circuit <N> — <summary>` (one commit per circuit, user-ratified before commit)"
+      ],
+      "verdict_catalog": [
+        "CLEAN_RUN",
+        "PARTIAL_RUN",
+        "ABORTED",
+        "NOTHING_TO_DO"
+      ]
+    }
+  },
+
+  "organize_json_schema": {
+    "description": "The per-project config. Authoritative ruleset for this project's structural expectations. v0.1.0-DRAFT schema — evolves as the workflow is used.",
+    "fields": {
+      "version": "schema version of this .organize.json (string, e.g. '0.1.0-DRAFT')",
+      "template": "name of the template this project adheres to ('python-lib' | 'python-app' | 'rust-crate' | 'book-markdown' | 'book-print' | 'mixed-research' | 'custom' | ...). Templates are not stored as separate files yet — the template name is just a label for the ruleset recorded here. (TBD: promote common templates to workflows/ORGANIZE/templates/*.json once patterns stabilize.)",
+      "created": "ISO-8601 timestamp of first BOOTSTRAP run",
+      "last_run": "ISO-8601 timestamp of most recent MAINTENANCE completion",
+      "runs": "integer counter — total MAINTENANCE circuits completed across all invocations",
+      "rules": "append-only array of rule objects; each rule has { id, created (ts), kind (glob|regex|hint), pattern, destination, priority (int), active (bool), note }. `kind: hint` is a natural-language rule TRIAGE interprets rather than a mechanical matcher.",
+      "quarantine_log": "append-only array of quarantine events; each entry { run, timestamp, file (original path), destination (.delete/ or .archive/), reason (text), ratified_by (user|auto) }. Permanent audit trail of what got moved where.",
+      "pending_rule_candidates": "array of rule suggestions surfaced by TRIAGE (via FLAG_NEW_RULE verdict) that the user has not yet ratified. Each: { surfaced_run, pattern_observed, suggested_rule, rationale, status (pending|ratified|rejected) }. Ratified candidates are copied into `rules`; rejected ones are kept for historical reference with status updated.",
+      "ignore_paths": "array of glob patterns the workflow will not consider (e.g., node_modules/**, .git/**, target/**, .venv/**). Seeded by INSPECTOR, extendable by user.",
+      "notes": "free-form human notes about this project's organization philosophy"
+    },
+    "invariants": [
+      "rules array is append-only — existing rules are never mutated or deleted; to disable a rule, set its active=false (and record a reason in notes)",
+      "quarantine_log is append-only — permanent record",
+      "template field may be updated only via re-running BOOTSTRAP with mode_override",
+      "schema version bumps on breaking changes only"
+    ]
+  },
+
+  "root_invariants": {
+    "description": "Paths that MUST exist at the target root and are UNTOUCHABLE by this workflow. Infrastructure for the developer's own tooling (Claude Code, claude-flow, hive-mind, MCP config). ORGANIZE never enumerates, classifies, moves, renames, or modifies these. INSPECTOR verifies their presence during BOOTSTRAP; absence is surfaced in open_questions but does not block the workflow (user may be running on a non-claude-flow project). The user CANNOT remove these from ignore_paths via the wizard — they are workflow-invariant, not user-configurable.",
+    "paths": [
+      ".claude/",
+      ".claude-flow/",
+      ".hive-mind/",
+      ".mcp.json"
+    ],
+    "enforcement": [
+      "QUEEN filters these out of every file enumeration BEFORE batching — TRIAGE never sees them",
+      "INSPECTOR seeds ignore_paths with these on BOOTSTRAP automatically; records presence/absence as a detected signal; flags absence (but does not block) in open_questions",
+      "TRIAGE performs a defensive check — if any batch file matches these paths (shouldn't happen, QUEEN should have filtered), emit ASK_USER with rationale 'root-invariant path reached TRIAGE; possible QUEEN filter bug' and refuse to classify",
+      "Wizard does NOT present these paths to user for ignore_paths review — they are implicit, mandatory, and silent",
+      "If a target project is missing one or more, INSPECTOR notes which in detected_signals but proceeds — absence is informational, not a blocker"
+    ]
+  },
+
+  "destinations": {
+    "principle": "Nothing is ever deleted. Files are moved to one of two quarantine destinations, or to their canonical template location, or kept in place. Quarantine is reversible — the user manages `.delete/` and `.archive/` manually if they want to genuinely purge.",
+    "categories": {
+      ".delete/": {
+        "path": "<target_dir>/.delete/",
+        "semantics": "Catch-all for files the workflow would have deleted. Any file type. Intent: 'this is garbage, confirm then purge someday.' Untracked by git (added to .gitignore automatically by the workflow on first use). User may purge the directory at their own risk; workflow never does.",
+        "file_types_typical": "any — scratch files, broken experiments, duplicated code, accidental artefacts, binary junk",
+        "preserves": "original filename + path mirrored under .delete/ (e.g., src/scratch.py → .delete/src/scratch.py) so provenance is retained"
+      },
+      ".archive/": {
+        "path": "<target_dir>/.archive/",
+        "semantics": "Intellectually preserved content. Threads of thought, prior design notes, superseded documentation, historical decisions. Intent: 'this had value once, preserve it forever.' Untracked by git by default (configurable); user may opt to commit `.archive/` as a historical record. Typical file types: markdown docs, old designs, deprecated READMEs.",
+        "file_types_typical": "primarily .md and prose files; occasionally older versions of code kept for historical study",
+        "preserves": "original filename + path mirrored under .archive/"
+      },
+      "canonical_template_path": {
+        "path": "determined per-rule",
+        "semantics": "The file belongs somewhere specific per the active template (e.g., Python tests → tests/, shell scripts → scripts/, markdown docs → docs/). TRIAGE emits MOVE_TO:<path> and QUEEN executes via git mv after ratification."
+      },
+      "in_place": {
+        "semantics": "File is already in its right location — no action."
+      }
+    },
+    "never": [
+      "rm, rm -rf, unlink, or any filesystem deletion of a target file",
+      "overwrite of an existing file in .delete/ or .archive/ — on collision, workflow appends -<YYYY-MM-DD> or counter suffix"
+    ]
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in main conversation during ORGANIZE_WORKFLOW. Detects mode (BOOTSTRAP vs MAINTENANCE), spawns INSPECTOR or TRIAGE workers, runs the interactive wizard and ratification dialogs, executes approved moves via `git mv`, writes/updates `.organize.json`, and commits. QUEEN is the only actor that writes `.organize.json` or modifies the target filesystem.",
+      "responsibilities": [
+        "detect `.organize.json` presence; choose BOOTSTRAP or MAINTENANCE",
+        "BOOTSTRAP: spawn INSPECTOR, receive proposal, run wizard (interactive Q/A with user), write `.organize.json`, then cascade into MAINTENANCE",
+        "MAINTENANCE: load config, plan circuits, enumerate target files (respecting ignore_paths), group into parallel-safe batches, spawn TRIAGE workers, aggregate verdicts",
+        "present proposed moves to user grouped by destination (MOVE_TO targets / .delete / .archive / ASK_USER / FLAG_NEW_RULE); accept per-group or per-file ratification",
+        "execute ratified moves via `git mv` (never plain mv; never rm)",
+        "create `.delete/` and `.archive/` directories lazily on first use; add to .gitignore",
+        "append quarantine_log entries and ratified new rules to `.organize.json`",
+        "commit after each circuit with message `organize: circuit <N> — <short summary>`",
+        "NEVER interpret or override a worker's emitted verdict silently — verdicts are surfaced to user verbatim"
+      ],
+      "does_not": [
+        "modify file contents (only moves files)",
+        "delete anything (`rm` is forbidden)",
+        "auto-ratify moves without user confirmation",
+        "mutate or remove existing rules in `.organize.json`",
+        "auto-chain to RDC / RECON / SDLC"
+      ]
+    },
+    "INSPECTOR": {
+      "type": "worker",
+      "doc": "workflows/ORGANIZE/WORKER_INSPECTOR.md",
+      "context_access": "full read on target (read-only); no write access to target. Writes only the structured proposal back to QUEEN via agent response.",
+      "description": "BOOTSTRAP-only worker. Surveys the target directory to detect project type signals and proposes a starting-point template + seed ruleset + initial file classification. Does NOT modify anything. Produces a structured proposal QUEEN will present to the user interactively.",
+      "inputs": [
+        "target_dir absolute path",
+        "optional: session_summon_dir (usually == target_dir)",
+        "optional: prior RECON report path (if /RECON/ exists in target and contains relevant reports)",
+        "workflows/ORGANIZE/WORKER_INSPECTOR.md (role doc)",
+        "workflows/SHARED/WORKER_PROTOCOL.md (baseline discipline)"
+      ],
+      "produces": [
+        "structured proposal block in agent response containing: detected_signals, proposed_template, proposed_rules, proposed_ignore_paths, initial_classification, open_questions"
+      ],
+      "discipline": [
+        "full-read-or-skip on prose files (inherited from SCOUT discipline)",
+        "orientation-first: look for README, ARCHITECTURE, CLAUDE.md, package manifests (Cargo.toml, pyproject.toml, package.json) before content files",
+        "read-only — no modifications to target",
+        "no auto-recursion (does not spawn sub-workers)",
+        "honest detection — if signals are ambiguous, say so in open_questions rather than forcing a template choice"
+      ],
+      "triggered_by": ["QUEEN during BOOTSTRAP mode engagement"]
+    },
+    "TRIAGE": {
+      "type": "worker",
+      "doc": "workflows/ORGANIZE/WORKER_TRIAGE.md",
+      "context_access": "full read on target files it is assigned + full read on `.organize.json` (read-only); no write access anywhere",
+      "description": "MAINTENANCE-mode per-file classifier. Given a batch of files + the project's active template + current ruleset, reads each file fully and emits a verdict per file from the fixed catalog. Multiple TRIAGE workers may run in parallel on disjoint file batches (DAG non-blocking).",
+      "inputs": [
+        "batch: array of absolute file paths to classify",
+        "config: contents of `.organize.json` (template, rules, ignore_paths)",
+        "target_dir absolute path",
+        "workflows/ORGANIZE/WORKER_TRIAGE.md (role doc)",
+        "workflows/SHARED/WORKER_PROTOCOL.md (baseline discipline)"
+      ],
+      "produces": [
+        "structured verdict array in agent response: one entry per input file, each { file, verdict, destination (if applicable), rationale (1-2 lines), evidence (file-internal quote or pattern match), confidence }"
+      ],
+      "verdict_catalog": [
+        "KEEP_IN_PLACE — file is already correctly located per template rules",
+        "MOVE_TO:<path> — file belongs in a specific canonical location per a matching rule",
+        "QUARANTINE:.delete — file is garbage-shaped (scratch, broken, orphaned, duplicate); any file type",
+        "QUARANTINE:.archive — file is historical/superseded but preserves intellectual value; typically .md",
+        "ASK_USER — file is ambiguous between two or more destinations; TRIAGE refuses to guess; presents options",
+        "FLAG_NEW_RULE — file fits no existing rule but a pattern is recurring across this batch; TRIAGE proposes a new rule for the user to ratify"
+      ],
+      "discipline": [
+        "full-read-or-skip — never partial-scan a file when deciding its fate",
+        "rule-priority ordering — higher priority rules evaluated first; first-match wins unless rule marks itself continue-matching",
+        "honest-ambiguity — when in doubt between two verdicts, emit ASK_USER rather than guessing",
+        "cite evidence — every verdict includes a rationale + evidence field (file-internal quote, pattern matched, or absence-of-reference note)",
+        "no fabrication — if a file cannot be read (permissions, too large, binary), emit ASK_USER with the blocker stated",
+        "no auto-recursion (does not spawn sub-workers)",
+        "read-only — writes nothing to target"
+      ],
+      "triggered_by": ["QUEEN during MAINTENANCE mode, one spawn per parallel-safe batch per circuit"]
+    }
+  },
+
+  "units": {
+    "TRIAGE_WAVE": {
+      "description": "One circuit's parallel TRIAGE spawn. QUEEN groups the target's loose files into batches such that each batch is independent (no file in batch A depends on classification of file in batch B for that circuit). Batches typically correspond to disjoint directory subtrees. All TRIAGE workers in a wave run in parallel (single message, multiple Agent calls, run_in_background).",
+      "parallelism_axis": "disjoint directory subtrees + file-type clusters",
+      "atomic": false,
+      "notes": "A wave is bounded by batch count, not time. All TRIAGE workers must return before QUEEN proceeds to aggregation. Individual worker failure is handled by retry or escalation, not by abandoning the wave."
+    },
+    "WIZARD_LOOP": {
+      "description": "BOOTSTRAP's interactive phase. QUEEN presents INSPECTOR's proposal section-by-section (detected_signals → proposed_template → proposed_rules → proposed_ignore_paths → initial_classification). User ratifies, edits, or requests more info per section. Loops until user says 'proceed' or 'abort'. Not a circuit — a dialog.",
+      "atomic": true,
+      "notes": "Human-in-the-loop. No agent spawning inside wizard. Pure QUEEN+user dialog."
+    }
+  },
+
+  "flow": {
+    "bootstrap": {
+      "performer": "QUEEN + INSPECTOR + USER",
+      "sequence": [
+        "QUEEN confirms BOOTSTRAP mode (no `.organize.json` at target_dir root)",
+        "QUEEN reports engagement and queues INSPECTOR",
+        "QUEEN spawns single INSPECTOR with target_dir + any existing /RECON/ reports referenced",
+        "INSPECTOR surveys, emits structured proposal, returns",
+        "QUEEN enters WIZARD_LOOP — presents proposal to user section by section",
+        "User ratifies, edits, or adds to each section; may request INSPECTOR re-run with narrower focus (edge case, TBD in v0.1.0-DRAFT)",
+        "QUEEN writes `.organize.json` with ratified content",
+        "QUEEN commits `.organize.json` with message 'organize: bootstrap config for <target_name>'",
+        "QUEEN asks user: cascade into MAINTENANCE now, or halt? Default: cascade 1 circuit.",
+        "If cascade: proceed to maintenance flow with circuits=1 (user may override)",
+        "If halt: emit CONFIG_CREATED verdict; end"
+      ]
+    },
+    "maintenance": {
+      "performer": "QUEEN + TRIAGE (parallel) + USER",
+      "sequence": [
+        "QUEEN confirms MAINTENANCE mode; loads `.organize.json`",
+        "QUEEN determines N (circuit count) from user or default=1",
+        "For each circuit 1..N:",
+        "  QUEEN enumerates target files respecting ignore_paths",
+        "  QUEEN groups files into parallel-safe batches (heuristic: disjoint subtrees, cap per-batch file count)",
+        "  QUEEN spawns TRIAGE_WAVE — one TRIAGE worker per batch, all in parallel",
+        "  All TRIAGE workers return; QUEEN aggregates verdicts into a single move plan",
+        "  QUEEN groups the plan by verdict type and presents to user:",
+        "    'N files MOVE_TO_TEMPLATE_LOCATION — ratify all / review individually / skip?'",
+        "    'N files QUARANTINE:.delete — review list / ratify all / skip?'",
+        "    'N files QUARANTINE:.archive — review list / ratify all / skip?'",
+        "    'N files ASK_USER — each one needs a decision:'",
+        "    'N files FLAG_NEW_RULE — review suggested rules:'",
+        "  User ratifies / rejects / edits per group or per file",
+        "  QUEEN executes ratified moves: `git mv <src> <dest>` per move",
+        "  QUEEN creates `.delete/` or `.archive/` subdirs on first quarantine of the run; adds them to `.gitignore` if absent",
+        "  QUEEN appends quarantine_log entries to `.organize.json`",
+        "  QUEEN appends ratified new rules to `.organize.json` rules array; rejected FLAG_NEW_RULE candidates recorded in pending_rule_candidates with status=rejected",
+        "  QUEEN commits: `organize: circuit <current> of <N> — <summary>`",
+        "After all circuits: QUEEN updates last_run + runs counter in `.organize.json`; commits the metadata update",
+        "QUEEN emits CLEAN_RUN verdict (or PARTIAL_RUN if user aborted mid-way, or NOTHING_TO_DO if all circuits emitted empty plans)"
+      ]
+    }
+  },
+
+  "verdicts": {
+    "bootstrap_catalog": {
+      "CONFIG_CREATED": "BOOTSTRAP completed; `.organize.json` written; user chose not to cascade into MAINTENANCE. Next invocation will run MAINTENANCE.",
+      "CONFIG_CREATED_AND_CLEAN_RUN": "BOOTSTRAP completed AND a full MAINTENANCE circuit executed successfully in the same invocation.",
+      "ABORTED_DURING_WIZARD": "User aborted before `.organize.json` was written. No state changes. Project remains unconfigured."
+    },
+    "maintenance_catalog": {
+      "CLEAN_RUN": "All N requested circuits completed. All TRIAGE verdicts processed. All ratified moves executed. `.organize.json` updated.",
+      "PARTIAL_RUN": "User halted after some circuits completed but before reaching N. State as of last completed circuit is committed. Next invocation resumes from current state.",
+      "ABORTED": "User aborted before any circuit's moves were executed. No filesystem changes. `.organize.json` last_run not updated.",
+      "NOTHING_TO_DO": "All circuits ran; all TRIAGE verdicts were KEEP_IN_PLACE. Project is already organized per current rules. `.organize.json` runs counter incremented; last_run updated; no filesystem changes to project files."
+    }
+  },
+
+  "hard_rules": {
+    "never_delete": "The workflow never invokes rm, rm -rf, unlink, or any filesystem deletion. Files are moved, not deleted. `.delete/` is the only garbage destination and is user-managed after the workflow exits.",
+    "never_mutate_file_content": "The workflow only moves files. It does not modify file contents. Renames that also change meaning (e.g., .py → .md) require explicit user confirmation with ASK_USER.",
+    "git_mv_only": "All moves use `git mv` to preserve history. Files that are not tracked by git use plain `mv` but are noted in the quarantine_log as untracked_at_move=true.",
+    "append_only_rules": "The `rules` array in `.organize.json` is append-only. Existing rules are never mutated or removed; deactivate via active=false.",
+    "append_only_quarantine_log": "The quarantine_log is append-only. Each circuit adds entries; none are rewritten.",
+    "circuit_bounded": "A single invocation runs exactly N circuits (default 1). No infinite loops, no auto-retry, no daemon mode.",
+    "no_auto_ratify": "No move executes without explicit user ratification. ASK_USER and FLAG_NEW_RULE verdicts halt execution for interactive decision. (Future: user-configured blanket-approval rules — TBD, not in v0.1.0-DRAFT.)",
+    "no_target_content_modification": "TRIAGE and INSPECTOR workers are read-only on target. Only QUEEN modifies the target, and only via file moves + `.organize.json` writes.",
+    "full_read_or_skip": "Inherited from SCOUT discipline. TRIAGE reads each assigned file fully before emitting a verdict, or emits ASK_USER with a 'file too large / unreadable' rationale.",
+    "honest_ambiguity": "When a file could plausibly fit multiple verdicts, TRIAGE emits ASK_USER rather than guessing. False confidence is worse than asking.",
+    "no_fabrication": "Every verdict cites evidence — a file-internal quote, a pattern match against a rule, or an explicit absence-of-reference observation.",
+    "no_auto_workflow_trigger": "ORGANIZE never auto-triggers RDC, RECON, SDLC, or any other workflow. The user invokes those manually if ORGANIZE surfaces a need.",
+    "no_workflow_mixing": "While ORGANIZE is active, do not interleave with SDLC or RDC in the same conversation.",
+    "never_no_verify": "Never use `git commit --no-verify` to bypass pre-commit hooks. If a hook fails during an organize commit, fix the issue (usually by adding the changed file to the correct list) and re-commit.",
+    "root_invariants_untouchable": "The paths in `root_invariants.paths` (.claude/, .claude-flow/, .hive-mind/, .mcp.json) are NEVER enumerated, classified, moved, renamed, or modified by any part of this workflow. QUEEN filters them at enumeration before batching. TRIAGE defensively emits ASK_USER if one slips through. Wizard cannot expose them to the user for override. Violation = critical workflow bug."
+  },
+
+  "document_conventions": {
+    "config_file": {
+      "path": "<target_dir>/.organize.json",
+      "created_by": "QUEEN after BOOTSTRAP wizard completes",
+      "maintained_by": "QUEEN during every MAINTENANCE invocation",
+      "version_control": "committed to the repo; config is part of the project's self-description"
+    },
+    "quarantine_dirs": {
+      "paths": ["<target_dir>/.delete/", "<target_dir>/.archive/"],
+      "created_by": "QUEEN lazily — only when a file is first quarantined in that category",
+      "gitignore_policy": ".delete/ always gitignored; .archive/ gitignored by default but user may opt to commit it (configurable in future via ignore_paths exception — TBD)",
+      "mirror_original_path": "a file at src/scratch.py that is QUARANTINE:.delete becomes .delete/src/scratch.py (path mirrored beneath the quarantine root)"
+    },
+    "commits": {
+      "message_pattern_bootstrap": "organize: bootstrap config for <target_name>",
+      "message_pattern_circuit": "organize: circuit <N> of <M> — <brief summary: moved X files, quarantined Y>",
+      "message_pattern_finalize": "organize: update run metadata"
+    },
+    "no_inprogress_required": "ORGANIZE does not use INPROGRESS.md. Its audit trail lives in `.organize.json`'s quarantine_log + git history."
+  },
+
+  "wizard_flow": {
+    "description": "BOOTSTRAP's interactive dialog. QUEEN drives; user answers.",
+    "stages": [
+      {
+        "stage": "present_detected_signals",
+        "queen_shows": "INSPECTOR's detected signals: project type, language(s), existing structure quality, orientation doc presence, file count, notable cruft",
+        "user_action": "confirm / correct"
+      },
+      {
+        "stage": "propose_template",
+        "queen_shows": "Proposed template name (e.g., 'python-lib') with rationale",
+        "user_action": "accept / change to different named template / 'custom' (free-form ruleset)"
+      },
+      {
+        "stage": "propose_seed_rules",
+        "queen_shows": "Proposed rules array (glob patterns → destinations), grouped by category (code, tests, docs, scripts, configs, assets)",
+        "user_action": "accept all / review individually / add custom rule / remove rule"
+      },
+      {
+        "stage": "propose_ignore_paths",
+        "queen_shows": "Proposed ignore_paths (typical: node_modules/**, .git/**, target/**, .venv/**, build/**)",
+        "user_action": "accept / edit"
+      },
+      {
+        "stage": "review_initial_classification",
+        "queen_shows": "INSPECTOR's preliminary triage on visible loose files — what would happen if MAINTENANCE ran right now",
+        "user_action": "review, note surprises, ratify or request rule adjustments"
+      },
+      {
+        "stage": "cascade_decision",
+        "queen_shows": "Summary of config about to be written; option to cascade 1 maintenance circuit immediately or halt",
+        "user_action": "cascade / halt"
+      }
+    ]
+  },
+
+  "known_tbds": {
+    "description": "Explicit TBDs in v0.1.0-DRAFT. These are the design questions we intentionally deferred; answers emerge from running the workflow and observing what hurts.",
+    "items": [
+      "SHORT_RDC sub-procedure shape — what exactly does the compressed RDC-style relevance check for prose files look like? For v0.1.0-DRAFT, TRIAGE uses its own full-read judgment; full RDC_WORKFLOW is a manual escape hatch.",
+      "Template library — should common templates (python-lib, rust-crate, book-markdown, etc.) be promoted to workflows/ORGANIZE/templates/*.json for cross-project reuse? For v0.1.0-DRAFT, each project's `.organize.json` is standalone.",
+      "Rule language — glob vs regex vs natural-language hint. v0.1.0-DRAFT supports all three via rule.kind; observe which get used.",
+      "Parallel-safe batching heuristic — for v0.1.0-DRAFT, QUEEN uses 'disjoint subtrees + cap per-batch file count' as the batching heuristic. Revise when we see it fail.",
+      "FLAG_NEW_RULE threshold — how many occurrences of a pattern in a batch trigger a FLAG_NEW_RULE suggestion vs just ASK_USER per file? v0.1.0-DRAFT: 3+ occurrences of same pattern across the batch triggers FLAG_NEW_RULE.",
+      "Config schema versioning — when we bump version, how do we migrate existing `.organize.json` files? TBD.",
+      "Blanket-approval rules — should users be able to mark certain rule categories as auto-ratify (e.g., 'auto-approve MOVE_TO:docs/ for any .md file under 100 lines')? v0.1.0-DRAFT: everything requires ratification. Future enhancement after we see ratification patterns.",
+      "Re-running wizard — what happens if user wants to re-run BOOTSTRAP when `.organize.json` already exists? v0.1.0-DRAFT supports mode_override; exact semantics (preserve rules? start fresh? diff?) TBD."
+    ]
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "inspector": "workflows/ORGANIZE/WORKER_INSPECTOR.md",
+    "triage": "workflows/ORGANIZE/WORKER_TRIAGE.md"
+  },
+
+  "notes": {
+    "altitude_note": "ORGANIZE operates at filesystem-structure altitude — it rearranges where files live, never what they contain. RDC operates at content-consolidation altitude (merges prose into MASTER). RECON operates at relational-characterization altitude (writes a report about a target). ORGANIZE is the physical-layout cousin of RDC's semantic-consolidation work.",
+    "run_cadence_note": "Designed for periodic re-invocation. A project might run ORGANIZE every few weeks or whenever the user feels clutter accumulating. Each invocation is bounded (N circuits); no daemon mode.",
+    "trust_gradient_note": "v0.1.0-DRAFT is conservative by design: every move requires user ratification. As we accumulate data on which verdicts are reliably correct, future versions may introduce blanket-approval for high-confidence categories.",
+    "anti_junk_drawer_note": "The explicit goal is to prevent the 'junk drawer' folder pattern (misc/, stuff/, tmp/). The workflow's quarantine destinations (.delete/, .archive/) are controlled junk drawers with clear semantics — they replace ad-hoc catch-alls.",
+    "growth_oriented_note": "Rules are append-only and FLAG_NEW_RULE surfaces emerging patterns. Structure evolves with use rather than being imposed upfront. A new project starts with minimal rules and accrues them as patterns appear.",
+    "implementation_note": "v1.0.0 IMPLEMENTED as of 2026-04-18. See ORGANIZE_WORKFLOW_DISSERTATION.md for architectural rationale, ORGANIZE_BUILDOUT_TODO.md for the buildout record, and OPEN_QUESTIONS_RESOLVED.md for TBD resolutions."
+  },
+
+  "changelog": [
+    {
+      "version": "0.1.0-DRAFT",
+      "date": "2026-04-18",
+      "note": "Initial draft. Two modes (BOOTSTRAP, MAINTENANCE), two workers (INSPECTOR, TRIAGE), `.organize.json` schema sketched, hard rules established. Several TBDs logged for learning from first live run."
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-04-18",
+      "note": "Initial implementation complete. Parts 1-6 buildout finished: schema infrastructure (ORGANIZE_CONFIG_SCHEMA, rule/template formats, versioning), canonical template library (5 templates: python-lib, rust-crate, book-markdown, mixed-research, knowledge-base), protocol formalizations (wizard, batching, ratification UI, edge cases; SHORT_RDC deferred), test project + 4 E2E walkthroughs, all 8 TBDs resolved or deferred with criteria, CLAUDE_APPENDIX + WORKER.md updated, dissertation written. See ORGANIZE_WORKFLOW_DISSERTATION.md for full architectural rationale."
+    }
+  ]
+}

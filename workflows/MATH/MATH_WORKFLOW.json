@@ -1,0 +1,285 @@
+{
+  "version": "1.0.0",
+  "name": "MATH_WORKFLOW",
+  "description": "Mathematical QA workflow for GNOSTICA validation. One unit of work = one Putnam problem. Workers attempt to solve problems using GNOSTICA, identify capability gaps, and produce structured QA findings. Output feeds RDC_WORKFLOW for consolidation, then SDLC_WORKFLOW for implementation. Triggered by phrase 'MATH_WORKFLOW'. Owner: Michael.",
+
+  "trigger": {
+    "phrase": "MATH_WORKFLOW",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/MATH/WORKER_MATHQA.md",
+      "QUEEN reports: 'MATH_WORKFLOW mode engaged. Ready. Specify problem range or assignment strategy.'",
+      "QUEEN waits for explicit direction: problem IDs, year range, topic filter, or 'all'"
+    ]
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "upstream of RDC_WORKFLOW",
+    "output_is_input_to": "RDC_WORKFLOW",
+    "pipeline": "MATH_WORKFLOW → RDC_WORKFLOW → SDLC_WORKFLOW",
+    "contract": "MATH_WORKFLOW produces per-problem QA reports documenting GNOSTICA gaps. These reports become the 'source documents' for RDC_WORKFLOW, which consolidates them into PROJECT/PHASE docs. SDLC_WORKFLOW then executes fixes.",
+    "handoff": "On MATH batch completion, QUEEN triggers RDC_WORKFLOW with output directory as source."
+  },
+
+  "corpus": {
+    "database": "corpus/putnam.db",
+    "problem_count": 989,
+    "years": "1938-2025",
+    "sources": ["Kedlaya TeX (solutions)", "Kalva HTML (problems)"],
+    "solution_files": "corpus/raw/kedlaya/{year}s.tex",
+    "topics": ["algebra", "calculus", "geometry", "number_theory", "combinatorics", "analysis", "linear_algebra", "probability", "sequences"]
+  },
+
+  "unit_of_work": {
+    "granularity": "one Putnam problem",
+    "identifier": "{YEAR}-{SESSION}{NUMBER} (e.g., 2022-A1)",
+    "inputs_per_unit": [
+      "problem statement (from database)",
+      "solution text (from Kedlaya TeX)",
+      "GNOSTICA engine (current state)",
+      "WORKER_MATHQA.md instructions"
+    ],
+    "outputs_per_unit": [
+      "docs/qa/attempts/{year}_{session}{number}.md — structured QA report",
+      "append to docs/qa/GAPS_REGISTRY.md — any new gaps discovered"
+    ]
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "not_a_spawned_worker": true,
+      "description": "Claude in main conversation. Manages problem assignment, spawns MATHQA workers, tracks progress, aggregates results.",
+      "responsibilities": [
+        "INVENTORY: query database for problem set, determine assignment strategy",
+        "ASSIGNMENT: partition problems across workers (parallel batches or sequential)",
+        "SPAWN: launch MATHQA workers with problem assignments",
+        "TRACK: maintain MATH_PROGRESS.md with per-problem status",
+        "AGGREGATE: after batch completion, produce GAPS_SUMMARY.md",
+        "HANDOFF: trigger RDC_WORKFLOW with qa/attempts/ as source directory"
+      ]
+    },
+    "MATHQA": {
+      "type": "worker",
+      "doc": "workflows/MATH/WORKER_MATHQA.md",
+      "context_access": "full",
+      "description": "Core worker. Given one problem ID, retrieves problem + solution, extracts mathematical operations, attempts each in GNOSTICA, documents results.",
+      "inputs": [
+        "problem ID (e.g., 2022-A1)",
+        "database path",
+        "solution file path",
+        "WORKER_MATHQA.md instructions"
+      ],
+      "produces": [
+        "docs/qa/attempts/{year}_{session}{number}.md — full QA report",
+        "structured gap entries for GAPS_REGISTRY.md"
+      ],
+      "discipline": [
+        "Retrieve problem statement from database",
+        "Read solution from Kedlaya TeX (search for \\item[{SESSION}{NUMBER}])",
+        "Extract discrete mathematical operations from solution",
+        "Attempt each operation in GNOSTICA via REPL or eval",
+        "Document: input, expected, actual, status (PASS/FAIL/ERROR/NOT_SUPPORTED)",
+        "Identify root cause for failures (missing rule, parser issue, etc.)",
+        "Produce actionable gap description suitable for DEV consumption"
+      ]
+    }
+  },
+
+  "gap_taxonomy": {
+    "description": "Classification of GNOSTICA gaps discovered during MATHQA passes",
+    "categories": {
+      "PARSER": {
+        "description": "Input parsing failures — GNOSTICA can't understand the expression",
+        "examples": ["Complex number syntax", "Matrix notation", "Piecewise functions"],
+        "severity": "blocking"
+      },
+      "RULE_MISSING": {
+        "description": "No rule exists for the required operation",
+        "examples": ["Solve[] for transcendental equations", "Integrate[] for special functions"],
+        "severity": "blocking"
+      },
+      "RULE_MISMATCH": {
+        "description": "Rule exists but pattern doesn't match parser output AST",
+        "examples": ["Commutative matching failures", "Nested expression mismatches"],
+        "severity": "blocking"
+      },
+      "INCOMPLETE_SIMPLIFICATION": {
+        "description": "Operation runs but result isn't fully simplified",
+        "examples": ["(-x)^2 not simplified to x^2", "Log[a] - Log[a] not simplified to 0"],
+        "severity": "degraded"
+      },
+      "WRONG_RESULT": {
+        "description": "Operation runs but produces incorrect output",
+        "examples": ["Derivative computed incorrectly", "Solve returns wrong roots"],
+        "severity": "critical"
+      },
+      "PERFORMANCE": {
+        "description": "Operation is too slow for practical use",
+        "examples": ["Simplification hangs", "Solve times out"],
+        "severity": "degraded"
+      },
+      "UX": {
+        "description": "Operation works but interface is confusing or output is unreadable",
+        "examples": ["Verbose AST output", "No error messages", "Unclear syntax"],
+        "severity": "minor"
+      }
+    }
+  },
+
+  "output_documents": {
+    "per_problem": {
+      "location": "docs/qa/attempts/{year}_{session}{number}.md",
+      "template": "workflows/MATH/TEMPLATE_MATHQA_REPORT.md",
+      "sections": [
+        "Problem Statement",
+        "Solution Summary",
+        "Step Breakdown (per mathematical operation)",
+        "Summary Table",
+        "GNOSTICA Gaps Identified",
+        "UX Friction Notes",
+        "Recommendations"
+      ]
+    },
+    "aggregate": {
+      "gaps_registry": {
+        "location": "docs/qa/GAPS_REGISTRY.md",
+        "description": "Master list of all discovered GNOSTICA gaps across all problems",
+        "format": "One entry per unique gap, with: ID, category, description, affected problems, severity, suggested fix"
+      },
+      "gaps_summary": {
+        "location": "docs/qa/GAPS_SUMMARY.md",
+        "description": "Statistical summary produced by QUEEN after batch completion",
+        "format": "Counts by category, severity distribution, most common gaps, priority ranking"
+      },
+      "math_progress": {
+        "location": "docs/qa/MATH_PROGRESS.md",
+        "description": "Running progress tracker during MATH_WORKFLOW execution",
+        "format": "Per-problem status: NOT_STARTED | IN_PROGRESS | COMPLETE | BLOCKED"
+      }
+    }
+  },
+
+  "flow": {
+    "inventory": {
+      "performer": "QUEEN",
+      "actions": [
+        "Query database for problem set based on user criteria (year, topic, all)",
+        "Count total problems to process",
+        "Determine parallelism strategy (batch size, worker count)",
+        "Initialize MATH_PROGRESS.md with all problems as NOT_STARTED",
+        "Initialize GAPS_REGISTRY.md if not exists",
+        "Report to human: N problems queued, proposed batch strategy"
+      ]
+    },
+    "execution": {
+      "performer": "QUEEN spawns MATHQA workers",
+      "modes": {
+        "SEQUENTIAL": {
+          "description": "One problem at a time. Use for initial testing or when context matters.",
+          "worker_count": 1,
+          "parallelism": "none"
+        },
+        "PARALLEL_BATCH": {
+          "description": "Multiple workers processing independent problems simultaneously.",
+          "worker_count": "configurable (default 5)",
+          "parallelism": "all workers in one message with run_in_background:true",
+          "batch_size": "configurable (default 10 problems per batch)"
+        },
+        "TOPIC_PARTITIONED": {
+          "description": "One worker per topic. Useful for focused gap discovery.",
+          "worker_count": "one per topic",
+          "parallelism": "all topic workers in one message"
+        }
+      },
+      "per_problem": [
+        "QUEEN spawns MATHQA with problem ID",
+        "MATHQA executes per WORKER_MATHQA.md",
+        "MATHQA writes report to docs/qa/attempts/",
+        "MATHQA appends new gaps to GAPS_REGISTRY.md",
+        "MATHQA returns structured result to QUEEN",
+        "QUEEN updates MATH_PROGRESS.md"
+      ]
+    },
+    "aggregation": {
+      "performer": "QUEEN",
+      "trigger": "all problems in batch complete",
+      "actions": [
+        "Read all QA reports from docs/qa/attempts/",
+        "Deduplicate gaps in GAPS_REGISTRY.md",
+        "Count problems by pass rate, gaps by category",
+        "Produce GAPS_SUMMARY.md with statistics",
+        "Produce priority-ranked gap list for RDC input"
+      ]
+    },
+    "handoff": {
+      "performer": "QUEEN",
+      "trigger": "aggregation complete",
+      "actions": [
+        "Report to human: N problems tested, M unique gaps found, top 10 gaps listed",
+        "Recommend: 'Ready for RDC_WORKFLOW with docs/qa/attempts/ as source'",
+        "On human confirmation, engage RDC_WORKFLOW"
+      ]
+    },
+    "main_sequence": [
+      "INVENTORY: QUEEN queries database, initializes tracking docs",
+      "EXECUTION: MATHQA workers process problems, produce QA reports",
+      "AGGREGATION: QUEEN consolidates gaps, produces summary",
+      "HANDOFF: QUEEN triggers RDC_WORKFLOW for gap consolidation"
+    ]
+  },
+
+  "rdc_integration": {
+    "source_documents": "docs/qa/attempts/*.md (one per problem attempted)",
+    "scribe_behavior": "Each QA report is one source doc. SCRIBE extracts gaps as concepts, upserts into MASTER.",
+    "master_structure": {
+      "sections": [
+        "## Parser Gaps",
+        "## Rule Gaps",
+        "## Pattern Matching Gaps",
+        "## Simplification Gaps",
+        "## Performance Gaps",
+        "## UX Gaps"
+      ]
+    },
+    "taxonomy_output": {
+      "project": "PROJECT_GNOSTICA_GAPS.md — overall gap remediation project",
+      "phases": [
+        "PHASE_1_CRITICAL_BLOCKERS — gaps that prevent any problem solving",
+        "PHASE_2_PATTERN_MATCHING — commutative/associative matching fixes",
+        "PHASE_3_RULE_EXPANSION — new rules for missing operations",
+        "PHASE_4_SIMPLIFICATION — complete the simplification engine",
+        "PHASE_5_UX — error messages, output formatting"
+      ],
+      "todo_format": "Each gap becomes a task with: description, affected problems, acceptance criteria (problem N passes)"
+    }
+  },
+
+  "sdlc_integration": {
+    "input": "RDC_WORKFLOW output: PROJECT_GNOSTICA_GAPS.md + PHASE_N_*_ARCH.md + PHASE_N_*_TODO.md",
+    "task_acceptance": "Task is done when the specific Putnam problem(s) that revealed the gap now PASS",
+    "validation_loop": "After SDLC task completion, re-run MATHQA on affected problems to verify fix"
+  },
+
+  "hard_rules": {
+    "one_problem_per_worker_invocation": true,
+    "workers_must_actually_run_gnostica": true,
+    "no_manual_math_solving": "Workers use GNOSTICA, not their own math abilities",
+    "gaps_must_be_actionable": "Every gap must include enough detail for a DEV to implement a fix",
+    "deduplicate_gaps": "Same gap from multiple problems = one registry entry with multiple affected-problems",
+    "preserve_problem_traceability": "Every gap links back to the problem(s) that revealed it"
+  },
+
+  "worker_docs": {
+    "mathqa": "workflows/MATH/WORKER_MATHQA.md",
+    "template": "workflows/MATH/TEMPLATE_MATHQA_REPORT.md"
+  },
+
+  "notes": {
+    "purpose": "MATH_WORKFLOW is a gap-discovery engine. It uses the Putnam corpus as a test suite to systematically find what GNOSTICA cannot do. The gaps become work items for GNOSTICA development.",
+    "not_about_solving_math": "Workers are NOT solving Putnam problems. They are testing whether GNOSTICA can perform the operations that the published solutions require.",
+    "incremental": "Can run on subsets (one year, one topic) to focus gap discovery. Full corpus run is optional.",
+    "rdc_ratchet": "Each MATH_WORKFLOW run produces more source docs for RDC. RDC consolidates all gaps discovered so far. SDLC fixes them. Next MATH run finds fewer gaps. Ratchet toward full coverage."
+  }
+}

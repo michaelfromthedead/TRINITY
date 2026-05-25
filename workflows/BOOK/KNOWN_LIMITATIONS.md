@@ -1,0 +1,214 @@
+# KNOWN_LIMITATIONS — BOOK Workflow Family
+
+**Version:** 1.0.0
+**Date:** 2026-04-18
+**Task:** T9.20
+**Source:** Observations from E2E_UNIFORM_WALKTHROUGH.md, E2E_CASE_A_WALKTHROUGH.md, and E2E_CASE_B_WALKTHROUGH.md.
+
+**Purpose:** Document known limitations and edge cases in the BOOK workflow family, with recommended follow-up actions for each.
+
+---
+
+## How to read this document
+
+Each limitation is documented with:
+- **What happens:** a description of the observed behavior under the design
+- **Conditions:** when this limitation applies
+- **Impact:** severity of the limitation (Blocking / High / Medium / Low)
+- **Recommended follow-up:** author action, future buildout task, or "accept as design"
+
+---
+
+## Limitation 1: OUTLINE_ONLY chapters produce high DRAFTER_GAP density — may force ESCALATE
+
+**What happens:** DRAFTER working from a 1-line chapter description (OUTLINE_ONLY state) cannot supply technical derivations, author-specific interpretive positions, notation choices, or specific experimental citations that the chapter requires. Gap-flag density of 20–25% is typical for technically demanding OUTLINE_ONLY chapters. When gap-density exceeds 20% of distinct claims, DRAFTER emits a GAP_DENSITY_WARNING. These unresolved markers reach EDITORIAL as Critical findings, triggering ESCALATE after REVISION Cycle 1.
+
+**Conditions:** Any chapter in OUTLINE_ONLY state on a technically demanding topic (physics derivations, mathematical proofs, specialized notation). Synthesis chapters have lower gap density because they can draw on prior chapters' vocabulary.
+
+**Impact:** High. ESCALATE adds one author writing session to the EDITORIAL pipeline. Authors should budget for this.
+
+**Recommended follow-up:**
+1. *Author action:* Before triggering BOOK_COMPLETION on OUTLINE_ONLY chapters, upgrade each to NOTES_ONLY by writing even brief notes (derivation sketches, key claims, a reference list). Even 1-2 pages of notes per chapter reduces gap-flag density from 20–25% to 5–10%.
+2. *BOOK_COMPLETION improvement (future):* Add a pre-DRAFTER advisory step: "N chapters are OUTLINE_ONLY on technical topics. Recommend upgrading to NOTES_ONLY before DRAFTER phase for lower gap-flag density."
+3. *Accept as design:* For OUTLINE_ONLY chapters on non-technical topics (synthesis, introduction, framing), gap density is low (3–5%). The limitation applies specifically to technical derivation chapters.
+
+---
+
+## Limitation 2: MISSING chapters with no author notes produce truly generic DRAFTER prose
+
+**What happens:** DRAFTER working from scope alone (MISSING state, no notes file) produces first-draft prose that is structurally correct and template-compliant in voice/style but lacks the author's specific physics perspective, preferred derivation paths, interpretive stances, and notation choices. The result is generic prose that reads like a competent approximation of the book's style rather than the author's actual voice. This is by design (DRAFTER is Stance 3 — full prose under template constraint), but it means the author will need to significantly revise DRAFTER's output for MISSING chapters even after REVISION has addressed editorial findings.
+
+**Conditions:** Any chapter in MISSING state. The more technically specialized the chapter, the more generic DRAFTER's output will be relative to the author's intent.
+
+**Impact:** High. For a 12-chapter book with 5+ MISSING chapters (Case A scenario), the author may find that DRAFTER's output for MISSING chapters requires substantial rewriting beyond what REVISION can supply — effectively requiring a second authoring session.
+
+**Recommended follow-up:**
+1. *Author action:* Provide at minimum a 2-5 bullet point "key claims" list for each MISSING chapter before triggering BOOK_COMPLETION. This elevates MISSING to OUTLINE_ONLY, which substantially improves DRAFTER output quality.
+2. *Future buildout task (Part 4.5 extension):* Design a DRAFTER "lite" mode for MISSING chapters: instead of producing full prose, DRAFTER produces a skeletal draft with section headers and 1-2 sentence descriptions of each section's content. This gives the author a structured scaffold to write into rather than prose to revise.
+3. *Accept as design:* DRAFTER's core principle is "do not fabricate facts beyond what source material provides." Generic prose for MISSING chapters is a correct implementation of this principle, not a bug. The limitation is the source material, not DRAFTER.
+
+---
+
+## Limitation 3: Bundle validation failure at BOOK_EDITORIAL engagement is blocking
+
+**What happens:** BOOK_EDITORIAL's engagement sequence includes a template resolution step: QUEEN loads the bundle or atomics declared in BOOK_MANIFEST.json and validates that they exist at the declared path. If a bundle file is missing, renamed, or at an unexpected path, QUEEN cannot load the template set and BOOK_EDITORIAL cannot proceed. This is a **blocking error** that halts the pipeline at engagement.
+
+Example: BOOK_MANIFEST.json declares `"bundle": "BUNDLE_SPIN_OF_GRAVITY"` but the templates directory has been renamed or the file moved. QUEEN attempts to read `templates/BUNDLE_SPIN_OF_GRAVITY.md`, fails, and emits: "ESCALATE: Bundle BUNDLE_SPIN_OF_GRAVITY not found at expected path. Update manifest or restore template file before proceeding."
+
+**Conditions:** Any project where templates have been moved, renamed, or their version changed after the manifest was written.
+
+**Impact:** Blocking. Pipeline cannot proceed until the template path is resolved.
+
+**Recommended follow-up:**
+1. *Author action:* Verify that all templates declared in BOOK_MANIFEST.json are accessible at their canonical path (`templates/BUNDLE_*.md` or `templates/VOICE_*.md` etc.) before triggering BOOK_EDITORIAL.
+2. *Future buildout task:* Add a template pre-check step to BOOK_TRIAGE's output — when TRIAGE runs, it should also verify that the manifest's template declarations resolve and report any missing templates. This moves the blocking error from EDITORIAL engagement to TRIAGE, where it is easier to fix.
+3. *Mitigation:* If a template is missing, QUEEN's ESCALATE message should include the expected path and the contents of the `templates/` directory so the author can quickly identify the mismatch.
+
+---
+
+## Limitation 4: STYLE_EXPLORATORY × STYLE_METASTUDY composition conflict blocks BOOK_EDITORIAL
+
+**What happens:** TEMPLATE_COMPATIBILITY.md marks the pairing of STYLE_ACADEMIC_EXPLORATORY and STYLE_ACADEMIC_METASTUDY as `conflicts`. If a BOOK_MANIFEST.json declares both (in composition mode rather than bundle mode), BOOK_EDITORIAL's engagement template resolution step detects the conflict and emits a blocking error: "ESCALATE: Incompatible composition mode. STYLE_ACADEMIC_EXPLORATORY conflicts with STYLE_ACADEMIC_METASTUDY. Use a bundle that mediates this pairing, or select one style atomic."
+
+**Conditions:** Manifest declares `"mode": "composition"` with both STYLE_ACADEMIC_EXPLORATORY and STYLE_ACADEMIC_METASTUDY listed as atomics.
+
+**Impact:** Blocking. BOOK_EDITORIAL cannot engage with a conflicting composition mode.
+
+**Recommended follow-up:**
+1. *Author action:* Review the compatibility matrix in TEMPLATE_COMPATIBILITY.md before declaring composition mode in the manifest. Use bundle mode when pairing atomics that require mediation (BUNDLE_SPIN_OF_GRAVITY mediates the EXPLORATORY style with the physicist-teacher persona and avoids the METASTUDY pairing entirely).
+2. *Future buildout task:* Add a compatibility pre-check to BOOK_TRIAGE — TRIAGE should warn about incompatible compositions at classification time rather than letting the conflict propagate to EDITORIAL engagement.
+3. *Accept as design:* The blocking behavior is correct. Allowing an incompatible composition through to EDITORIAL would produce incoherent audit results (JUNIOR_STYLE checking against two conflicting style templates simultaneously). The block at engagement is the right enforcement point.
+
+---
+
+## Limitation 5: LULU_SPEC has 4 UNVERIFIED items that propagate to BOOK_SPEC.json but don't block production
+
+**What happens:** LULU_SPEC.md marks four items as UNVERIFIED (meaning they were documented based on available Lulu.com documentation but could not be independently confirmed against a current print-production proof):
+1. `pdf_standard`: specific PDF/X version required is not published by Lulu; BOOK_SPEC.json declares `"lulu_joboptions"`.
+2. `per_paper_type_spine_coefficient`: breakdown by paper stock is not published; single formula `(pages/444)+0.06` is used for all paper types.
+3. `hardcover_maximum_pages`: 800 pages inferred from spine table, not explicitly stated.
+4. `coil_saddle_stitch_page_limits`: not found in accessible documentation.
+
+These 4 items appear in BOOK_SPEC.json's `metadata.lulu_spec_unverified_items` array and in QA_PRODUCTION's report (Category 2 check 2g passes as long as they are documented). They do not block production or LULU_PIPELINE. However, a print run based on unverified specs risks pre-flight failure at Lulu.com.
+
+**Conditions:** Any project using BOOK_PRODUCTION for Lulu.com publication.
+
+**Impact:** Medium. Production pipeline proceeds; Lulu.com pre-flight check may fail. The UNVERIFIED items are correctly documented and flagged, not silently dropped.
+
+**Recommended follow-up:**
+1. *Author action (before submitting to Lulu):* Run Lulu's automated pre-flight verification tool on the LULU_PIPELINE-produced PDF before placing a print order. Specifically verify: PDF/X compliance (Lulu's tool will report the required standard); spine width (order a proof copy and measure the physical spine before a print run); paper type and its impact on spine calculation.
+2. *Future buildout task (T8.2 follow-up):* Establish a LULU_SPEC update policy and a mechanism for community-sourced verification: when a BOOK_WORKFLOW project successfully prints with Lulu.com, document the verified spec items and update LULU_SPEC.md. Over time, reduce the UNVERIFIED item count.
+3. *Accept as design:* The 4 UNVERIFIED items represent genuinely unpublished information from Lulu.com. The documentation is honest and transparent. The correct mitigation is the author action above, not a change to the pipeline behavior.
+
+---
+
+## Limitation 6: REVISION budget cap (20 passages) may be hit repeatedly on finding-dense manuscripts
+
+**What happens:** WORKER_REVISION.md §4 (T7.4 resolution) establishes a soft cap of 20 passages per REVISE cycle. When SENIOR_FINAL's REVISE list exceeds 20 distinct passage locations, REVISION addresses highest-severity findings first and ESCALATEs on the remainder rather than exceeding the cap. For finding-rich manuscripts (e.g., Case A with 12 drafter-origin chapters), the ESCALATE from budget overflow adds iterations.
+
+**Conditions:** Manuscripts with high finding counts — typically drafter-origin manuscripts where MISSING chapters produce many High findings, or manuscripts where the source material had systematic voice issues across many chapters.
+
+**Impact:** Medium. Each budget-overflow ESCALATE adds one human review + REVISION cycle to the EDITORIAL pipeline. For a Case A manuscript (12 MISSING chapters), budget overflow may trigger 2–3 times.
+
+**Recommended follow-up:**
+1. *Author action:* Before triggering BOOK_EDITORIAL, review DRAFTER-origin chapters for systematic issues (e.g., a habitual violation pattern across all MISSING chapters). Correcting the pattern in the chapter files before EDITORIAL reduces the finding count and avoids budget overflow.
+2. *Future buildout task:* Add a "budget projection" step to SENIOR_FINAL's Cycle 1 report: "Estimated passage count: N. If N > 20, the following prioritization will apply: ..." This allows the human to anticipate overflow before it triggers an ESCALATE.
+3. *SENIOR_FINAL override:* SENIOR_FINAL has the authority to authorize REVISION to exceed the budget cap for a single cycle with documented justification ("Manuscript has 32 findings but all are addressing the same systematic voice pattern — authorize extended budget"). This is the workaround but requires explicit human justification to SENIOR_FINAL at the time of the REVISE verdict.
+4. *Accept as design:* The 20-passage cap exists to enforce surgical discipline. A REVISION that addresses 40 simultaneous passages degrades into wholesale rewriting, which is not REVISION's role. The cap is correct; the workaround (budget authorization) is the appropriate escape valve.
+
+---
+
+## Limitation 7: LULU_PIPELINE is mechanical (non-AI) — PDF may fail Lulu's automated pre-flight
+
+**What happens:** LULU_PIPELINE (T9.1–T9.7) is a non-AI mechanical build automation that produces a PDF from BOOK_SPEC.json + chapter files. The PDF is produced to the specifications in BOOK_SPEC.json, which are in turn derived from LULU_SPEC.md. However, Lulu.com's pre-flight check may reject the PDF for reasons not captured in LULU_SPEC.md (e.g., font embedding requirements, image resolution thresholds, specific PDF/X sub-standards).
+
+**Conditions:** All projects using LULU_PIPELINE for Lulu.com print production.
+
+**Impact:** Medium. Pre-flight failure does not invalidate the manuscript or require re-running the AI workflows — it is a typesetting/formatting issue. However, it adds a troubleshooting step before the print order can be placed.
+
+**Recommended follow-up:**
+1. *Author action:* After LULU_PIPELINE produces the PDF, upload to Lulu.com and run the automated pre-flight check before ordering proofs. Do not go directly from LULU_PIPELINE to a print order.
+2. *Future buildout task (T9.6 extension):* Add a local PDF/X validation step to LULU_PIPELINE's test suite using Ghostscript or verapdf. This catches the most common pre-flight failures before the PDF reaches Lulu.com.
+3. *Future buildout task:* When LULU_SPEC is verified (see Limitation 5), update LULU_PIPELINE's typesetting configuration to match the confirmed PDF/X standard and font embedding requirements.
+4. *Accept as design:* LULU_PIPELINE produces a PDF that is as conformant as possible given available LULU_SPEC knowledge. Pre-flight failure is a Lulu-side verification step that cannot be fully automated without Lulu's pre-flight tool. The recommended practice (run pre-flight before ordering) is the correct workflow.
+
+---
+
+## Limitation 8: Multi-language manuscripts require separate PROSE_<style>_<lang>.md templates per §9-C T9.14 resolution
+
+**What happens:** The BOOK workflow family's template system (BUNDLE_SPIN_OF_GRAVITY and other bundles) is designed for English-language manuscripts. The PROSE_MEDIUM_ACCESSIBLE template specifies English-language register constraints (B2/C1 CEFR, sentence length in words, vocabulary tier). For non-English manuscripts, these constraints do not translate directly: B2/C1 CEFR levels are language-specific; sentence length varies by language; vocabulary register is language-dependent.
+
+If a non-English manuscript is processed using PROSE_MEDIUM_ACCESSIBLE without a language-specific adaptation, JUNIOR_STYLE will apply English-language register constraints to non-English prose, producing inaccurate findings.
+
+**Conditions:** Any manuscript written in a language other than English.
+
+**Impact:** High (for non-English manuscripts). JUNIOR_STYLE findings will be systematically inaccurate. SENIOR_SANITY may catch some overzealous findings, but the systematic nature of the inaccuracy makes this a structural problem rather than an isolated false positive.
+
+**Recommended follow-up:**
+1. *Author action:* For non-English manuscripts, create a language-specific PROSE template (e.g., `PROSE_MEDIUM_ACCESSIBLE_KR.md` for Korean, per T9.14 resolution) before triggering BOOK_EDITORIAL. The language-specific template adapts the register constraints to the target language's norms.
+2. *Future buildout task (T9.14 follow-up):* Write the first 2–3 language-specific PROSE templates (e.g., PROSE_MEDIUM_ACCESSIBLE_DE.md for German academic physics, PROSE_MEDIUM_ACCESSIBLE_JP.md for Japanese). Document the language-specific register constraints in each.
+3. *Accept as design:* The decision to handle multi-language as a sub-axis of PROSE (rather than a separate 5th axis) is T9.14's resolution. The limitation is that this sub-axis must be implemented per-language, not that the architecture is wrong.
+
+---
+
+## Limitation 9: CH_05 (terminal synthesis chapter) is systematically thin in the uniform-maturity case
+
+**What happens:** In the uniform-maturity (T9.19) scenario, the synthesis chapter (CH_05 in the 5-chapter test manuscript) was derived from an OUTLINE_ONLY source document. After CONSOLIDATION, it is the thinnest chapter. QA_STORYBOARD notes it informatively but does not block. BOOK_EDITORIAL JUNIOR_CONCEPT and JUNIOR_FLOW will flag content gaps in the synthesis chapter that REVISION cannot fully address (it would require new prose additions rather than surgical rewrites of existing prose).
+
+**Conditions:** Any manuscript where the terminal synthesis/conclusion chapter was not developed in the source material. This is very common — synthesis chapters are typically written last, after the substantive chapters are complete.
+
+**Impact:** Medium. The synthesis chapter enters EDITORIAL with structural gaps that require human authoring additions (not just REVISION). The pipeline handles this via SENIOR_FINAL's new-content correction_guidance and REVISION's passage-insertion mode, but it adds cycles.
+
+**Recommended follow-up:**
+1. *Author action:* Write the synthesis chapter outline (at minimum: a 5-7 bullet point summary of what the chapter should accomplish and which prior chapters it synthesizes) before CONSOLIDATION runs. This elevates it from OUTLINE_ONLY to NOTES_ONLY and substantially improves COMPOSITOR's carved chapter.
+2. *BOOK_COMPLETION alternative:* If the synthesis chapter is OUTLINE_ONLY, route it through BOOK_COMPLETION's DRAFTER rather than through CONSOLIDATION directly. DRAFTER with prior chapter context can produce a more substantive synthesis chapter from an outline than COMPOSITOR can carve from an outline-only source doc.
+3. *Accept as design:* The thinness of the synthesis chapter reflects the state of the source material. CONSOLIDATION is faithful — it produces what the source material contains. The pipeline correctly identifies the gap and routes it to human authoring.
+
+---
+
+## Limitation 10: CONSOLIDATION's COURT mechanism is designed for content conflicts, not structural uncertainty
+
+**What happens:** As documented in CONSOLIDATION_WALKTHROUGH.md §Gaps, the COURT mechanism is triggered by SCRIBE when two versions of a concept cannot be resolved by temporal primacy or explicit supersession. In the test manuscript walkthrough, COURT was triggered by a chapter-count uncertainty (gravity coupling notes assumed a later chapter that the revised draft didn't support) — a structural assumption, not a true content conflict.
+
+COURT handles structural uncertainty correctly (via temporal primacy and evidentiary weight) but the mechanism was designed for content conflicts. Using it for structural uncertainty is atypical and requires QUEEN's judgment about whether to invoke COURT or DEFER-TO-COMPOSITOR.
+
+**Conditions:** When a source document makes a structural assumption (e.g., "this content will go in Chapter 8") that conflicts with the emerging structure from other documents.
+
+**Impact:** Low. COURT resolves the issue correctly in all tested cases. The limitation is in QUEEN's guidance — a DEFER-TO-COMPOSITOR path is not explicitly documented for structural uncertainty cases.
+
+**Recommended follow-up:**
+1. *Future buildout task:* Update WORKER_QUEEN.md (shared doc) to distinguish content conflicts (true COURT cases) from structural uncertainty (DEFER-TO-COMPOSITOR cases). Provide a decision rule: "If the conflict is about what the content says, use COURT. If the conflict is about where the content belongs, DEFER to COMPOSITOR."
+2. *Accept as design:* The current behavior (QUEEN uses COURT for structural uncertainty when needed) produces correct results. The improvement is in documentation clarity, not in behavior change.
+
+---
+
+## Summary Table
+
+| # | Limitation | Impact | Follow-up type |
+|---|---|---|---|
+| 1 | OUTLINE_ONLY → high gap density → likely ESCALATE | High | Author action + future buildout |
+| 2 | MISSING chapters → generic DRAFTER prose | High | Author action + future buildout |
+| 3 | Missing bundle file blocks BOOK_EDITORIAL | Blocking | Author action + future buildout |
+| 4 | STYLE_EXPLORATORY × STYLE_METASTUDY conflict blocks BOOK_EDITORIAL | Blocking | Accept as design |
+| 5 | 4 LULU_SPEC UNVERIFIED items propagate to BOOK_SPEC.json | Medium | Author action + future verification |
+| 6 | REVISION budget cap (20 passages) may hit repeatedly on drafter-rich manuscripts | Medium | Author action + SENIOR_FINAL override |
+| 7 | LULU_PIPELINE PDF may fail Lulu pre-flight check | Medium | Author action + future buildout |
+| 8 | Multi-language manuscripts need language-specific PROSE templates | High (for non-English) | Future buildout (T9.14 follow-up) |
+| 9 | Terminal synthesis chapter is thin when source is OUTLINE_ONLY | Medium | Author action + BOOK_COMPLETION route |
+| 10 | COURT mechanism is for content conflicts, not structural uncertainty | Low | Future WORKER_QUEEN.md update |
+
+**Total limitations documented: 10**
+
+---
+
+## Relationship to Open Questions
+
+Several limitations documented here are related to open questions from the BOOK_WORKFLOW_DISSERTATION.md §16:
+
+- Limitation 6 (revision budget cap) → resolved in T7.4; carried forward as a known limitation
+- Limitation 8 (multi-language) → resolved in T9.14; implemented as PROSE sub-axis; limitation is the language-specific template work that remains
+- Limitation 10 (COURT vs structural uncertainty) → not previously identified as an open question; surfaced during E2E walkthrough; added to future WORKER_QUEEN.md update backlog
+
+---
+
+*End of KNOWN_LIMITATIONS.md.*

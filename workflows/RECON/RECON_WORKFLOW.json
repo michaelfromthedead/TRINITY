@@ -1,0 +1,323 @@
+{
+  "version": "1.0.0",
+  "name": "RECON_WORKFLOW",
+  "description": "Standalone relational/isolation analysis workflow. Given a target directory (and optionally an anchor corpus), a SCOUT worker enters the target, discovers orientation via a 3-tier strategy, reads strategically chosen files in full, and produces a report characterizing the target — either in isolation (UNANCHORED mode), in relation to an existing consolidated corpus (ANCHORED mode), or purely as an audit of an anchor's current health (AUDIT_ONLY mode). RECON is NOT a prestep to RDC — it is a parallel-altitude workflow that operates AFTER anchors exist (or when no anchor is relevant). Outputs live in /RECON/ at the session-summon directory. Triggered by the phrase 'RECON_WORKFLOW' OR by natural-language invocation (e.g., 'recon X', 'scout Y with anchor Z', 'audit anchor W'). Owner: Michael. Orchestrator: QUEEN (Claude in main conversation, not a spawned agent).",
+
+  "trigger": {
+    "phrases": [
+      "RECON_WORKFLOW",
+      "recon",
+      "scout",
+      "run recon on",
+      "audit anchor"
+    ],
+    "natural_language": true,
+    "mode": "read_acknowledge_extract_or_ask",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER.md, workflows/SHARED/WORKER_PROTOCOL.md, workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/RECON/WORKER_SCOUT.md",
+      "QUEEN extracts target + optional anchor from the user's invocation (or asks if ambiguous)",
+      "QUEEN reports: 'RECON_WORKFLOW mode engaged. <mode> pass queued. Target: <target>. Anchor: <anchor or \"none\">. Proceeding.'",
+      "QUEEN spawns a single SCOUT agent with the assembled context packet"
+    ],
+    "parameters_required": "at least one of { target, anchor }. Target alone -> UNANCHORED mode. Target + anchor -> ANCHORED mode. Anchor alone -> AUDIT_ONLY mode."
+  },
+
+  "relationship_to_other_workflows": {
+    "position": "parallel",
+    "not_a_prestep_to": ["RDC_WORKFLOW"],
+    "role": "RECON is a relational/audit workflow that operates at the same altitude as RDC but with different output. RDC builds anchors (consolidates chaos into structured docs). RECON uses anchors as context for relational analysis of new territory, or audits an anchor's health. Each RECON is a manual, single human invocation — no auto-chaining, no auto-recursion, no auto-trigger of downstream RDC or SDLC.",
+    "pipeline_position": {
+      "RDC_WORKFLOW": "builds anchor (source chaos -> consolidated per-cluster docs)",
+      "META": "second-order pattern synthesis across an anchor's clusters (not a formal workflow yet — emergent pattern)",
+      "RECON_WORKFLOW": "given anchor exists, characterize neighboring territory relative to it; OR audit anchor health; OR characterize unknown territory in isolation",
+      "SDLC_WORKFLOW": "execute consolidated TODOs from a GREEN_LIGHT'd anchor"
+    }
+  },
+
+  "modes": {
+    "UNANCHORED": {
+      "description": "First-contact characterization. User provides target only. SCOUT enters target with no anchor context, performs orientation discovery + target survey, produces an isolation report recommending next-step workflow.",
+      "inputs_required": ["target_dir"],
+      "phases": ["orientation_discovery", "target_survey"],
+      "phases_skipped": ["anchor_veracity_check", "relational_analysis"],
+      "output_filename_pattern": "RECON_<target_name>.md",
+      "verdict_catalog": [
+        "RDC_READY",
+        "RDC_MULTI_PARALLEL",
+        "SPLIT_FIRST",
+        "ALREADY_CONSOLIDATED",
+        "SKIP",
+        "INSUFFICIENT_DATA"
+      ]
+    },
+    "ANCHORED": {
+      "description": "Relational analysis. User provides target + anchor name. SCOUT verifies anchor veracity first, then characterizes target, then produces a relational report positioning target vs anchor on vocabulary, naming register, explicit/implicit cross-references, structural position, seams, conflicts.",
+      "inputs_required": ["target_dir", "anchor_name"],
+      "phases": ["anchor_veracity_check", "orientation_discovery", "target_survey", "relational_analysis"],
+      "output_filename_pattern": "RECON_<target_name>_vs_<anchor_name>.md",
+      "verdict_catalog": [
+        "SUBSYSTEM_OF_ANCHOR",
+        "PARENT_OF_ANCHOR",
+        "PEER_OF_ANCHOR",
+        "RELATED_BUT_INDEPENDENT",
+        "UNRELATED",
+        "ALREADY_KNOWN",
+        "CONFLICTING",
+        "INSUFFICIENT_DATA"
+      ],
+      "anchor_sub_verdict": "ANCHOR_HEALTHY | ANCHOR_STALE | ANCHOR_INCOMPLETE | ANCHOR_DRIFTED | ANCHOR_CORRUPTED"
+    },
+    "AUDIT_ONLY": {
+      "description": "Anchor health check with no target. SCOUT validates anchor's current state: output-file existence, source-file availability, source modification times vs RDC run time, INPROGRESS terminal verdict, PEDAGOGY-vs-MASTER consistency, claimed-metric sanity.",
+      "inputs_required": ["anchor_name"],
+      "phases": ["anchor_veracity_check"],
+      "phases_skipped": ["orientation_discovery", "target_survey", "relational_analysis"],
+      "output_filename_pattern": "RECON_AUDIT_<anchor_name>.md",
+      "verdict_catalog": [
+        "ANCHOR_HEALTHY",
+        "ANCHOR_STALE",
+        "ANCHOR_INCOMPLETE",
+        "ANCHOR_DRIFTED",
+        "ANCHOR_CORRUPTED"
+      ]
+    }
+  },
+
+  "document_conventions": {
+    "output_directory": "/RECON/ at the session-summon directory (the CWD in which Claude was invoked)",
+    "output_directory_creation": "created by SCOUT on first run if absent",
+    "sibling_to_anchors": "RECON/ is a peer of anchor directories (e.g., CONTROLLER_RDC/, CONTROLLER_META/) — not nested inside any of them",
+    "naming_patterns": {
+      "unanchored": "RECON_<target_name>.md",
+      "anchored": "RECON_<target_name>_vs_<anchor_name>.md",
+      "audit_only": "RECON_AUDIT_<anchor_name>.md"
+    },
+    "target_name_sanitization": "basename of the target path; replace non-alphanumeric chars with underscore",
+    "overwrite_policy": "if a report for the exact target+anchor pair already exists, append a -<YYYY-MM-DD> suffix or -N counter to avoid clobber; prior reports preserved as historical record",
+    "no_other_output_files": "RECON produces exactly one .md file per invocation. No stubs, no INPROGRESS.md updates, no modifications to target, no modifications to anchor."
+  },
+
+  "orientation_discovery": {
+    "description": "How SCOUT navigates a target with unknown shape. Applied at target root; may recurse into cluster subdirs if multi-cluster structure detected.",
+    "principle": "full-read-or-skip; never partial-scan a file to save budget; budget is achieved by honestly deferring whole files, not by skimming fragments",
+    "tier_1_canonical_names": {
+      "description": "Look for these by name at target root, in priority order. Case-insensitive. Extension optional. Read each fully when found. Stop searching when corpus is substantively oriented (not until all are found).",
+      "priority_order": [
+        "README, README.md",
+        "ARCHITECTURE, ARCHITECTURE.md, ARCH, ARCH.md",
+        "MANIFEST, MANIFEST.md, MANIFESTO, MANIFESTO.md",
+        "INDEX, INDEX.md, TOC, TOC.md, TABLE_OF_CONTENTS, TABLE_OF_CONTENTS.md, CONTENTS, CONTENTS.md",
+        "ROADMAP, ROADMAP.md",
+        "OVERVIEW, OVERVIEW.md, INTRODUCTION, INTRODUCTION.md, INTRO, INTRO.md",
+        "GUIDE, GUIDE.md, GUDIE (typos count), GUDIE.md",
+        "<dirname>.md — doc at root named after the dir itself (e.g. CASTLE.md inside CASTLE/)",
+        "CLAUDE.md — often encodes project-level orientation for LLM collaborators",
+        "MASTER*.md — if prior RDC was run, MASTER files are consolidated orientation"
+      ]
+    },
+    "tier_2_subdirectories": {
+      "description": "If Tier 1 yields little or nothing, apply Tier 1 sequence inside these known orientation subdirs.",
+      "subdirs_to_check": ["docs/", "doc/", "documentation/", "UNIFIED/"]
+    },
+    "tier_3_inferred": {
+      "description": "If Tier 1 and 2 both empty. The corpus doesn't self-orient. Proceed by inference.",
+      "strategy": [
+        "enumerate all top-level prose files (.md, no-extension likely-prose)",
+        "prioritize files whose names contain: summary, overview, start, intro, begin, first, main",
+        "read the smallest N files first (smallest prose files are statistically most likely to be summaries/indexes/quickrefs)",
+        "then expand to larger files within budget, full reads only",
+        "if still no orientation emerges: report NO_SELF_ORIENTATION as a signal in the RECON report"
+      ]
+    },
+    "harvest_and_follow": {
+      "description": "While reading any orientation doc, harvest file references (markdown links, 'see X.md' mentions, code-block paths). These are leads. Follow them with full reads in priority order after orientation docs are complete.",
+      "lead_priority": "explicitly-mentioned-in-orientation > linked-in-orientation > mentioned-in-passing"
+    },
+    "multi_cluster_sub_orientation": {
+      "description": "If orientation reveals multi-cluster structure (subsystem dirs, each its own project), recurse the Tier 1-3 sequence into each cluster dir to find per-cluster orientation before committing to classify the whole.",
+      "when_to_recurse": "orientation doc says 'this directory contains subsystems X, Y, Z' OR directory structure shows obvious topical subdirs"
+    },
+    "the_no_skim_rule": "Full-read or honest-skip at every tier. Never 'read first 100 lines and move on.' If a file is too large to fit in budget, defer the whole file or read the whole file — never partial-scan."
+  },
+
+  "anchor_veracity_check": {
+    "description": "Verifies an anchor's current health before trusting it as relational context. Runs in ANCHORED and AUDIT_ONLY modes. Non-blocking: SCOUT continues to relational/target work even if anchor is found stale; staleness is surfaced prominently in the report so the downstream reader knows to caveat the relational conclusions.",
+    "checks": [
+      "file_existence — do the anchor's declared output files still exist at their paths? MASTER_*, PEDAGOGY_*, EVALUATIONS_*, PROJECT_*, CLARIFICATION_*, PHASE_*_{ARCH,TODO}.md, INVENTORY*.md",
+      "source_availability — do the source files referenced in the anchor's EVALUATIONS still exist at the paths listed?",
+      "source_mtime_check — have any source files been modified AFTER the anchor's outputs were written? Compare source mtime vs anchor MASTER mtime (as proxy for RDC run time)",
+      "inprogress_terminal_state — does the anchor's INPROGRESS.md show a terminal GREEN_LIGHT verdict, or was the RDC left in-flight / escalated / partial?",
+      "metric_sanity — spot-check claimed metrics in anchor outputs. If PROJECT_X.md says 'N source docs', 'N tests', 'N crates' — do those claims hold against a quick current-state check?",
+      "master_pedagogy_consistency — do PEDAGOGY entries reference concepts still visible in current MASTER? PEDAGOGY entries for concepts that have disappeared from MASTER indicate drift.",
+      "cross_reference_resolvability — do PHASE_*_ARCH docs reference MASTER sections/anchors that still resolve?"
+    ],
+    "sub_verdicts": {
+      "ANCHOR_HEALTHY": "all checks pass; anchor is fresh and internally consistent",
+      "ANCHOR_STALE": "source files have been modified after RDC ran; outputs may not reflect current source truth. Specify which sources drifted and how long after RDC.",
+      "ANCHOR_INCOMPLETE": "RDC was not completed — INPROGRESS does not show terminal GREEN_LIGHT, or required output files are missing. Specify what's missing.",
+      "ANCHOR_DRIFTED": "internal inconsistencies between anchor outputs — e.g., PEDAGOGY references concepts missing from MASTER, PHASE ARCH cross-refs broken. Specify the specific drifts.",
+      "ANCHOR_CORRUPTED": "expected anchor files absent or malformed (empty, truncated, invalid markdown structure). Specify which files."
+    },
+    "blocking": false,
+    "blocking_rationale": "Scout continues forward in the pass with sub-verdict surfaced prominently. Relational or survey analysis still runs; downstream reader sees both the relationship verdict AND the anchor health verdict and decides what to trust.",
+    "output_location": "RECON report ANCHOR VERACITY CHECK section"
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in main conversation during RECON_WORKFLOW. Extracts target + anchor from user invocation (natural language OK), assembles context packet for SCOUT, spawns SCOUT, receives report, relays to user. Never interprets verdicts; relays them verbatim.",
+      "responsibilities": [
+        "parse user invocation to extract target + anchor (ask if ambiguous)",
+        "determine mode (UNANCHORED | ANCHORED | AUDIT_ONLY)",
+        "assemble SCOUT context packet: mode, target path, anchor path + name, required reading, output filename pattern",
+        "spawn SCOUT (single worker, run_in_background OK but foreground acceptable for short RECON passes)",
+        "receive SCOUT report, verify structured fields present",
+        "relay verdict + report path to user",
+        "NOT responsible for acting on verdict — human decides follow-up"
+      ],
+      "does_not": [
+        "auto-trigger RDC or any other workflow from a RECON verdict",
+        "modify target or anchor based on RECON findings",
+        "chain multiple RECONs without explicit human invocation for each"
+      ]
+    },
+    "SCOUT": {
+      "type": "worker",
+      "doc": "workflows/RECON/WORKER_SCOUT.md",
+      "context_access": "full on target (read-only); full on anchor if provided (read-only); write access only to /RECON/<output_file>",
+      "description": "The sole RECON worker. Given a mode (UNANCHORED/ANCHORED/AUDIT_ONLY), a target, and/or an anchor, executes the mode's phase list: orientation discovery, target survey, anchor veracity check, relational analysis — whichever apply. Produces exactly one .md report in /RECON/ at session-summon dir. Never modifies target or anchor.",
+      "inputs": [
+        "mode (UNANCHORED | ANCHORED | AUDIT_ONLY)",
+        "target_dir absolute path (if mode includes target)",
+        "anchor_name + anchor_dir absolute path (if mode includes anchor)",
+        "session-summon directory absolute path (for output placement)",
+        "workflows/RECON/WORKER_SCOUT.md (role doc)",
+        "workflows/SHARED/WORKER_PROTOCOL.md (baseline discipline)"
+      ],
+      "produces": [
+        "exactly one markdown report at <session_summon_dir>/RECON/<filename per mode>",
+        "structured report block at end of agent response for QUEEN"
+      ],
+      "discipline": [
+        "full-read-or-skip — never partial-scan",
+        "orientation-first — locate orientation docs before any content reads",
+        "harvest-and-follow — extract leads from orientation docs, follow them with full reads",
+        "read-only on target and anchor",
+        "no auto-recursion (does not spawn sub-scouts)",
+        "no modification of anything except its single output file",
+        "no fabrication — every claim in the report cites a specific file or evidence",
+        "anchor staleness non-blocking but prominently surfaced"
+      ],
+      "triggered_by": ["QUEEN during RECON_WORKFLOW engagement"]
+    }
+  },
+
+  "flow": {
+    "unanchored": {
+      "performer": "QUEEN spawns SCOUT",
+      "sequence": [
+        "QUEEN parses user invocation, confirms UNANCHORED mode (target only)",
+        "QUEEN assembles SCOUT packet with target_dir + session_summon_dir + role doc references",
+        "QUEEN spawns SCOUT",
+        "SCOUT Phase 1: orientation discovery (3-tier strategy)",
+        "SCOUT Phase 2: target survey (topography, content signal, connective tissue, vocabulary, temporal signal)",
+        "SCOUT emits one of UNANCHORED mode verdicts",
+        "SCOUT writes <session_summon_dir>/RECON/RECON_<target_name>.md",
+        "SCOUT returns structured report",
+        "QUEEN relays report path + verdict to user"
+      ]
+    },
+    "anchored": {
+      "performer": "QUEEN spawns SCOUT",
+      "sequence": [
+        "QUEEN parses user invocation, confirms ANCHORED mode (target + anchor)",
+        "QUEEN assembles SCOUT packet with target_dir + anchor_name + anchor_dir + session_summon_dir",
+        "QUEEN spawns SCOUT",
+        "SCOUT Phase A: anchor veracity check (produce sub-verdict; non-blocking)",
+        "SCOUT Phase 1: orientation discovery on target",
+        "SCOUT Phase 2: target survey",
+        "SCOUT Phase 3: relational analysis (target vs anchor across all relational axes)",
+        "SCOUT emits one of ANCHORED mode verdicts + anchor sub-verdict",
+        "SCOUT writes <session_summon_dir>/RECON/RECON_<target_name>_vs_<anchor_name>.md",
+        "SCOUT returns structured report",
+        "QUEEN relays report path + primary + sub-verdict to user"
+      ]
+    },
+    "audit_only": {
+      "performer": "QUEEN spawns SCOUT",
+      "sequence": [
+        "QUEEN parses user invocation, confirms AUDIT_ONLY mode (anchor only, no target)",
+        "QUEEN assembles SCOUT packet with anchor_name + anchor_dir + session_summon_dir",
+        "QUEEN spawns SCOUT",
+        "SCOUT Phase A: anchor veracity check (full detail)",
+        "SCOUT emits one of AUDIT_ONLY verdicts",
+        "SCOUT writes <session_summon_dir>/RECON/RECON_AUDIT_<anchor_name>.md",
+        "SCOUT returns structured report",
+        "QUEEN relays report path + verdict to user"
+      ]
+    }
+  },
+
+  "verdicts": {
+    "unanchored_catalog": {
+      "RDC_READY": "target is a standalone prose corpus, single project scope. Recommend engaging standard RDC_WORKFLOW.",
+      "RDC_MULTI_PARALLEL": "target is multi-project (like CONTROLLER turned out to be). Recommend engaging RDC_WORKFLOW v1.2.0 with listed clusters.",
+      "SPLIT_FIRST": "target contains mixed content (prose + code + config). Recommend filter pass before RDC — identify prose subset.",
+      "ALREADY_CONSOLIDATED": "target already contains RDC-style outputs (MASTER_*, PEDAGOGY_*, etc.). No new consolidation needed. Point to existing outputs.",
+      "SKIP": "target is not a prose corpus (pure code, pure config, pure data). No RDC value.",
+      "INSUFFICIENT_DATA": "SCOUT cannot classify target honestly from what was visible. Specific clarifying questions attached."
+    },
+    "anchored_catalog": {
+      "SUBSYSTEM_OF_ANCHOR": "target is a component of anchor's corpus. Follow-up options: add target as new cluster inside anchor's RDC, or extend anchor's META.",
+      "PARENT_OF_ANCHOR": "target contains anchor as a subsystem. Follow-up: consider re-anchoring — target becomes new anchor, current anchor becomes subordinate. Like CASTLE containing CONTROLLER.",
+      "PEER_OF_ANCHOR": "target and anchor are siblings of a larger unseen whole. Follow-up: recon the implied parent directory.",
+      "RELATED_BUT_INDEPENDENT": "target shares design DNA / vocabulary / naming register with anchor but is a distinct project. Follow-up: RDC target separately if desired; produce a cross-corpus link doc.",
+      "UNRELATED": "target and anchor have no meaningful relationship. Target stands alone; user decides if RDC is worth it.",
+      "ALREADY_KNOWN": "target is already inside anchor's corpus (already RDC'd as part of anchor, or is a subset already covered). Point to existing outputs.",
+      "CONFLICTING": "target and anchor address shared concepts but disagree. Follow-up: COURT-style reconciliation needed.",
+      "INSUFFICIENT_DATA": "SCOUT cannot characterize relationship honestly. Specific clarifying questions attached."
+    },
+    "audit_only_catalog": {
+      "ANCHOR_HEALTHY": "anchor is fresh, complete, internally consistent. Trust it as relational context for future RECONs.",
+      "ANCHOR_STALE": "sources modified after RDC ran. Specify which sources + how stale. Anchor may not reflect current source truth. Recommend RDC refresh on affected clusters.",
+      "ANCHOR_INCOMPLETE": "RDC incomplete — missing files or non-terminal INPROGRESS state. Specify what's missing. Recommend resumption of RDC.",
+      "ANCHOR_DRIFTED": "anchor internal inconsistencies. Specify drifts (PEDAGOGY-vs-MASTER, broken cross-refs, etc.). Recommend targeted repair.",
+      "ANCHOR_CORRUPTED": "anchor files absent or malformed. Specify which. Recommend re-running RDC."
+    }
+  },
+
+  "hard_rules": {
+    "no_auto_rdc_trigger": "RECON never auto-triggers RDC, SDLC, or any other workflow. Emit verdict + recommendation; human decides follow-up.",
+    "no_auto_recursion": "RECON does not auto-recurse (does not recon parent dirs, siblings, or subdirs without explicit human invocation for each).",
+    "no_target_modification": "SCOUT is read-only on target. Never modifies, creates, deletes anything in target.",
+    "no_anchor_modification": "SCOUT is read-only on anchor. Never modifies anchor outputs even if staleness is detected.",
+    "full_read_or_skip": "No partial scans. Ever. Full read of a file, or honest skip of a file. Budget discipline is achieved by pruning, not skimming.",
+    "orientation_first": "Always apply the 3-tier orientation discovery strategy before any content reads. Don't jump into arbitrary files.",
+    "single_output_file": "RECON produces exactly one markdown report per invocation. No stubs, no INPROGRESS updates, no side files.",
+    "output_location_fixed": "Reports land in /RECON/ at session-summon directory. Not in target, not in anchor, not anywhere else.",
+    "no_fabrication": "Every claim in the RECON report cites a specific file or observable evidence.",
+    "anchor_staleness_non_blocking": "If anchor found stale/incomplete/drifted/corrupted, SCOUT continues pass with sub-verdict surfaced prominently. Does not hard-stop.",
+    "manual_trigger_only": "Every RECON is a separate human invocation. No batching, no queuing, no daemon mode.",
+    "no_workflow_mixing": "While RECON is active, do not interleave with an active SDLC or RDC workflow in the same conversation."
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "scout": "workflows/RECON/WORKER_SCOUT.md"
+  },
+
+  "notes": {
+    "trigger_note": "RECON can be triggered by the literal phrase 'RECON_WORKFLOW' or by natural-language invocation. QUEEN's job is to recognize intent and extract params (target, anchor) from the user's message. If ambiguous, QUEEN asks.",
+    "altitude_note": "RECON operates at the same altitude as RDC in the workflow stack — both are 'understand' operations. RDC builds anchor content; RECON places new territory relative to existing anchors or audits anchor health. They are not sequential — they can be invoked in any order the human chooses.",
+    "territorial_map_note": "Over time, accumulated RECON reports in /RECON/ form a territorial map — a documented sense of how the anchor-holders relate to their surroundings. Useful for continuity across long gaps: open the session-summon dir months later and see at a glance what's been explored.",
+    "anchor_age_note": "The anchor_veracity_check acts as an implicit anchor-age monitor. Every ANCHORED or AUDIT_ONLY recon revalidates the anchor. If anchors go unaudited for long periods, that's OK — the next RECON will catch drift.",
+    "read_budget_note": "SCOUT's read budget is not a fixed token count — it's an honest-skip-or-full-read discipline. A dense anchor + sparse target may need 20 file reads; a sparse anchor + dense target may need 40. Budget is a function of what's needed to answer the question, with full reads the atomic unit."
+  }
+}

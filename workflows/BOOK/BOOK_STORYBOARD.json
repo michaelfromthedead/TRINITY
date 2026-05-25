@@ -1,0 +1,254 @@
+{
+  "version": "1.0.0",
+  "name": "BOOK_STORYBOARD",
+  "description": "Swarm storyboarding workflow. Takes a structured manuscript (ordered chapter files + STRUCTURE.md) and produces a pedagogical/logical skeleton — the storyboard. The storyboard describes what each chapter does, how chapters connect, what the reader knows at each boundary, and what the full argument arc looks like. The storyboard is voice-neutral — written in direct academic descriptive prose, never in the manuscript's declared voice. Voice is a layer applied later in BOOK_EDITORIAL; the storyboard is the structure on which voice is layered. Lighter than BOOK_CONSOLIDATION — one constructive worker, one QA pass. Triggered by the phrase 'BOOK_STORYBOARD'. Owner: Michael. Orchestrator: QUEEN.",
+
+  "trigger": {
+    "phrase": "BOOK_STORYBOARD",
+    "mode": "read_acknowledge_wait",
+    "on_engage": [
+      "QUEEN reads this JSON in full",
+      "QUEEN reads workflows/SHARED/WORKER_QUEEN.md",
+      "QUEEN reads workflows/SHARED/WORKER_PROTOCOL.md",
+      "QUEEN reads workflows/SHARED/WORKER.md",
+      "QUEEN reads BOOK_MANIFEST.json from project root",
+      "QUEEN reads chapter_subset parameter (from invocation or from BOOK_MANIFEST.json workflow_settings; invocation takes precedence; if absent or null = full-manuscript pass); validates all slugs exist in chapters/ if subset specified (per CHAPTER_SUBSET_PROTOCOL.md §4)",
+      "QUEEN reads STRUCTURE.md from project root",
+      "QUEEN verifies chapter files exist in chapters/ directory",
+      "QUEEN scans chapter file frontmatter for drafter_origin: true flags; notes which chapters (if any) are drafter-origin — these chapters receive enhanced QA_STORYBOARD scrutiny (accuracy check applied to every drafter-origin chapter, not sampled)",
+      "QUEEN reports: 'BOOK_STORYBOARD mode engaged. N chapters found. [Subset: X chapters.] [Drafter-origin chapters: Y.]'",
+      "QUEEN proceeds to spawn STORYBOARDER (no additional human prompt needed — input is the project root)"
+    ],
+    "chapter_subset_parameter": {
+      "spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md",
+      "format": "null | [array of chapter slugs] | {from: slug, to: slug}",
+      "source_precedence": "invocation parameter overrides BOOK_MANIFEST.json workflow_settings; absent/null = full-manuscript pass",
+      "behavior_when_present": "STORYBOARDER reads all chapter files for context but produces storyboard entries only for subset chapters; QA_STORYBOARD scopes completeness and arc checks to the subset; non-subset existing storyboard entries are not overwritten",
+      "warning": "subsetting STORYBOARD should only be done when subset represents genuinely new chapters (e.g., DRAFTER-produced); prefer full-manuscript STORYBOARD runs for final passes"
+    },
+    "drafter_origin_pre_step": {
+      "spec": "workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3",
+      "behavior": "before spawning any worker, QUEEN reads frontmatter of each chapter file in the working set; chapters with drafter_origin: true are flagged for enhanced QA_STORYBOARD scrutiny; QA_STORYBOARD verifies every drafter-origin chapter against its storyboard entry (not sampled — all drafter-origin chapters checked); any DRAFTER_GAP markers found in drafter-origin chapters are blocking findings"
+    }
+  },
+
+  "relationship_to_book_family": {
+    "position": "stage_2",
+    "upstream": "BOOK_CONSOLIDATION (produces chapters/ + STRUCTURE.md)",
+    "downstream": "BOOK_EDITORIAL (consumes STORYBOARD.md as reference for flow auditing)",
+    "contract": "BOOK_STORYBOARD produces STORYBOARD.md — the logical skeleton. BOOK_EDITORIAL's JUNIOR_FLOW and REVISION workers reference it to ensure voice application doesn't break logical structure.",
+    "prerequisites": {
+      "required_files": ["STRUCTURE.md", "chapters/CH_<NN>_<TITLE>.md (at least one)"],
+      "required_config": "BOOK_MANIFEST.json with structure.genre filled"
+    }
+  },
+
+  "design_rationale": {
+    "why_separate_workflow": [
+      "Storyboarding is CONSTRUCTIVE — it builds a new artifact (the logical skeleton). BOOK_EDITORIAL is EVALUATIVE — it audits and fixes. Mixing construction and evaluation muddies QA semantics.",
+      "The storyboard is a natural human review point. The author should see and approve logical structure before voice and editorial polish are applied.",
+      "If the structure is wrong, fixing it after voice application wastes work. The storyboard catches structural problems early.",
+      "STORYBOARD.md serves as a reference document for BOOK_EDITORIAL's workers — a stable contract they audit against."
+    ],
+    "why_voice_neutral": [
+      "The storyboard describes WHAT happens in each chapter, not HOW it's said.",
+      "Voice-neutral description allows the storyboard to serve as a reference regardless of which voice template is applied.",
+      "Mixing voice into the storyboard would couple two orthogonal concerns: logical structure and presentation style."
+    ]
+  },
+
+  "roles": {
+    "QUEEN": {
+      "type": "orchestrator",
+      "doc": "workflows/SHARED/WORKER_QUEEN.md",
+      "not_a_spawned_worker": true,
+      "description": "QUEEN is Claude in the main conversation. Spawns STORYBOARDER, manages QA, executes verdicts.",
+      "responsibilities": [
+        "verify prerequisite files exist (STRUCTURE.md, chapter files, BOOK_MANIFEST.json)",
+        "spawn STORYBOARDER with full manuscript context",
+        "spawn QA_STORYBOARD after STORYBOARDER completes",
+        "execute verdict (GREEN_LIGHT, REVISE, ESCALATE)",
+        "manage revision_counter",
+        "write progress entries to INPROGRESS.md"
+      ]
+    },
+    "STORYBOARDER": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_STORYBOARDER.md",
+      "context_access": "full",
+      "description": "Constructive worker. Reads the ENTIRE manuscript (all chapter files + STRUCTURE.md) and produces the storyboard. Single worker, not a per-chapter loop, because the storyboard must capture inter-chapter relationships and the full-work arc.",
+      "inputs": [
+        "all chapter files (chapters/CH_<NN>_<TITLE>.md) — always read in full for context; if chapter_subset is specified, produce entries only for subset chapters",
+        "STRUCTURE.md",
+        "BOOK_MANIFEST.json (for genre/structure context)",
+        "PEDAGOGY.md (optional — for context on why concepts evolved, if available)",
+        "chapter_subset parameter (if specified — constrains which chapter entries to produce; does not limit reading)"
+      ],
+      "produces": ["STORYBOARD.md"],
+      "per_chapter_output": {
+        "opening_state": "what the reader knows/believes entering this chapter",
+        "key_moves": "the 3-7 major conceptual steps the chapter takes, in voice-neutral academic-descriptive prose",
+        "closing_state": "what the reader knows/believes exiting this chapter",
+        "concepts_introduced": "new terms, ideas, frameworks appearing for the first time",
+        "concepts_required": "prerequisites — things the reader must already understand to follow this chapter",
+        "chapter_function": "what role this chapter plays in the full work's argument/exploration"
+      },
+      "full_work_output": {
+        "arc_map": "how chapters build on each other, where the work's argument/exploration peaks, overall trajectory",
+        "prerequisite_chain": "directed acyclic graph of concept dependencies across chapters — concept X in chapter N requires concept Y from chapter M",
+        "reader_journey": "narrative description of what the reader UNDERSTANDS at each stage — not what they read, but what they know"
+      },
+      "voice_neutrality_rule": "ALL storyboard prose is in direct academic descriptive voice. The storyboard describes structure and content. It never uses the manuscript's declared voice (Socratic, Feynman, etc.). If the manuscript's voice is Socratic and asks 'What would happen if we removed this constraint?', the storyboard says 'Chapter 5 poses the question of constraint removal and explores its consequences.' Description, not performance.",
+      "triggered_by": ["QUEEN after prerequisite verification", "QUEEN during REVISE cycle"]
+    },
+    "QA_STORYBOARD": {
+      "type": "worker",
+      "doc": "workflows/BOOK/WORKER_QA_STORYBOARD.md",
+      "context_access": "full",
+      "stance": "adversarial — structural soundness auditor",
+      "description": "Single QA worker (not a multi-pass unit — storyboard is a planning document, lighter QA appropriate). Verifies the storyboard is structurally sound, complete, and consistent with the actual manuscript.",
+      "inputs": [
+        "STORYBOARD.md",
+        "all chapter files (for spot-checking storyboard accuracy)",
+        "STRUCTURE.md",
+        "BOOK_MANIFEST.json (for genre expectations)"
+      ],
+      "produces": [
+        "QA report: issues found, categorized",
+        "verdict recommendation to QUEEN"
+      ],
+      "checks": {
+        "prerequisite_satisfaction": "for every concept marked 'required' in a chapter's storyboard entry, is that concept marked 'introduced' in an earlier chapter? No forward dependencies allowed.",
+        "progressive_arc": "does the work build progressively? No chapter is an island — every chapter connects to what came before and after.",
+        "completeness": "does the storyboard cover every chapter listed in STRUCTURE.md (or every chapter in the subset if chapter_subset is specified)?",
+        "accuracy": "spot-check: does the storyboard's description of what chapter N does match what chapter N actually contains? At minimum, verify 3 randomly selected chapters. EXCEPTION: all chapters with drafter_origin: true are checked unconditionally — not sampled. This is the enhanced drafter-origin scrutiny required by DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3.",
+        "drafter_origin_enhanced_scrutiny": "for every chapter with drafter_origin: true in frontmatter: (1) verify DRAFTER's prose semantically matches the storyboard entry's description of what the chapter does; (2) check for any [DRAFTER_GAP: reason] placeholder markers — any such marker is a blocking finding unless the marker has been acknowledged by human annotation as [DRAFTER_GAP_ACK: reason]; (3) verify concepts listed in concepts_introduced are actually developed sufficiently in the prose, not just mentioned in passing. This check is in addition to all standard checks. Spec: workflows/BOOK/WORKER_DRAFTER.md §3.1 and §5.2.",
+        "genre_alignment": "does the storyboard's described structure match what BOOK_MANIFEST's declared genre expects? An academic-exploratory book should have a discovery arc, not a textbook-declarative structure. A meta-study should have a systematic coverage pattern.",
+        "dependency_acyclicity": "is the prerequisite chain a DAG? No circular dependencies.",
+        "reader_journey_coherence": "does the reader journey make sense as a progression? Are there gaps where the reader would lack context?"
+      },
+      "triggered_by": ["QUEEN after STORYBOARDER completes"]
+    }
+  },
+
+  "flow": {
+    "prestep": {
+      "performer": "QUEEN",
+      "type": "automation",
+      "actions": [
+        "verify STRUCTURE.md exists at project root",
+        "verify chapters/ directory exists with at least one chapter file",
+        "verify BOOK_MANIFEST.json exists with structure.genre filled",
+        "if any prerequisite missing: report what's missing, ESCALATE immediately",
+        "read STRUCTURE.md to get chapter count and ordering",
+        "initialize INPROGRESS.md entry for BOOK_STORYBOARD engagement"
+      ]
+    },
+    "storyboarding": {
+      "performer": "QUEEN spawns STORYBOARDER",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN assembles context packet: all chapter files + STRUCTURE.md + BOOK_MANIFEST.json + PEDAGOGY.md (if exists) + WORKER_STORYBOARDER.md + WORKER_PROTOCOL.md",
+        "QUEEN spawns STORYBOARDER",
+        "STORYBOARDER returns: STORYBOARD.md",
+        "QUEEN writes STORYBOARDER report to INPROGRESS.md",
+        "QUEEN proceeds to QA"
+      ]
+    },
+    "qa": {
+      "performer": "QUEEN spawns QA_STORYBOARD",
+      "type": "single_worker",
+      "actions": [
+        "QUEEN spawns QA_STORYBOARD with: STORYBOARD.md + all chapter files + STRUCTURE.md + BOOK_MANIFEST.json",
+        "QA_STORYBOARD returns: QA report + verdict recommendation",
+        "QUEEN evaluates QA results → determines verdict"
+      ]
+    },
+    "main_sequence": [
+      "PRESTEP: verify prerequisites, initialize",
+      "STORYBOARDING: STORYBOARDER reads full manuscript, produces STORYBOARD.md",
+      "QA: QA_STORYBOARD reviews storyboard for structural soundness",
+      "QUEEN executes verdict"
+    ]
+  },
+
+  "verdicts": {
+    "GREEN_LIGHT": {
+      "trigger": "QA_STORYBOARD finds no issues",
+      "terminal": true,
+      "actions": [
+        "QUEEN writes completion summary to INPROGRESS.md",
+        "QUEEN commits STORYBOARD.md to project root",
+        "QUEEN reports: 'BOOK_STORYBOARD complete. Storyboard ready for human review. After review, trigger BOOK_EDITORIAL.'"
+      ]
+    },
+    "REVISE": {
+      "trigger": "QA_STORYBOARD finds issues (broken prerequisites, missing coverage, inaccurate descriptions, structural problems)",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes QA findings to INPROGRESS.md",
+        "QUEEN re-spawns STORYBOARDER with: full manuscript + current STORYBOARD.md + QA findings as correction directive",
+        "STORYBOARDER revises STORYBOARD.md addressing flagged issues",
+        "QUEEN re-spawns QA_STORYBOARD (full re-check)",
+        "revision_counter++"
+      ],
+      "loop_guard": "revision_counter; at 3, auto-escalate"
+    },
+    "ESCALATE": {
+      "trigger": "revision_counter >= 3 OR QA finds issues suggesting chapter structure itself is wrong (not just the storyboard description — the actual chapters need restructuring, requiring return to BOOK_CONSOLIDATION) OR prerequisites missing at engagement",
+      "terminal": false,
+      "actions": [
+        "QUEEN writes escalation summary to INPROGRESS.md (cycles taken, findings history, specific blockers)",
+        "QUEEN pauses worker spawning",
+        "QUEEN reports to human: what's blocked, whether the issue is storyboard-level or chapter-structure-level",
+        "QUEEN waits for human direction"
+      ],
+      "resumption": "human resolves; QUEEN resumes from STORYBOARDING or directs return to BOOK_CONSOLIDATION"
+    }
+  },
+
+  "loop_limits": {
+    "revision_cycles": 3,
+    "counter_semantics": {
+      "revision_counter": "increments on each REVISE cycle. At 3, auto-escalate."
+    }
+  },
+
+  "context_access": {
+    "full_access_roles": ["QUEEN", "STORYBOARDER", "QA_STORYBOARD"],
+    "note": "no cleanroom roles — all workers need full visibility"
+  },
+
+  "hard_rules": {
+    "storyboard_is_voice_neutral": true,
+    "every_chapter_in_structure_md_has_storyboard_entry": true,
+    "no_forward_dependencies_in_prerequisite_chain": true,
+    "prerequisite_chain_must_be_acyclic": true,
+    "storyboarder_reads_full_manuscript_not_summaries": true,
+    "storyboard_is_a_planning_document_not_prose": true,
+    "qa_spot_checks_against_actual_chapter_content": true,
+    "inprogress_prepend_only": true,
+    "no_fabricated_structure": true,
+    "subset_preserves_existing_storyboard_entries": true,
+    "subset_invocation_logged_to_inprogress": true,
+    "drafter_origin_chapters_always_checked_not_sampled": true,
+    "drafter_gap_markers_are_blocking_in_qa_storyboard": true,
+    "drafter_origin_accuracy_check_is_semantic_not_surface": true,
+    "chapter_subset_parameter_spec": "workflows/BOOK/CHAPTER_SUBSET_PROTOCOL.md §3.2",
+    "drafter_origin_scrutiny_spec": "workflows/BOOK/DRAFTER_AUTHORSHIP_STANCE.md §Safeguard 3"
+  },
+
+  "worker_docs": {
+    "shared_contract": "workflows/SHARED/WORKER_PROTOCOL.md",
+    "index": "workflows/SHARED/WORKER.md",
+    "queen": "workflows/SHARED/WORKER_QUEEN.md",
+    "storyboarder": "workflows/BOOK/WORKER_STORYBOARDER.md",
+    "qa_storyboard": "workflows/BOOK/WORKER_QA_STORYBOARD.md"
+  },
+
+  "notes": {
+    "lightweight_note": "This is the lightest workflow in the BOOK family — one constructive worker + one QA pass. The storyboard is a planning document, not a full manuscript transformation, so the heavy machinery of COURT and multi-pass QA is not needed.",
+    "human_review_note": "After GREEN_LIGHT, the human should review STORYBOARD.md before triggering BOOK_EDITORIAL. The storyboard is the structural contract that editorial workers audit against — if the structure is wrong here, editorial will enforce the wrong structure.",
+    "entry_without_consolidation_note": "If entering the BOOK pipeline at BOOK_STORYBOARD (skipping consolidation), the human must provide: chapter files in chapters/ directory, STRUCTURE.md, and BOOK_MANIFEST.json. These are normally produced by BOOK_CONSOLIDATION but can be human-authored."
+  }
+}

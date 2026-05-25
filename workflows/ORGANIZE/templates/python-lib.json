@@ -1,0 +1,135 @@
+{
+  "name": "python-lib",
+  "version": "1.0.0",
+  "applies_to": {
+    "description": "Python library project with src/ layout, tests/ mirror, and pyproject.toml at root. Suitable for packages intended for distribution via PyPI or internal reuse as a library. Conventional structure: src/<pkg>/__init__.py, tests/test_*.py, docs/ for documentation, scripts/ for CI/utility helpers.",
+    "signals": [
+      "lang:python",
+      "kind:library",
+      "manifest:pyproject.toml",
+      "structure:src_tests"
+    ]
+  },
+  "default_rules": [
+    {
+      "id": "t1",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "src/**/*.py",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Python source files under src/ are at their canonical location; the src/ layout is the authoritative package root for this template"
+    },
+    {
+      "id": "t2",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "tests/**/*.py",
+      "destination": "IN_PLACE",
+      "priority": 100,
+      "active": true,
+      "note": "Test files already under tests/ are canonically placed; no action needed"
+    },
+    {
+      "id": "t3",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "**/test_*.py",
+      "destination": "tests/",
+      "priority": 90,
+      "active": true,
+      "note": "Python test files not already under tests/ should be relocated there; stray test files often accumulate at root or in src/ during exploratory development — ASK_USER if the file appears to be a utility script that happens to have test_ prefix without pytest imports"
+    },
+    {
+      "id": "t4",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "docs/**/*.md",
+      "destination": "IN_PLACE",
+      "priority": 85,
+      "active": true,
+      "note": "Markdown documentation already under docs/ is canonically placed; no action needed"
+    },
+    {
+      "id": "t5",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "scripts/**/*.sh",
+      "destination": "IN_PLACE",
+      "priority": 82,
+      "active": true,
+      "note": "Shell scripts already under scripts/ are canonically placed; no action needed"
+    },
+    {
+      "id": "t6",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "**/*.sh",
+      "destination": "scripts/",
+      "priority": 70,
+      "active": true,
+      "note": "Shell scripts not already under scripts/ should be moved there; python-lib projects typically centralize all CI/utility scripts in scripts/"
+    },
+    {
+      "id": "t7",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "{README,CHANGELOG,LICENSE,CONTRIBUTING,SECURITY}.md",
+      "destination": "IN_PLACE",
+      "priority": 75,
+      "active": true,
+      "note": "Standard root-level documentation files are canonically at project root; must evaluate before the loose-markdown rule t8 to prevent misrouting"
+    },
+    {
+      "id": "t8",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "glob",
+      "pattern": "*.md",
+      "destination": "docs/",
+      "priority": 50,
+      "active": true,
+      "note": "Loose markdown at project root not matched by t7 (README, CHANGELOG, etc.) should move to docs/; this catches draft docs, design notes, and one-off memos that accumulate at root"
+    },
+    {
+      "id": "t9",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(tmp|scratch)[^/]*$",
+      "destination": ".delete",
+      "priority": 30,
+      "active": true,
+      "note": "Files whose basename begins with 'tmp' or 'scratch' are temporary work artefacts with no long-term value; quarantine to .delete — always ASK_USER before ratifying .delete moves"
+    },
+    {
+      "id": "t10",
+      "created": "2026-04-18T00:00:00Z",
+      "kind": "regex",
+      "pattern": "(notes\\d+|fix\\d+)\\.md$",
+      "destination": ".archive",
+      "priority": 20,
+      "active": true,
+      "note": "Numbered note/fix files (notes1.md, fix3.md) are historical threads that have accumulated over time; archive rather than delete — ASK_USER-worthy because author may have attachment to specific entries; FLAG_NEW_RULE if this pattern is recurring"
+    }
+  ],
+  "default_ignore_paths": [
+    ".git/**",
+    ".venv/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    ".pytest_cache/**",
+    ".mypy_cache/**",
+    "**/*.egg-info/**",
+    "dist/**",
+    "build/**",
+    ".tox/**",
+    ".claude/**",
+    ".claude-flow/**",
+    ".hive-mind/**",
+    ".mcp.json",
+    ".delete/**",
+    ".archive/**"
+  ],
+  "notes": "Standard python-lib template. Assumes src/ layout (src/mypkg/__init__.py) — the conventional layout for PyPI-distributed libraries. If the project uses flat layout (mypkg/ at root instead of src/mypkg/), rule t1 pattern should be changed to '<pkg_name>/**/*.py'. Rule t3 (**/test_*.py → tests/) is intentionally broad — TRIAGE should check for pytest imports before confirming; utility files near tests/ that lack pytest imports should stay IN_PLACE. The ignore_paths list covers all standard Python tooling caches; users may need to add project-specific build output paths.",
+  "inherits_from": null
+}
