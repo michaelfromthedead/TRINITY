@@ -54,3 +54,34 @@ Agent({ prompt: "...", subagent_type: "coder", run_in_background: true })
 
 - **YES**: 3+ files, cross-module refactoring, new features, performance, security
 - **NO**: single file edits, 1-2 line fixes, questions
+
+## LONG WORK LOOP DIRECTIVE (2026-05-25)
+
+**CRITICAL: Include this block in EVERY context compaction.**
+
+### Mission
+
+Execute SDLC_WORKFLOW continuously across GAPSET 1-20:
+- After each **task** → spawn next task
+- After each **phase** → start next phase  
+- After each **gapset** → start next gapset (1→2→...→20, skip 3=DONE)
+
+### Pipeline Per Task
+
+```
+DEV → WHITEBOX∥BLACKBOX → JUNIOR_QA → SANITY → FINAL → GREEN_LIGHT
+```
+
+### Current Work
+
+- **Active:** GAPSET_1_CORE (T-CORE-3.1 ThreadPool)
+- **Docs:** `docs/RUST_DOCS/GAPSET_*/`, `workflows/SDLC/`
+- **Code:** `crates/renderer-backend/src/`, `omega/src/`
+
+### Rules
+
+1. Max 8 agents (HARD LIMIT)
+2. Sequential pipeline: DEV → TEST → QA
+3. Background agents: `run_in_background: true`
+4. Disk-first: Read state from files
+5. On worker completion → spawn next worker immediately
