@@ -80,6 +80,21 @@ from engine.animation.ik.ccd import (
     ConstrainedCCDSolver,
 )
 
+# Joint limits (for CCD and other solvers)
+from engine.animation.ik.joint_limits import (
+    EulerOrder,
+    JointLimit,
+    EulerLimit,
+    SwingTwistLimit,
+    HingeLimit,
+    quat_to_euler,
+    euler_to_quat,
+    create_elbow_limit,
+    create_knee_limit,
+    create_shoulder_limit,
+    create_hip_limit,
+)
+
 # Jacobian-based IK
 from engine.animation.ik.jacobian import (
     JacobianIK,
@@ -171,6 +186,18 @@ __all__ = [
     "RotationLimit",
     "CCDSolverWithWeights",
     "ConstrainedCCDSolver",
+    # Joint limits
+    "EulerOrder",
+    "JointLimit",
+    "EulerLimit",
+    "SwingTwistLimit",
+    "HingeLimit",
+    "quat_to_euler",
+    "euler_to_quat",
+    "create_elbow_limit",
+    "create_knee_limit",
+    "create_shoulder_limit",
+    "create_hip_limit",
     # Jacobian
     "JacobianIK",
     "JacobianResult",
