@@ -38,6 +38,7 @@ class LayerBlendMode(Enum):
 
     OVERRIDE = auto()      # Replace bones with layer values
     ADDITIVE = auto()      # Add layer transforms to base
+    MULTIPLY = auto()      # Multiply base by layer (component-wise)
     OVERRIDE_ADDITIVE = auto()  # Override with additive result
 
 
@@ -131,6 +132,12 @@ class AnimationLayer:
                 # Additive blend
                 additive = Transform.identity().lerp(layer_pose.transforms[i], mask_weight)
                 result.transforms[i] = result.transforms[i] + additive
+            elif self.blend_mode == LayerBlendMode.MULTIPLY:
+                # Multiply blend: result = base * layer (component-wise)
+                multiplied = self._multiply_transform(
+                    base_pose.transforms[i], layer_pose.transforms[i]
+                )
+                result.transforms[i] = base_pose.transforms[i].lerp(multiplied, mask_weight)
             elif self.blend_mode == LayerBlendMode.OVERRIDE_ADDITIVE:
                 # Override with additive transform
                 additive_result = base_pose.transforms[i] + layer_pose.transforms[i]
@@ -147,11 +154,49 @@ class AnimationLayer:
         """Apply layer to all bones."""
         if self.blend_mode == LayerBlendMode.ADDITIVE:
             return base_pose.additive_blend(layer_pose, weight)
+        elif self.blend_mode == LayerBlendMode.MULTIPLY:
+            return self._multiply_blend(base_pose, layer_pose, weight)
         elif self.blend_mode == LayerBlendMode.OVERRIDE_ADDITIVE:
             additive_result = base_pose.additive_blend(layer_pose, 1.0)
             return base_pose.lerp(additive_result, weight)
         else:  # OVERRIDE
             return base_pose.lerp(layer_pose, weight)
+
+    def _multiply_transform(self, base: Transform, factor: Transform) -> Transform:
+        """Multiply two transforms component-wise."""
+        # Position: component-wise multiplication
+        new_position = tuple(
+            b * f for b, f in zip(base.position, factor.position)
+        )
+        # Rotation: quaternion multiplication (compose rotations)
+        new_rotation = Transform._multiply_quaternion(base.rotation, factor.rotation)
+        # Scale: component-wise multiplication
+        new_scale = tuple(
+            b * f for b, f in zip(base.scale, factor.scale)
+        )
+        return Transform(position=new_position, rotation=new_rotation, scale=new_scale)
+
+    def _multiply_blend(self, base_pose: Pose, layer_pose: Pose,
+                        weight: float) -> Pose:
+        """Apply multiply blend to all bones."""
+        max_bones = max(base_pose.bone_count(), layer_pose.bone_count())
+        result_transforms = []
+
+        for i in range(max_bones):
+            base = base_pose.get_transform(i)
+            factor = layer_pose.get_transform(i)
+
+            # Compute multiplied result
+            multiplied = self._multiply_transform(base, factor)
+
+            # Lerp from base to multiplied based on weight
+            result_transforms.append(base.lerp(multiplied, weight))
+
+        return Pose(
+            transforms=result_transforms,
+            root_motion=base_pose.root_motion,
+            skeleton=base_pose.skeleton,
+        )
 
 
 # =============================================================================
@@ -524,6 +569,21 @@ class LayerStackBuilder:
     ) -> "LayerStackBuilder":
         """Add an additive layer."""
         return self.add_layer(name, source, weight, mask, LayerBlendMode.ADDITIVE)
+
+    def set_base(self, source: AnimationNode) -> "LayerStackBuilder":
+        """Set the base layer source.
+
+        Inserts a base layer at position 0 with full weight, no mask,
+        and OVERRIDE blend mode.
+        """
+        base_layer = AnimationLayer(
+            name="_base",
+            source=source,
+            weight=1.0,
+            blend_mode=LayerBlendMode.OVERRIDE,
+        )
+        self._layers.insert(0, base_layer)
+        return self
 
     def build(self) -> LayerStack:
         """Build the layer stack."""

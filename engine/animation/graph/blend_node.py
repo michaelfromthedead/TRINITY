@@ -8,6 +8,8 @@ Provides the building blocks for animation processing:
 - LayerNode: Multiple layers with masks
 - MirrorNode: Mirrors animation left/right
 - TimeScaleNode: Modifies playback speed
+- LoopNode: Controls loop behavior (once, repeat, ping-pong)
+- SubGraphNode: Evaluates nested animation graphs
 
 Each node implements evaluate(context) -> Pose and can be combined
 in animation graphs for complex animation behaviors.
@@ -22,9 +24,11 @@ from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
 
 from .animation_graph import (
+    AnimationGraph,
     AnimationNode,
     BoneMask,
     GraphContext,
+    GraphParameter,
     Pose,
     Skeleton,
     Transform,
@@ -393,6 +397,7 @@ class LayerBlendMode(Enum):
 
     OVERRIDE = auto()  # Replace base with layer
     ADDITIVE = auto()  # Add layer on top of base
+    MULTIPLY = auto()  # Multiply base by layer (component-wise)
 
 
 @dataclass
@@ -750,6 +755,371 @@ class SelectNode(AnimationNode):
 
 
 # =============================================================================
+# LOOP NODE
+# =============================================================================
+
+
+class LoopControlMode(Enum):
+    """Loop control modes for LoopNode."""
+
+    ONCE = auto()      # Play once and stop
+    REPEAT = auto()    # Loop indefinitely
+    PING_PONG = auto() # Play forward, then backward, repeat
+
+
+class LoopNode(AnimationNode):
+    """
+    A node that controls loop behavior for animations.
+
+    LoopNode wraps a child node and manages loop timing, including:
+    - Start and end time within the animation
+    - Loop count (finite or infinite)
+    - Loop mode (once, repeat, ping-pong)
+
+    The evaluate() method returns the pose from the child at the
+    correct loop-adjusted time.
+    """
+
+    _abstract = False
+
+    def __init__(
+        self,
+        node_id: str,
+        loop_mode: LoopControlMode = LoopControlMode.REPEAT,
+        loop_count: int = -1,
+        start_time: float = 0.0,
+        end_time: Optional[float] = None,
+    ) -> None:
+        """
+        Initialize the loop node.
+
+        Args:
+            node_id: Unique identifier for this node.
+            loop_mode: How the animation should loop.
+            loop_count: Number of loops (-1 for infinite).
+            start_time: Start time within the animation range.
+            end_time: End time within the animation range (None = use full duration).
+        """
+        super().__init__(node_id)
+        self.loop_mode = loop_mode
+        self.loop_count = loop_count
+        self.start_time = start_time
+        self.end_time = end_time
+
+        # Internal state
+        self._current_time: float = 0.0
+        self._current_loop: int = 0
+        self._is_forward: bool = True  # For ping-pong
+        self._is_finished: bool = False
+
+        # Callbacks
+        self.on_loop_complete: Optional[Callable[[int], None]] = None
+        self.on_finished: Optional[Callable[[], None]] = None
+
+    def set_input(self, node: AnimationNode) -> None:
+        """Set the child animation node."""
+        self.inputs["input"] = node
+
+    def reset(self) -> None:
+        """Reset the loop to the beginning."""
+        self._current_time = self.start_time
+        self._current_loop = 0
+        self._is_forward = True
+        self._is_finished = False
+
+    @property
+    def is_finished(self) -> bool:
+        """Check if the loop has completed all iterations."""
+        return self._is_finished
+
+    @property
+    def current_loop(self) -> int:
+        """Get the current loop iteration (0-based)."""
+        return self._current_loop
+
+    @property
+    def normalized_loop_time(self) -> float:
+        """Get the normalized time within the current loop (0-1)."""
+        duration = self._get_loop_duration()
+        if duration <= 0:
+            return 0.0
+        return (self._current_time - self.start_time) / duration
+
+    def _get_loop_duration(self) -> float:
+        """Get the duration of one loop iteration."""
+        if self.end_time is not None:
+            return max(0.0, self.end_time - self.start_time)
+        # If no end time, use input node's duration if available
+        input_node = self.inputs.get("input")
+        if input_node and hasattr(input_node, "duration"):
+            return max(0.0, input_node.duration - self.start_time)
+        return 1.0  # Default duration
+
+    def _advance_time(self, dt: float) -> float:
+        """
+        Advance time and handle loop transitions.
+
+        Returns the effective time to sample the child node.
+        """
+        if self._is_finished:
+            return self._current_time
+
+        duration = self._get_loop_duration()
+        if duration <= 0:
+            return self.start_time
+
+        # Advance time based on direction
+        if self._is_forward:
+            self._current_time += dt
+        else:
+            self._current_time -= dt
+
+        effective_time = self._current_time
+
+        # Handle loop boundary
+        if self.loop_mode == LoopControlMode.ONCE:
+            # Play once and stop
+            if self._current_time >= self.start_time + duration:
+                self._current_time = self.start_time + duration
+                effective_time = self._current_time
+                self._is_finished = True
+                if self.on_finished:
+                    self.on_finished()
+
+        elif self.loop_mode == LoopControlMode.REPEAT:
+            # Loop indefinitely or count times
+            if self._current_time >= self.start_time + duration:
+                self._current_loop += 1
+                if self.on_loop_complete:
+                    self.on_loop_complete(self._current_loop)
+
+                if self.loop_count > 0 and self._current_loop >= self.loop_count:
+                    self._current_time = self.start_time + duration
+                    effective_time = self._current_time
+                    self._is_finished = True
+                    if self.on_finished:
+                        self.on_finished()
+                else:
+                    # Wrap around
+                    overflow = self._current_time - (self.start_time + duration)
+                    self._current_time = self.start_time + (overflow % duration)
+                    effective_time = self._current_time
+
+        elif self.loop_mode == LoopControlMode.PING_PONG:
+            # Play forward then backward
+            if self._is_forward and self._current_time >= self.start_time + duration:
+                self._current_time = self.start_time + duration
+                self._is_forward = False
+                effective_time = self._current_time
+            elif not self._is_forward and self._current_time <= self.start_time:
+                self._current_time = self.start_time
+                self._is_forward = True
+                self._current_loop += 1
+                if self.on_loop_complete:
+                    self.on_loop_complete(self._current_loop)
+
+                if self.loop_count > 0 and self._current_loop >= self.loop_count:
+                    self._is_finished = True
+                    if self.on_finished:
+                        self.on_finished()
+
+                effective_time = self._current_time
+
+        return effective_time
+
+    def evaluate(self, context: GraphContext) -> Pose:
+        """Evaluate the loop node and return the pose at the current loop time."""
+        # Advance time
+        effective_time = self._advance_time(context.dt)
+
+        # Get input node
+        input_node = self.inputs.get("input")
+        if not input_node:
+            return Pose()
+
+        # Create context with adjusted normalized time
+        duration = self._get_loop_duration()
+        if duration > 0:
+            normalized = (effective_time - self.start_time) / duration
+        else:
+            normalized = 0.0
+
+        loop_context = GraphContext(
+            parameters=context.parameters,
+            dt=0.0,  # Child doesn't advance time; we control it
+            skeleton=context.skeleton,
+            bone_masks=context.bone_masks,
+            normalized_time=normalized,
+            sync_group=context.sync_group,
+            layer_weight=context.layer_weight,
+        )
+
+        # If the input is a ClipNode, seek to the effective time
+        if hasattr(input_node, "seek"):
+            input_node.seek(effective_time)
+
+        return input_node.evaluate(loop_context)
+
+
+# =============================================================================
+# SUBGRAPH NODE
+# =============================================================================
+
+
+class SubGraphNode(AnimationNode):
+    """
+    A node that evaluates a nested animation graph.
+
+    SubGraphNode enables hierarchical graph composition by containing
+    a reference to another AnimationGraph. Parameters can be passed
+    from the parent context to the nested graph.
+
+    This is useful for:
+    - Reusable animation behaviors
+    - Complex state machines as subgraphs
+    - Modular animation systems
+    """
+
+    _abstract = False
+
+    def __init__(
+        self,
+        node_id: str,
+        graph: Optional["AnimationGraph"] = None,
+        parameter_mapping: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """
+        Initialize the subgraph node.
+
+        Args:
+            node_id: Unique identifier for this node.
+            graph: The nested animation graph to evaluate.
+            parameter_mapping: Maps parent parameter names to child parameter names.
+                              Format: {child_param_name: parent_param_name}
+        """
+        super().__init__(node_id)
+        self._graph: Optional["AnimationGraph"] = graph
+        self.parameter_mapping: Dict[str, str] = parameter_mapping or {}
+
+        # Optional input overrides for specific child graph inputs
+        self.input_overrides: Dict[str, AnimationNode] = {}
+
+    @property
+    def graph(self) -> Optional["AnimationGraph"]:
+        """Get the nested animation graph."""
+        return self._graph
+
+    @graph.setter
+    def graph(self, value: Optional["AnimationGraph"]) -> None:
+        """Set the nested animation graph."""
+        self._graph = value
+        self.invalidate_cache()
+
+    def set_graph(self, graph: "AnimationGraph") -> None:
+        """Set the nested animation graph."""
+        self._graph = graph
+        self.invalidate_cache()
+
+    def map_parameter(self, child_param: str, parent_param: str) -> None:
+        """Map a parent parameter to a child graph parameter.
+
+        Args:
+            child_param: Parameter name in the child graph.
+            parent_param: Parameter name in the parent context.
+        """
+        self.parameter_mapping[child_param] = parent_param
+
+    def unmap_parameter(self, child_param: str) -> None:
+        """Remove a parameter mapping."""
+        self.parameter_mapping.pop(child_param, None)
+
+    def set_input_override(self, input_name: str, node: AnimationNode) -> None:
+        """Override a specific input in the child graph with an external node.
+
+        This allows connecting parent graph nodes to specific inputs
+        within the child graph.
+        """
+        self.input_overrides[input_name] = node
+
+    def clear_input_override(self, input_name: str) -> None:
+        """Clear an input override."""
+        self.input_overrides.pop(input_name, None)
+
+    def _build_child_parameters(
+        self, parent_context: GraphContext
+    ) -> Dict[str, GraphParameter]:
+        """Build parameter dict for child graph by applying mappings."""
+        if not self._graph:
+            return {}
+
+        # Start with the child graph's own parameters
+        child_params: Dict[str, GraphParameter] = {}
+        for name, param in self._graph.parameters.items():
+            # Check if this parameter is mapped to a parent parameter
+            if name in self.parameter_mapping:
+                parent_name = self.parameter_mapping[name]
+                parent_param = parent_context.parameters.get(parent_name)
+                if parent_param is not None:
+                    # Create a copy with the parent's current value
+                    child_params[name] = GraphParameter(
+                        name=name,
+                        param_type=param.param_type,
+                        default_value=param.default_value,
+                        min_value=param.min_value,
+                        max_value=param.max_value,
+                        enum_values=param.enum_values,
+                    )
+                    child_params[name].value = parent_param.value
+                else:
+                    child_params[name] = param
+            else:
+                child_params[name] = param
+
+        return child_params
+
+    def evaluate(self, context: GraphContext) -> Pose:
+        """Evaluate the nested graph and return its output pose."""
+        if not self._graph:
+            return Pose()
+
+        # Build child context with mapped parameters
+        child_params = self._build_child_parameters(context)
+
+        child_context = GraphContext(
+            parameters=child_params,
+            dt=context.dt,
+            skeleton=context.skeleton,
+            bone_masks=context.bone_masks,
+            normalized_time=context.normalized_time,
+            sync_group=context.sync_group,
+            layer_weight=context.layer_weight,
+        )
+
+        # Apply input overrides: inject external nodes into child graph
+        # This temporarily replaces inputs in the child graph
+        original_inputs: Dict[str, Dict[str, Optional[AnimationNode]]] = {}
+        for input_name, override_node in self.input_overrides.items():
+            # Find nodes in child graph that might use this input
+            for node in self._graph.nodes.values():
+                if input_name in node.inputs:
+                    if node.node_id not in original_inputs:
+                        original_inputs[node.node_id] = {}
+                    original_inputs[node.node_id][input_name] = node.inputs[input_name]
+                    node.inputs[input_name] = override_node
+
+        try:
+            # Evaluate the child graph
+            return self._graph.evaluate(child_context)
+        finally:
+            # Restore original inputs
+            for node_id, inputs_dict in original_inputs.items():
+                node = self._graph.nodes.get(node_id)
+                if node:
+                    for input_name, original_node in inputs_dict.items():
+                        node.inputs[input_name] = original_node
+
+
+# =============================================================================
 # EXPORTS
 # =============================================================================
 
@@ -772,4 +1142,7 @@ __all__ = [
     "TimeScaleNode",
     "PoseCacheNode",
     "SelectNode",
+    "LoopControlMode",
+    "LoopNode",
+    "SubGraphNode",
 ]

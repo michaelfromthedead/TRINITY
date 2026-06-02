@@ -277,12 +277,12 @@
 **Dependencies**: T-AG-2.15
 
 **Acceptance Criteria:**
-- [ ] LayerStack class
-- [ ] AnimationLayer dataclass
-- [ ] LayerBlendMode enum (OVERRIDE, ADDITIVE, MULTIPLY)
-- [ ] Layer weight support
-- [ ] Bone mask integration
-- [ ] evaluate(context) with layer composition
+- [x] LayerStack class
+- [x] AnimationLayer dataclass
+- [x] LayerBlendMode enum (OVERRIDE, ADDITIVE, MULTIPLY)
+- [x] Layer weight support
+- [x] Bone mask integration
+- [x] evaluate(context) with layer composition
 
 ---
 
@@ -293,11 +293,11 @@
 **Dependencies**: T-AG-2.16
 
 **Acceptance Criteria:**
-- [ ] Fluent builder API
-- [ ] set_base(source)
-- [ ] add_layer(source, mask, mode, weight)
-- [ ] build() with validation
-- [ ] Clear error messages
+- [x] Fluent builder API
+- [x] set_base(source)
+- [x] add_layer(source, mask, mode, weight)
+- [x] build() with validation
+- [x] Clear error messages
 
 ---
 
