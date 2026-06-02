@@ -1,0 +1,77 @@
+{
+  "version": "1.0.0",
+  "created": "2026-06-02",
+  "cron_job_id": "ac74bcba",
+  "cron_schedule": "*/5 * * * *",
+  "pool": {
+    "max_slots": 4,
+    "active_workers": {}
+  },
+  "directories": [
+    {
+      "name": "engine_animation_crowds_facial",
+      "status": "DONE",
+      "phases_total": 3,
+      "phases_complete": 3,
+      "notes": "All 3 phases complete, 319 tests passing"
+    },
+    {
+      "name": "engine_animation_graph_ik",
+      "status": "IN_PROGRESS",
+      "phases_total": 4,
+      "phases_complete": 1,
+      "current_phase": 2,
+      "current_task": "T-AG-2.15",
+      "current_stage": "TEST_UNIT",
+      "notes": "Phase 1 complete. T-AG-2.15 (Blend Nodes) - code exists, TEST_UNIT in progress"
+    },
+    {"name": "engine_animation_motionmatching_procedural", "status": "PENDING"},
+    {"name": "engine_animation_skeletal_systems", "status": "PENDING"},
+    {"name": "engine_audio_adaptive_core", "status": "PENDING"},
+    {"name": "engine_audio_dialogue_dsp", "status": "PENDING"},
+    {"name": "engine_audio_mixing_spatial", "status": "PENDING"},
+    {"name": "engine_debug_resource", "status": "PENDING"},
+    {"name": "engine_gameplay_abilities_ai_camera", "status": "PENDING"},
+    {"name": "engine_gameplay_combat_components", "status": "PENDING"},
+    {"name": "engine_gameplay_economy_entity_input", "status": "PENDING"},
+    {"name": "engine_gameplay_nav_quest", "status": "PENDING"},
+    {"name": "engine_networking", "status": "PENDING"},
+    {"name": "engine_platform", "status": "PENDING"},
+    {"name": "engine_rendering_demoscene", "status": "PENDING"},
+    {"name": "engine_rendering_framegraph", "status": "PENDING"},
+    {"name": "engine_rendering_gpu_driven", "status": "PENDING"},
+    {"name": "engine_rendering_lighting", "status": "PENDING"},
+    {"name": "engine_rendering_materials", "status": "PENDING"},
+    {"name": "engine_rendering_particles", "status": "PENDING"},
+    {"name": "engine_rendering_postprocess", "status": "PENDING"},
+    {"name": "engine_simulation_character_cloth_collision", "status": "PENDING"},
+    {"name": "engine_simulation_components_constraints_softbody_vehicles", "status": "PENDING"},
+    {"name": "engine_simulation_destruction_fluid_hair", "status": "PENDING"},
+    {"name": "engine_simulation_physics_solver", "status": "PENDING"},
+    {"name": "engine_tooling", "status": "PENDING"},
+    {"name": "engine_ui_accessibility_animation_binding_framework", "status": "PENDING"},
+    {"name": "engine_ui_layout_screens_styling_text", "status": "PENDING"},
+    {"name": "engine_ui_widgets", "status": "PENDING"},
+    {"name": "engine_world", "status": "PENDING"},
+    {"name": "engine_xr", "status": "PENDING"},
+    {"name": "foundation", "status": "PENDING"},
+    {"name": "trinity_decorators_part1", "status": "PENDING"},
+    {"name": "trinity_decorators_part2", "status": "PENDING"},
+    {"name": "trinity_descriptors_metaclasses", "status": "PENDING"}
+  ],
+  "history": [
+    {
+      "timestamp": "2026-06-02T00:00:00Z",
+      "action": "TRACKER_CREATED",
+      "notes": "Initial tracker for PYTHON_DOCS SDLC workflow"
+    },
+    {
+      "timestamp": "2026-06-02T00:00:00Z",
+      "action": "T-AG-2.15_TEST_UNIT_STARTED",
+      "task": "T-AG-2.15",
+      "stage": "TEST_UNIT",
+      "workers": ["whitebox-T-AG-2.15", "blackbox-T-AG-2.15"],
+      "notes": "Code exists (10 blend nodes), spawned WHITEBOX + BLACKBOX testers"
+    }
+  ]
+}

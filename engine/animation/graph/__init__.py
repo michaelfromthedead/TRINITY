@@ -36,6 +36,8 @@ Example usage:
 
 # Core graph components
 from .animation_graph import (
+    # Exceptions
+    CycleDetectedError,
     # Metaclass
     GraphNodeMeta,
     # Slot types
@@ -74,6 +76,7 @@ from .skeleton import (
 # Bone mask system (name-based, integrates with skeleton.py's Skeleton)
 from .bone_mask import (
     MissingBoneMode,
+    CombineMode,
     BoneMask,
 )
 
@@ -82,6 +85,8 @@ from .state_machine import (
     # Blend curves
     BlendCurve,
     evaluate_blend_curve,
+    # Motion mode
+    MotionMode,
     # Conditions
     ComparisonOp,
     TransitionCondition,
@@ -136,6 +141,9 @@ from .blend_node import (
     TimeScaleNode,
     PoseCacheNode,
     SelectNode,
+    LoopControlMode,
+    LoopNode,
+    SubGraphNode,
 )
 
 # Layer system
@@ -181,13 +189,26 @@ from .config import (
     SyncConfig,
     LayerConfig,
     QuaternionConfig,
+    GraphConfig,
     BlendConfig,
     get_config,
+    reset_config,
+)
+
+# Dictionary-based Transform and Pose (bone-name keyed, for IK and cross-skeleton ops)
+from .pose import (
+    Transform as DictTransform,
+    Pose as DictPose,
+    Vec3,
+    Quaternion,
+    EPSILON as POSE_EPSILON,
+    QUAT_NORMALIZE_EPSILON,
 )
 
 
 __all__ = [
     # animation_graph.py
+    "CycleDetectedError",
     "GraphNodeMeta",
     "SlotType",
     "InputSlot",
@@ -210,11 +231,13 @@ __all__ = [
     "SkeletonHierarchy",
     # bone_mask.py
     "MissingBoneMode",
+    "CombineMode",
     "BoneMask",
     "BoneMaskPresets",
     # state_machine.py
     "BlendCurve",
     "evaluate_blend_curve",
+    "MotionMode",
     "ComparisonOp",
     "TransitionCondition",
     "AnimationState",
@@ -251,6 +274,9 @@ __all__ = [
     "TimeScaleNode",
     "PoseCacheNode",
     "SelectNode",
+    "LoopControlMode",
+    "LoopNode",
+    "SubGraphNode",
     # layer.py
     "LayerMode",
     "AnimationLayer",
@@ -276,6 +302,15 @@ __all__ = [
     "SyncConfig",
     "LayerConfig",
     "QuaternionConfig",
+    "GraphConfig",
     "BlendConfig",
     "get_config",
+    "reset_config",
+    # pose.py (dict-based Transform/Pose)
+    "DictTransform",
+    "DictPose",
+    "Vec3",
+    "Quaternion",
+    "POSE_EPSILON",
+    "QUAT_NORMALIZE_EPSILON",
 ]
