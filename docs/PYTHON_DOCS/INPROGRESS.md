@@ -5,49 +5,56 @@
 
 ---
 
-## 2026-06-02: T-AG-2.15 Blend Nodes (10 types)
+## 2026-06-02: T-IK-3.1 IK Goal Base Classes
 
 **Directory:** `engine_animation_graph_ik`
-**Phase:** 2 of 4
-**Task:** T-AG-2.15
-**Branch:** `task/T-AG-2.15`
+**Phase:** 3 of 4 (IK Solvers)
+**Task:** T-IK-3.1
+**Branch:** `task/T-IK-3.1`
 
 ### Pipeline Status
 
 | Stage | Status | Notes |
 |-------|--------|-------|
 | PRESTEP | ✅ DONE | Branch created |
-| DEV | ✅ SKIP | Code exists (10 nodes in `blend_node.py`) |
+| DEV | ✅ SKIP | Code exists (`engine/animation/ik/ik_goal.py` - 569 lines) |
 | TEST_UNIT | 🔄 IN_PROGRESS | WHITEBOX + BLACKBOX spawned |
 | QA_UNIT | ⏳ PENDING | Awaiting TEST_UNIT |
 | VERDICT | ⏳ PENDING | — |
 
 ### Workers
 
-- [x] `whitebox-T-AG-2.15` — Writing whitebox tests
-- [x] `blackbox-T-AG-2.15` — Writing blackbox tests (cleanroom)
+- [ ] `whitebox-T-IK-3.1` — Writing whitebox tests
+- [ ] `blackbox-T-IK-3.1` — Writing blackbox tests (cleanroom)
 
 ### Acceptance Criteria (from TODO)
 
-- [ ] ClipNode with loop modes
-- [ ] BlendNode for binary blending
-- [ ] AdditiveNode for additive blending
-- [ ] LayerNode with mask support
-- [ ] MirrorNode for left/right mirroring
-- [ ] TimeScaleNode for speed control
-- [ ] PoseCacheNode for pose reuse
-- [ ] SelectNode for conditional selection
-- [ ] LoopNode for loop control
-- [ ] SubGraphNode for nested graphs
+- [x] IKGoal abstract base class
+- [x] PositionGoal dataclass
+- [x] RotationGoal dataclass
+- [x] LookAtGoal dataclass
+- [x] PositionRotationGoal dataclass
+- [x] PoleVectorGoal dataclass
+- [x] COMGoal (CenterOfMassGoal) dataclass
+- [x] IKGoalBlender for weighted blending
 
 ### Implementation Files
 
-- `engine/animation/graph/blend_node.py` (38KB, 10 node classes)
+- `engine/animation/ik/ik_goal.py` (569 lines, 8 goal classes + blender)
 
-### Test Files (to be created)
+### Test Files (being created)
 
-- `tests/animation/graph/test_blend_node_whitebox.py`
-- `tests/animation/graph/test_blend_node_blackbox.py`
+- `tests/animation/ik/test_ik_goal_whitebox.py`
+- `tests/animation/ik/test_ik_goal_blackbox.py`
+
+---
+
+## Completed This Session
+
+| Task | Status | Tests |
+|------|--------|-------|
+| T-AG-2.15 Blend Nodes | ✅ GREEN_LIGHT | 143 |
+| T-AG-2.16 + T-AG-2.17 LayerStack | ✅ GREEN_LIGHT | 130 |
 
 ---
 
@@ -56,7 +63,7 @@
 | Directory | Status | Phases |
 |-----------|--------|--------|
 | engine_animation_crowds_facial | ✅ DONE | 3/3 |
-| engine_animation_graph_ik | 🔄 IN_PROGRESS | 1/4 |
+| engine_animation_graph_ik | 🔄 IN_PROGRESS | 2/4 (Phase 3 started) |
 | (33 more directories) | ⏳ PENDING | — |
 
 ---

@@ -5,7 +5,13 @@
   "cron_schedule": "*/5 * * * *",
   "pool": {
     "max_slots": 4,
-    "active_workers": {}
+    "active_workers": {
+      "sanity-T-IK-3.1": {
+        "task": "T-IK-3.1",
+        "stage": "QA_SANITY",
+        "spawned": "2026-06-02T12:45:00Z"
+      }
+    }
   },
   "directories": [
     {
@@ -19,11 +25,11 @@
       "name": "engine_animation_graph_ik",
       "status": "IN_PROGRESS",
       "phases_total": 4,
-      "phases_complete": 1,
-      "current_phase": 2,
-      "current_task": "T-AG-2.15",
-      "current_stage": "TEST_UNIT",
-      "notes": "Phase 1 complete. T-AG-2.15 (Blend Nodes) - code exists, TEST_UNIT in progress"
+      "phases_complete": 2,
+      "current_phase": 3,
+      "current_task": "T-IK-3.1",
+      "current_stage": "QA_UNIT",
+      "notes": "Phase 1-2 complete. Phase 3 started. T-IK-3.1: 189 tests pass, QA_UNIT in progress"
     },
     {"name": "engine_animation_motionmatching_procedural", "status": "PENDING"},
     {"name": "engine_animation_skeletal_systems", "status": "PENDING"},
@@ -66,12 +72,35 @@
       "notes": "Initial tracker for PYTHON_DOCS SDLC workflow"
     },
     {
-      "timestamp": "2026-06-02T00:00:00Z",
-      "action": "T-AG-2.15_TEST_UNIT_STARTED",
+      "timestamp": "2026-06-02T10:00:00Z",
+      "action": "T-AG-2.15_GREEN_LIGHT",
       "task": "T-AG-2.15",
+      "commit": "d3b9e03a",
+      "tests": 143,
+      "notes": "Blend Nodes (10 types) complete"
+    },
+    {
+      "timestamp": "2026-06-02T11:00:00Z",
+      "action": "T-AG-2.16_T-AG-2.17_GREEN_LIGHT",
+      "task": "T-AG-2.16 + T-AG-2.17",
+      "commit": "d39588df",
+      "tests": 130,
+      "notes": "LayerStack System + Builder complete"
+    },
+    {
+      "timestamp": "2026-06-02T12:00:00Z",
+      "action": "PHASE_2_COMPLETE",
+      "phase": 2,
+      "directory": "engine_animation_graph_ik",
+      "notes": "All 17 tasks GREEN_LIGHT, advancing to Phase 3"
+    },
+    {
+      "timestamp": "2026-06-02T12:00:00Z",
+      "action": "T-IK-3.1_TEST_UNIT_STARTED",
+      "task": "T-IK-3.1",
       "stage": "TEST_UNIT",
-      "workers": ["whitebox-T-AG-2.15", "blackbox-T-AG-2.15"],
-      "notes": "Code exists (10 blend nodes), spawned WHITEBOX + BLACKBOX testers"
+      "workers": ["whitebox-T-IK-3.1", "blackbox-T-IK-3.1"],
+      "notes": "Code exists (ik_goal.py - 569 lines), spawned WHITEBOX + BLACKBOX testers"
     }
   ]
 }
