@@ -6,10 +6,10 @@
   "pool": {
     "max_slots": 4,
     "active_workers": {
-      "sanity-T-IK-3.1": {
-        "task": "T-IK-3.1",
+      "sanity-T-IK-3.2": {
+        "task": "T-IK-3.2",
         "stage": "QA_SANITY",
-        "spawned": "2026-06-02T12:45:00Z"
+        "spawned": "2026-06-02T13:45:00Z"
       }
     }
   },
@@ -27,9 +27,9 @@
       "phases_total": 4,
       "phases_complete": 2,
       "current_phase": 3,
-      "current_task": "T-IK-3.1",
+      "current_task": "T-IK-3.2",
       "current_stage": "QA_UNIT",
-      "notes": "Phase 1-2 complete. Phase 3 started. T-IK-3.1: 189 tests pass, QA_UNIT in progress"
+      "notes": "Phase 3: T-IK-3.1 GREEN_LIGHT, T-IK-3.2: 145 tests pass, QA_UNIT in progress"
     },
     {"name": "engine_animation_motionmatching_procedural", "status": "PENDING"},
     {"name": "engine_animation_skeletal_systems", "status": "PENDING"},

@@ -81,6 +81,8 @@ class JointConstraint:
         if self.constraint_type == JointConstraintType.BALL_SOCKET:
             return self._apply_ball_socket(direction, parent_rotation)
 
+        # TWIST_LIMIT: rotation-space constraint, not applicable to FABRIK
+        # positional direction vectors. Handle in post-processing or CCD solver.
         return direction
 
     def _apply_hinge(self, direction: Vec3, parent_rotation: Quat) -> Vec3:
