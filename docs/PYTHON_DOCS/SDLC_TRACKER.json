@@ -6,10 +6,10 @@
   "pool": {
     "max_slots": 4,
     "active_workers": {
-      "junior-T-IK-3.3": {
-        "task": "T-IK-3.3",
-        "stage": "QA_UNIT",
-        "spawned": "2026-06-02T14:30:00Z"
+      "sanity-T-IK-3.4": {
+        "task": "T-IK-3.4",
+        "stage": "QA_SANITY",
+        "spawned": "2026-06-02T15:45:00Z"
       }
     }
   },
@@ -27,9 +27,9 @@
       "phases_total": 4,
       "phases_complete": 2,
       "current_phase": 3,
-      "current_task": "T-IK-3.3",
+      "current_task": "T-IK-3.4",
       "current_stage": "QA_UNIT",
-      "notes": "Phase 3: T-IK-3.1, T-IK-3.2 GREEN_LIGHT. T-IK-3.3: 166 tests pass, QA_UNIT in progress"
+      "notes": "Phase 3: T-IK-3.1-3.3 GREEN_LIGHT. T-IK-3.4: 149 tests pass, QA_UNIT in progress"
     },
     {"name": "engine_animation_motionmatching_procedural", "status": "PENDING"},
     {"name": "engine_animation_skeletal_systems", "status": "PENDING"},
