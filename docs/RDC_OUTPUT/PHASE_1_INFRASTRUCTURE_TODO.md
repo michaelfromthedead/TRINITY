@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-HARNESS-1.1: Create crate skeleton
-- [ ] Create `crates/trinity-harness/Cargo.toml`
-- [ ] Add dependencies: superrusqlite, syn, rustpython_parser, naga, tree-sitter-*
-- [ ] Create module structure (db.rs, parsers/, graph/, state/)
+### T-HARNESS-1.1: Create crate skeleton ✓
+- [x] Create `crates/trinity-harness/Cargo.toml`
+- [x] Add dependencies: superrusqlite, syn, rustpython_parser, naga, tree-sitter-*
+- [x] Create module structure (db.rs, parsers/, graph/, state/)
 
 ### T-HARNESS-1.2: SuperSQLite connection
 - [ ] Implement `HarnessDb::open(path)`

@@ -1,0 +1,33 @@
+[package]
+name = "trinity-harness"
+version = "0.1.0"
+edition = "2021"
+description = "Multi-language code analysis harness for TRINITY engine"
+
+[lib]
+name = "trinity_harness"
+path = "src/lib.rs"
+
+[dependencies]
+# Database
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+# Rust parsing
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+
+# Python parsing
+rustpython-parser = "0.4"
+tree-sitter-python = "0.25"
+
+# WGSL parsing (naga for semantic analysis, no tree-sitter-wgsl exists)
+naga = { version = "24", features = ["wgsl-in"] }
+
+# Error handling
+thiserror = "1.0"
+
+[dev-dependencies]
+
+[features]
+default = []
