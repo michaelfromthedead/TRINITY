@@ -4,6 +4,65 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.7 — GREEN_LIGHT ✓
+
+**Task:** Validate graph  
+**Branch:** `task/T-GRAPH-2.7` (merged, deleted)  
+**Phase:** 2 — Code Graph  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Query node count by language
+- [x] Query edge count by type
+- [x] Verify no orphan nodes (except entry points)
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Added `node_count_by_language()` → HashMap<Language, usize>
+- Added `edge_count_by_type()` → HashMap<EdgeType, usize>
+- Added `find_orphan_nodes()` and `find_orphan_non_entry_points()`
+- Added `is_entry_point()` detection for main/entry functions
+- Added `validate()` → ValidationResult with full summary
+
+**WHITEBOX** — COMPLETE
+- 23 new tests (whitebox_validation.rs)
+- Covers all counting, orphan detection, entry point checks
+
+**BLACKBOX** — COMPLETE
+- 11 new tests (blackbox_validation.rs)
+- Full integration with scan/deps/crosslang pipeline
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 737 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 🎉 PHASE 2: CODE GRAPH — COMPLETE 🎉
+
+All 7 tasks completed with GREEN_LIGHT:
+- T-GRAPH-2.1: Implement GraphBuilder ✓
+- T-GRAPH-2.2: Parse all Rust files ✓
+- T-GRAPH-2.3: Parse all Python files ✓
+- T-GRAPH-2.4: Parse all WGSL files ✓
+- T-GRAPH-2.5: Dependency detection ✓
+- T-GRAPH-2.6: Cross-language edges ✓
+- T-GRAPH-2.7: Validate graph ✓
+
+**Total tests:** 737
+**Commits:** 22 to master
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.6 — GREEN_LIGHT ✓
 
 **Task:** Cross-language edges  

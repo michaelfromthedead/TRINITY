@@ -36,10 +36,10 @@
 - [x] Detect WGSL↔Rust struct mirrors (same name, #[repr(C)])
 - [x] Create MirrorsLayout edges
 
-### T-GRAPH-2.7: Validate graph
-- [ ] Query node count by language
-- [ ] Query edge count by type
-- [ ] Verify no orphan nodes (except entry points)
+### T-GRAPH-2.7: Validate graph ✓
+- [x] Query node count by language
+- [x] Query edge count by type
+- [x] Verify no orphan nodes (except entry points)
 
 ---
 
