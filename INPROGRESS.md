@@ -4,23 +4,64 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.3
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.4 — GREEN_LIGHT ✓
 
-**Task:** Parse all Python files  
-**Branch:** `task/T-GRAPH-2.3`  
+**Task:** Parse all WGSL files  
+**Branch:** `task/T-GRAPH-2.4` (merged, deleted)  
 **Phase:** 2 — Code Graph  
-**Status:** IN_PROGRESS
+**Status:** COMPLETE
 
 ### Deliverables
-- [ ] Scan `engine/` and `tests/` directories
-- [ ] Parse each .py file
-- [ ] Insert nodes for functions, classes, methods
+- [x] Scan `crates/renderer-backend/shaders/`
+- [x] Parse each .wgsl file
+- [x] Insert nodes for structs (with layout!), functions, entry points
 
 ### Pipeline
-- [ ] DEV
-- [ ] WHITEBOX ∥ BLACKBOX
-- [ ] JUNIOR_QA → SANITY → FINAL
-- [ ] VERDICT
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE (verification only)
+- Requirements already met by T-GRAPH-2.2
+- scan_wgsl() at builder.rs:167-171
+- Struct layout hash with offsets
+- 80 WGSL files in shaders/
+
+**WHITEBOX** — COMPLETE
+- None needed, existing tests cover all requirements
+- Struct layout with offsets verified (CRITICAL)
+
+**BLACKBOX** — COMPLETE
+- None needed, 349 blackbox tests cover requirements
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 640 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.3 — GREEN_LIGHT ✓
+
+**Task:** Parse all Python files  
+**Branch:** `task/T-GRAPH-2.3` (merged, deleted)  
+**Phase:** 2 — Code Graph  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Scan `engine/` and `tests/` directories
+- [x] Parse each .py file
+- [x] Insert nodes for functions, classes, methods
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
 
 ### Worker Log
 
