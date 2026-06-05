@@ -4,6 +4,53 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.6 — GREEN_LIGHT ✓
+
+**Task:** Cross-language edges  
+**Branch:** `task/T-GRAPH-2.6` (merged, deleted)  
+**Phase:** 2 — Code Graph  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Detect PyO3 boundaries (#[pyfunction], #[pyclass])
+- [x] Detect WGSL↔Rust struct mirrors (same name, #[repr(C)])
+- [x] Create MirrorsLayout edges
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Created `graph/crosslang.rs` with Pyo3Analyzer, ReprCAnalyzer
+- Pyo3Analyzer: detects #[pyfunction], #[pyclass], #[pymethods]
+- ReprCAnalyzer: detects #[repr(C)] structs
+- `detect_struct_mirrors()`: matches WGSL/Rust structs by name
+- `create_crosslang_edges()`: creates MirrorsLayout edges
+- `GraphBuilder::analyze_crosslang()` integrates analysis
+- Added MirrorsLayout edge type
+
+**WHITEBOX** — COMPLETE
+- 19 new tests (whitebox_crosslang.rs)
+- Covers Pyo3Analyzer, ReprCAnalyzer, mirror detection
+- Covers edge creation and stats
+
+**BLACKBOX** — COMPLETE
+- 11 new tests (blackbox_crosslang.rs)
+- Full integration tests with temp directories
+- Tests PyO3, mirrors, combined analysis
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 703 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.5 — GREEN_LIGHT ✓
 
 **Task:** Dependency detection  

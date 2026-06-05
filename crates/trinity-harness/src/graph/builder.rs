@@ -276,6 +276,55 @@ impl<'a> GraphBuilder<'a> {
         let stats = resolve_deps_to_edges(graph, &all_deps);
         Ok(stats)
     }
+
+    /// Analyze cross-language bindings and create edges.
+    ///
+    /// This detects:
+    /// - PyO3 bindings (#[pyfunction], #[pyclass], #[pymethods])
+    /// - WGSL↔Rust struct mirrors (same name, #[repr(C)])
+    pub fn analyze_crosslang(
+        &self,
+        root_path: &Path,
+        graph: &mut CodeGraph,
+    ) -> Result<super::CrossLangStats, ScanError> {
+        use super::{create_crosslang_edges, Pyo3Analyzer};
+
+        let pyo3_analyzer = Pyo3Analyzer::new();
+        let mut all_bindings = Vec::new();
+
+        for entry in WalkDir::new(root_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+
+            if !path.is_file() {
+                continue;
+            }
+
+            // Only analyze Rust files for PyO3 bindings
+            let Some(lang) = ParserRegistry::detect_language(path) else {
+                continue;
+            };
+
+            if lang != Language::Rust {
+                continue;
+            }
+
+            let source = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let path_str = path.to_string_lossy().to_string();
+            let bindings = pyo3_analyzer.analyze(&source, &path_str);
+            all_bindings.extend(bindings);
+        }
+
+        let stats = create_crosslang_edges(graph, &all_bindings);
+        Ok(stats)
+    }
 }
 
 /// Persist a code graph to the database.

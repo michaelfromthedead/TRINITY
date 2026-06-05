@@ -1,11 +1,16 @@
 //! Code dependency graph structures.
 
 mod builder;
+mod crosslang;
 mod deps;
 mod edges;
 mod nodes;
 
 pub use builder::{persist_graph_to_db, GraphBuilder, PersistError, ScanError, ScanStats};
+pub use crosslang::{
+    create_crosslang_edges, detect_struct_mirrors, BindingType, CrossLangBinding,
+    CrossLangStats, Pyo3Analyzer, ReprCAnalyzer,
+};
 pub use deps::{resolve_deps_to_edges, DepStats, DepType, PythonDepAnalyzer, RawDependency, RustDepAnalyzer};
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};

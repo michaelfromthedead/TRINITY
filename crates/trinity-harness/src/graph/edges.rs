@@ -15,6 +15,8 @@ pub enum EdgeType {
     Imports,
     /// Cross-language binding (e.g., Python calling Rust via PyO3).
     Binds,
+    /// Struct layout mirror (e.g., WGSL struct mirrors #[repr(C)] Rust struct).
+    MirrorsLayout,
 }
 
 /// An edge in the code dependency graph.

@@ -26,15 +26,15 @@
 - [x] Parse each .wgsl file
 - [x] Insert nodes for structs (with layout!), functions, entry points
 
-### T-GRAPH-2.5: Dependency detection
-- [ ] Implement Rust dependency detection (use, calls, types)
-- [ ] Implement Python dependency detection (import, calls)
-- [ ] Create edges for dependencies
+### T-GRAPH-2.5: Dependency detection ✓
+- [x] Implement Rust dependency detection (use, calls, types)
+- [x] Implement Python dependency detection (import, calls)
+- [x] Create edges for dependencies
 
-### T-GRAPH-2.6: Cross-language edges
-- [ ] Detect PyO3 boundaries (#[pyfunction], #[pyclass])
-- [ ] Detect WGSL↔Rust struct mirrors (same name, #[repr(C)])
-- [ ] Create MirrorsLayout edges
+### T-GRAPH-2.6: Cross-language edges ✓
+- [x] Detect PyO3 boundaries (#[pyfunction], #[pyclass])
+- [x] Detect WGSL↔Rust struct mirrors (same name, #[repr(C)])
+- [x] Create MirrorsLayout edges
 
 ### T-GRAPH-2.7: Validate graph
 - [ ] Query node count by language
