@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.4 — GREEN_LIGHT ✓
+
+**Task:** Map Python tests  
+**Branch:** `task/T-MAP-3.4` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Scan `tests/unit/`, `tests/integration/`, `tests/e2e/`
+- [x] Apply auto-mapping rules
+- [x] Create Tests edges
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Uses GraphBuilder::map_python_tests() (already implemented)
+- PythonTestMapper supports test_*, TestClass patterns
+- Supports unit/, integration/, e2e/ directories
+
+**WHITEBOX** — COMPLETE
+- 9 new tests (whitebox_map_python_tests.rs)
+- Covers all Python test patterns
+
+**BLACKBOX** — COMPLETE
+- 8 new tests (blackbox_map_python_tests.rs)
+- Full pipeline integration
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 817 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.3 — GREEN_LIGHT ✓
 
 **Task:** Map Rust tests  

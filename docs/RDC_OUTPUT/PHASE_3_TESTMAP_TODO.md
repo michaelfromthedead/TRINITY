@@ -21,10 +21,10 @@
 - [x] Apply auto-mapping rules
 - [x] Create Tests edges
 
-### T-MAP-3.4: Map Python tests
-- [ ] Scan `tests/unit/`, `tests/integration/`, `tests/e2e/`
-- [ ] Apply auto-mapping rules
-- [ ] Create Tests edges
+### T-MAP-3.4: Map Python tests ✓
+- [x] Scan `tests/unit/`, `tests/integration/`, `tests/e2e/`
+- [x] Apply auto-mapping rules
+- [x] Create Tests edges
 
 ### T-MAP-3.5: Map inline tests
 - [ ] Find `#[test]` in source files
