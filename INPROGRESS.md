@@ -4,12 +4,54 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.5
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.6
 
-**Task:** Python parser  
-**Branch:** `task/T-HARNESS-1.5`  
+**Task:** WGSL parser  
+**Branch:** `task/T-HARNESS-1.6`  
 **Phase:** 1 — Infrastructure  
 **Status:** IN_PROGRESS
+
+### Deliverables
+- [ ] Implement `WgslParser` with naga + tree-sitter
+- [ ] Extract: structs with member offsets, functions, entry points, bindings
+- [ ] **Critical:** Capture struct layout (offset, size) for alignment checking
+- [ ] Return `Vec<WgslUnit>`
+
+### Pipeline
+- [ ] DEV
+- [ ] WHITEBOX ∥ BLACKBOX
+- [ ] JUNIOR_QA → SANITY → FINAL
+- [ ] VERDICT
+
+### Worker Log
+
+**DEV** (cce0bfce) — COMPLETE
+- Struct layout extraction with member offsets
+- layout_hash format: "member@offset:tyN,..."
+- Entry points with stage info (@vertex, @fragment, @compute)
+
+**WHITEBOX** — COMPLETE
+- 14 new tests (25 total)
+- Verified layout_hash includes member offsets
+
+**BLACKBOX** — COMPLETE
+- 56 new tests (blackbox_wgsl_parser.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 424 tests passing
+- 2 LOW findings ruled OVERZEALOUS
+- Critical: layout_hash includes member offsets ✓
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.5 — GREEN_LIGHT ✓
+
+**Task:** Python parser  
+**Branch:** `task/T-HARNESS-1.5` (merged, deleted)  
+**Phase:** 1 — Infrastructure  
+**Status:** COMPLETE
 
 ### Deliverables
 - [ ] Implement `PythonParser` with rustpython_parser + tree-sitter

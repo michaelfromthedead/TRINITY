@@ -33,11 +33,11 @@
 - [x] Compute hashes
 - [x] Return `Vec<PythonUnit>`
 
-### T-HARNESS-1.6: WGSL parser
-- [ ] Implement `WgslParser` with naga + tree-sitter
-- [ ] Extract: structs with member offsets, functions, entry points, bindings
-- [ ] **Critical:** Capture struct layout (offset, size) for alignment checking
-- [ ] Return `Vec<WgslUnit>`
+### T-HARNESS-1.6: WGSL parser ✓
+- [x] Implement `WgslParser` with naga + tree-sitter
+- [x] Extract: structs with member offsets, functions, entry points, bindings
+- [x] **Critical:** Capture struct layout (offset, size) for alignment checking
+- [x] Return `Vec<WgslUnit>`
 
 ### T-HARNESS-1.7: Unified CodeUnit
 - [ ] Define `CodeUnit` enum spanning all languages
