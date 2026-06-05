@@ -349,6 +349,120 @@ impl Default for PythonTestMapper {
     }
 }
 
+/// Mapper for inline tests (#[test] functions in source files).
+///
+/// Inline tests are mapped to other code in the same file.
+pub struct InlineTestMapper;
+
+impl InlineTestMapper {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Find inline tests in source files.
+    ///
+    /// These are test functions that live alongside production code,
+    /// typically in a `#[cfg(test)]` module.
+    pub fn find_inline_tests(&self, graph: &CodeGraph) -> Vec<NodeId> {
+        graph
+            .nodes()
+            .iter()
+            .filter(|n| {
+                // Must be a function starting with test_
+                if n.unit_type() != UnitType::Function || !n.name().starts_with("test_") {
+                    return false;
+                }
+
+                // Must NOT be in a tests/ directory (those are blackbox tests)
+                !n.file_path.contains("/tests/")
+                    && !n.file_path.starts_with("tests/")
+            })
+            .map(|n| n.id)
+            .collect()
+    }
+
+    /// Map inline tests to code in the same file.
+    ///
+    /// Returns mappings where each inline test maps to all non-test
+    /// functions/structs in its containing file.
+    pub fn map_inline_tests(&self, graph: &CodeGraph) -> (Vec<TestMapping>, MappingStats) {
+        let mut mappings = Vec::new();
+        let mut stats = MappingStats::new();
+
+        // Group nodes by file
+        let mut nodes_by_file: HashMap<String, Vec<NodeId>> = HashMap::new();
+        for node in graph.nodes() {
+            nodes_by_file
+                .entry(node.file_path.clone())
+                .or_default()
+                .push(node.id);
+        }
+
+        // Find inline tests and map to same-file code
+        let inline_tests = self.find_inline_tests(graph);
+
+        for test_id in inline_tests {
+            let Some(test_node) = graph.nodes().get(test_id.0) else {
+                continue;
+            };
+
+            let file_path = &test_node.file_path;
+
+            // Get all nodes in the same file
+            let Some(file_nodes) = nodes_by_file.get(file_path) else {
+                stats.record_unmapped();
+                mappings.push(TestMapping {
+                    test_id,
+                    targets: vec![],
+                    source: MappingSource::Unmapped,
+                });
+                continue;
+            };
+
+            // Filter to non-test code in the same file
+            let targets: Vec<NodeId> = file_nodes
+                .iter()
+                .filter(|&&id| {
+                    if id == test_id {
+                        return false; // Don't map to self
+                    }
+                    let Some(node) = graph.nodes().get(id.0) else {
+                        return false;
+                    };
+                    // Target non-test functions and structs
+                    !node.name().starts_with("test_")
+                })
+                .copied()
+                .collect();
+
+            if targets.is_empty() {
+                stats.record_unmapped();
+                mappings.push(TestMapping {
+                    test_id,
+                    targets: vec![],
+                    source: MappingSource::Unmapped,
+                });
+            } else {
+                stats.record_mapped(MappingSource::Convention);
+                stats.edges_created += targets.len();
+                mappings.push(TestMapping {
+                    test_id,
+                    targets,
+                    source: MappingSource::Convention,
+                });
+            }
+        }
+
+        (mappings, stats)
+    }
+}
+
+impl Default for InlineTestMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ==================== Manual Mapping (TOML) ====================
 
 use serde::Deserialize;

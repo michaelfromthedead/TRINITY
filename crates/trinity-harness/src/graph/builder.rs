@@ -383,6 +383,24 @@ impl<'a> GraphBuilder<'a> {
     ) -> Result<super::MappingStats, ScanError> {
         self.map_rust_tests(root_path, graph, config_path)
     }
+
+    /// Map inline tests (#[test] in source files) to their containing module.
+    ///
+    /// Inline tests are mapped to other code in the same file.
+    /// This is separate from blackbox/external test mapping.
+    pub fn map_inline_tests(
+        &self,
+        graph: &mut CodeGraph,
+    ) -> Result<super::MappingStats, ScanError> {
+        use super::{create_test_edges, InlineTestMapper};
+
+        let mapper = InlineTestMapper::new();
+        let (mappings, mut stats) = mapper.map_inline_tests(graph);
+        let edges_created = create_test_edges(graph, &mappings);
+        stats.edges_created = edges_created;
+
+        Ok(stats)
+    }
 }
 
 /// Persist a code graph to the database.

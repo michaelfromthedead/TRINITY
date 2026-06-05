@@ -19,8 +19,8 @@ pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 pub use testmap::{
     create_test_edges, CombinedMapper, ConventionMapper, ExplicitMapper, ExplicitMapping,
-    MappingConfig, MappingConfigError, MappingSource, MappingStats, PythonTestMapper,
-    RustTestMapper, TestMapping,
+    InlineTestMapper, MappingConfig, MappingConfigError, MappingSource, MappingStats,
+    PythonTestMapper, RustTestMapper, TestMapping,
 };
 use crate::parsers::{Language, UnitType};
 

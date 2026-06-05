@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.5 — GREEN_LIGHT ✓
+
+**Task:** Map inline tests  
+**Branch:** `task/T-MAP-3.5` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Find `#[test]` in source files
+- [x] Map to containing module
+- [x] Create Tests edges
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Created InlineTestMapper for #[test] in source files
+- find_inline_tests() finds test_ functions in non-test dirs
+- map_inline_tests() maps to same-file code items
+- Added GraphBuilder::map_inline_tests() method
+
+**WHITEBOX** — COMPLETE
+- 10 new tests (whitebox_inline_tests.rs)
+- Covers finding, mapping, edge creation
+
+**BLACKBOX** — COMPLETE
+- 7 new tests (blackbox_inline_tests.rs)
+- Full pipeline integration
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 834 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.4 — GREEN_LIGHT ✓
 
 **Task:** Map Python tests  

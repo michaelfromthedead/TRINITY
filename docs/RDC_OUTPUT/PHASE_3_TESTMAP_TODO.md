@@ -26,10 +26,10 @@
 - [x] Apply auto-mapping rules
 - [x] Create Tests edges
 
-### T-MAP-3.5: Map inline tests
-- [ ] Find `#[test]` in source files
-- [ ] Map to containing module
-- [ ] Create Tests edges
+### T-MAP-3.5: Map inline tests ✓
+- [x] Find `#[test]` in source files
+- [x] Map to containing module
+- [x] Create Tests edges
 
 ### T-MAP-3.6: Handle unmapped tests
 - [ ] Identify tests without clear targets
