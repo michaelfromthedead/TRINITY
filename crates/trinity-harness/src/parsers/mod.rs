@@ -73,13 +73,29 @@ impl ParserRegistry {
         }
     }
 
-    /// Parse a file and return all code units found.
-    pub fn parse_file(&self, _path: &Path, source: &str, lang: Language) -> Vec<CodeUnit> {
+    /// Parse source code with an explicit language.
+    pub fn parse(&self, source: &str, lang: Language) -> Vec<CodeUnit> {
         match lang {
             Language::Rust => self.rust.parse(source),
             Language::Python => self.python.parse(source),
             Language::Wgsl => self.wgsl.parse(source),
         }
+    }
+
+    /// Parse a file with explicit language specification.
+    ///
+    /// The path is passed for potential future use (e.g., error messages).
+    pub fn parse_file(&self, _path: &Path, source: &str, lang: Language) -> Vec<CodeUnit> {
+        self.parse(source, lang)
+    }
+
+    /// Parse a file by auto-detecting language from extension.
+    ///
+    /// Returns `None` if the file extension is not recognized.
+    /// Returns `Some(Vec<CodeUnit>)` with parsed code units on success.
+    pub fn parse_file_auto(&self, path: &Path, source: &str) -> Option<Vec<CodeUnit>> {
+        let lang = Self::detect_language(path)?;
+        Some(self.parse(source, lang))
     }
 
     /// Detect language from file extension.

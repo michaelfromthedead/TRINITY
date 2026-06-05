@@ -4,12 +4,51 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.6
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.7
 
-**Task:** WGSL parser  
-**Branch:** `task/T-HARNESS-1.6`  
+**Task:** Unified CodeUnit  
+**Branch:** `task/T-HARNESS-1.7`  
 **Phase:** 1 — Infrastructure  
 **Status:** IN_PROGRESS
+
+### Deliverables
+- [ ] Define `CodeUnit` enum spanning all languages
+- [ ] Implement `ParserRegistry::parse_file()`
+- [ ] Test on sample files from each language
+
+### Pipeline
+- [ ] DEV
+- [ ] WHITEBOX ∥ BLACKBOX
+- [ ] JUNIOR_QA → SANITY → FINAL
+- [ ] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE (verification + minor enhancements)
+- CodeUnit unified with Language discriminator
+- parse_file_auto() with extension detection
+
+**WHITEBOX** — COMPLETE
+- 34 new tests (42 total)
+- Language field, auto-detection, cross-language consistency
+
+**BLACKBOX** — COMPLETE
+- 59 new tests (blackbox_unified_codeunit.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 517 tests passing
+- 2 REAL findings (feature gap, not correctness bug)
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.6 — GREEN_LIGHT ✓
+
+**Task:** WGSL parser  
+**Branch:** `task/T-HARNESS-1.6` (merged, deleted)  
+**Phase:** 1 — Infrastructure  
+**Status:** COMPLETE
 
 ### Deliverables
 - [ ] Implement `WgslParser` with naga + tree-sitter

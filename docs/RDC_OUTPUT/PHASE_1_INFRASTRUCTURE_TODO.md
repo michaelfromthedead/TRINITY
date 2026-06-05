@@ -39,10 +39,10 @@
 - [x] **Critical:** Capture struct layout (offset, size) for alignment checking
 - [x] Return `Vec<WgslUnit>`
 
-### T-HARNESS-1.7: Unified CodeUnit
-- [ ] Define `CodeUnit` enum spanning all languages
-- [ ] Implement `ParserRegistry::parse_file()`
-- [ ] Test on sample files from each language
+### T-HARNESS-1.7: Unified CodeUnit ✓
+- [x] Define `CodeUnit` enum spanning all languages
+- [x] Implement `ParserRegistry::parse_file()`
+- [x] Test on sample files from each language
 
 ### T-HARNESS-1.8: Basic tests
 - [ ] Test schema creation
