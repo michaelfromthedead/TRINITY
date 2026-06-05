@@ -5,7 +5,7 @@
 //! - Rust unit: `#[test] fn test_<name>()` → `fn <name>()`
 //! - Python: `test_<name>.py` → `<name>.py`
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{CodeEdge, CodeGraph, EdgeType, NodeId};
 use crate::parsers::{Language, UnitType};
@@ -213,6 +213,198 @@ pub fn mark_as_orphan(
     }
 
     count
+}
+
+// ==================== Coverage Report ====================
+
+/// Test coverage report for the codebase.
+#[derive(Debug, Clone, Default)]
+pub struct CoverageReport {
+    /// Total code nodes in the graph.
+    pub total_code_nodes: usize,
+    /// Code nodes with at least one test.
+    pub covered_nodes: usize,
+    /// Code nodes with no tests.
+    pub uncovered_nodes: usize,
+    /// Coverage percentage (0.0 - 100.0).
+    pub coverage_percent: f64,
+    /// List of uncovered node IDs.
+    pub uncovered_ids: Vec<NodeId>,
+    /// Coverage by file.
+    pub by_file: HashMap<String, FileCoverage>,
+}
+
+/// Coverage stats for a single file.
+#[derive(Debug, Clone, Default)]
+pub struct FileCoverage {
+    /// Total code nodes in the file.
+    pub total: usize,
+    /// Covered code nodes.
+    pub covered: usize,
+    /// Uncovered code nodes.
+    pub uncovered: usize,
+    /// Coverage percentage.
+    pub percent: f64,
+}
+
+impl CoverageReport {
+    /// Create a new empty coverage report.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if there are any uncovered nodes.
+    pub fn has_uncovered(&self) -> bool {
+        self.uncovered_nodes > 0
+    }
+
+    /// Generate a human-readable coverage summary.
+    pub fn generate_summary(&self) -> String {
+        let mut summary = String::new();
+
+        summary.push_str("=== Test Coverage Report ===\n\n");
+        summary.push_str(&format!(
+            "Overall: {:.1}% ({}/{} nodes covered)\n",
+            self.coverage_percent, self.covered_nodes, self.total_code_nodes
+        ));
+        summary.push_str(&format!("Uncovered: {} nodes\n\n", self.uncovered_nodes));
+
+        if !self.by_file.is_empty() {
+            summary.push_str("Coverage by file:\n");
+
+            let mut files: Vec<_> = self.by_file.iter().collect();
+            files.sort_by(|a, b| a.1.percent.partial_cmp(&b.1.percent).unwrap());
+
+            for (path, cov) in files.iter().take(20) {
+                summary.push_str(&format!(
+                    "  {}: {:.1}% ({}/{})\n",
+                    path, cov.percent, cov.covered, cov.total
+                ));
+            }
+
+            if files.len() > 20 {
+                summary.push_str(&format!("  ... and {} more files\n", files.len() - 20));
+            }
+        }
+
+        summary
+    }
+}
+
+/// Generate a coverage report from test mappings.
+///
+/// This analyzes the graph and mappings to determine which code
+/// nodes have tests and which don't.
+pub fn generate_coverage_report(
+    graph: &super::CodeGraph,
+    mappings: &[TestMapping],
+) -> CoverageReport {
+    let mut report = CoverageReport::new();
+
+    // Build set of covered node IDs
+    let covered_set: HashSet<NodeId> = mappings
+        .iter()
+        .flat_map(|m| m.targets.iter())
+        .copied()
+        .collect();
+
+    // Find all code nodes (non-test nodes)
+    let code_nodes: Vec<_> = graph
+        .nodes()
+        .iter()
+        .filter(|n| !n.name().starts_with("test_") && !n.name().starts_with("Test"))
+        .collect();
+
+    report.total_code_nodes = code_nodes.len();
+
+    // Classify each code node
+    let mut by_file: HashMap<String, (usize, usize)> = HashMap::new();
+
+    for node in &code_nodes {
+        let entry = by_file.entry(node.file_path.clone()).or_insert((0, 0));
+        entry.0 += 1; // total
+
+        if covered_set.contains(&node.id) {
+            report.covered_nodes += 1;
+            entry.1 += 1; // covered
+        } else {
+            report.uncovered_nodes += 1;
+            report.uncovered_ids.push(node.id);
+        }
+    }
+
+    // Calculate percentages
+    if report.total_code_nodes > 0 {
+        report.coverage_percent =
+            (report.covered_nodes as f64 / report.total_code_nodes as f64) * 100.0;
+    }
+
+    // Build file coverage
+    for (path, (total, covered)) in by_file {
+        let percent = if total > 0 {
+            (covered as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        report.by_file.insert(
+            path,
+            FileCoverage {
+                total,
+                covered,
+                uncovered: total - covered,
+                percent,
+            },
+        );
+    }
+
+    report
+}
+
+/// Get a list of code nodes with at least one test.
+pub fn get_covered_nodes(
+    graph: &super::CodeGraph,
+    mappings: &[TestMapping],
+) -> Vec<NodeId> {
+    let covered_set: HashSet<NodeId> = mappings
+        .iter()
+        .flat_map(|m| m.targets.iter())
+        .copied()
+        .collect();
+
+    graph
+        .nodes()
+        .iter()
+        .filter(|n| {
+            !n.name().starts_with("test_")
+                && !n.name().starts_with("Test")
+                && covered_set.contains(&n.id)
+        })
+        .map(|n| n.id)
+        .collect()
+}
+
+/// Get a list of code nodes with no tests.
+pub fn get_uncovered_nodes(
+    graph: &super::CodeGraph,
+    mappings: &[TestMapping],
+) -> Vec<NodeId> {
+    let covered_set: HashSet<NodeId> = mappings
+        .iter()
+        .flat_map(|m| m.targets.iter())
+        .copied()
+        .collect();
+
+    graph
+        .nodes()
+        .iter()
+        .filter(|n| {
+            !n.name().starts_with("test_")
+                && !n.name().starts_with("Test")
+                && !covered_set.contains(&n.id)
+        })
+        .map(|n| n.id)
+        .collect()
 }
 
 /// Auto-mapper using naming conventions.

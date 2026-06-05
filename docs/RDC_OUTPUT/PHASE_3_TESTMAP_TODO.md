@@ -36,10 +36,10 @@
 - [x] Log for manual review
 - [x] Create placeholder mappings or mark as orphan
 
-### T-MAP-3.7: Coverage report
-- [ ] Query: code nodes with at least one test
-- [ ] Query: code nodes with no tests
-- [ ] Generate coverage summary
+### T-MAP-3.7: Coverage report ✓
+- [x] Query: code nodes with at least one test
+- [x] Query: code nodes with no tests
+- [x] Generate coverage summary
 
 ### T-MAP-3.8: Validation
 - [ ] Verify all 12,743 tests have at least one target

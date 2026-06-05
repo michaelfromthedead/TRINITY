@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.7 — GREEN_LIGHT ✓
+
+**Task:** Coverage report  
+**Branch:** `task/T-MAP-3.7` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Query: code nodes with at least one test
+- [x] Query: code nodes with no tests
+- [x] Generate coverage summary
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- CoverageReport: struct with coverage stats and generate_summary()
+- FileCoverage: per-file coverage stats
+- generate_coverage_report(): builds full coverage report
+- get_covered_nodes(): returns nodes with tests
+- get_uncovered_nodes(): returns nodes without tests
+
+**WHITEBOX** — COMPLETE
+- 13 new tests (whitebox_coverage_report.rs)
+- Covers report generation, queries, summaries
+
+**BLACKBOX** — COMPLETE
+- 6 new tests (blackbox_coverage_report.rs)
+- Full integration
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 872 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.6 — GREEN_LIGHT ✓
 
 **Task:** Handle unmapped tests  

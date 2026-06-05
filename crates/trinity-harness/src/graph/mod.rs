@@ -18,10 +18,11 @@ pub use deps::{resolve_deps_to_edges, DepStats, DepType, PythonDepAnalyzer, RawD
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 pub use testmap::{
-    create_test_edges, extract_unmapped, mark_as_orphan, CombinedMapper, ConventionMapper,
-    ExplicitMapper, ExplicitMapping, InlineTestMapper, MappingConfig, MappingConfigError,
-    MappingSource, MappingStats, PythonTestMapper, RustTestMapper, TestMapping,
-    UnmappedReview, UnmappedTest,
+    create_test_edges, extract_unmapped, generate_coverage_report, get_covered_nodes,
+    get_uncovered_nodes, mark_as_orphan, CombinedMapper, ConventionMapper, CoverageReport,
+    ExplicitMapper, ExplicitMapping, FileCoverage, InlineTestMapper, MappingConfig,
+    MappingConfigError, MappingSource, MappingStats, PythonTestMapper, RustTestMapper,
+    TestMapping, UnmappedReview, UnmappedTest,
 };
 use crate::parsers::{Language, UnitType};
 
