@@ -16,10 +16,10 @@
 - [x] Parse each .rs file
 - [x] Insert nodes for functions, structs, modules
 
-### T-GRAPH-2.3: Parse all Python files
-- [ ] Scan `engine/` and `tests/` directories
-- [ ] Parse each .py file
-- [ ] Insert nodes for functions, classes, methods
+### T-GRAPH-2.3: Parse all Python files ✓
+- [x] Scan `engine/` and `tests/` directories
+- [x] Parse each .py file
+- [x] Insert nodes for functions, classes, methods
 
 ### T-GRAPH-2.4: Parse all WGSL files
 - [ ] Scan `crates/renderer-backend/shaders/`

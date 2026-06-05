@@ -4,17 +4,17 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.2
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.3
 
-**Task:** Parse all Rust files  
-**Branch:** `task/T-GRAPH-2.2`  
+**Task:** Parse all Python files  
+**Branch:** `task/T-GRAPH-2.3`  
 **Phase:** 2 — Code Graph  
 **Status:** IN_PROGRESS
 
 ### Deliverables
-- [ ] Scan `crates/` directory
-- [ ] Parse each .rs file
-- [ ] Insert nodes for functions, structs, modules
+- [ ] Scan `engine/` and `tests/` directories
+- [ ] Parse each .py file
+- [ ] Insert nodes for functions, classes, methods
 
 ### Pipeline
 - [ ] DEV
@@ -24,23 +24,30 @@
 
 ### Worker Log
 
-**DEV** — COMPLETE
-- Added scan_rust(), scan_python(), scan_wgsl() methods
-- Added persist_graph_to_db() for database storage
-- hex crate for hash encoding
+**DEV** — COMPLETE (verification only)
+- Requirements already met by T-GRAPH-2.2
+- scan_python() at builder.rs:162-164
 
 **WHITEBOX** — COMPLETE
-- 26 new tests (57 total in whitebox_builder.rs)
+- None needed, existing tests cover all requirements
 
 **BLACKBOX** — COMPLETE
-- 31 new tests (66 total in blackbox_builder.rs)
+- None needed, 349 blackbox tests cover requirements
 - Cleanroom: ✓
 
 **QA_UNIT** — COMPLETE
-- 657 tests passing
-- SANITY: 3 REAL (refinements, not blockers)
-- FINAL overruled: core functionality works
+- 640 tests passing
+- 0 REAL findings
 - **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.2 — GREEN_LIGHT ✓
+
+**Task:** Parse all Rust files  
+**Branch:** `task/T-GRAPH-2.2` (merged, deleted)  
+**Phase:** 2 — Code Graph  
+**Status:** COMPLETE
 
 ---
 
