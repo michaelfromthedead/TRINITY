@@ -44,11 +44,11 @@
 - [x] Implement `ParserRegistry::parse_file()`
 - [x] Test on sample files from each language
 
-### T-HARNESS-1.8: Basic tests
-- [ ] Test schema creation
-- [ ] Test parsing sample Rust file
-- [ ] Test parsing sample Python file
-- [ ] Test parsing sample WGSL file
+### T-HARNESS-1.8: Basic tests ✓
+- [x] Test schema creation
+- [x] Test parsing sample Rust file
+- [x] Test parsing sample Python file
+- [x] Test parsing sample WGSL file
 
 ---
 
