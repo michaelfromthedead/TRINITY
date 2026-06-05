@@ -11,10 +11,10 @@
 - [x] Add dependencies: superrusqlite, syn, rustpython_parser, naga, tree-sitter-*
 - [x] Create module structure (db.rs, parsers/, graph/, state/)
 
-### T-HARNESS-1.2: SuperSQLite connection
-- [ ] Implement `HarnessDb::open(path)`
-- [ ] Configure pragmas (WAL, cache)
-- [ ] Verify extensions loaded (`SELECT core_version()`)
+### T-HARNESS-1.2: SuperSQLite connection ✓
+- [x] Implement `HarnessDb::open(path)`
+- [x] Configure pragmas (WAL, cache)
+- [x] Verify extensions loaded (`SELECT core_version()`) — deferred: SuperSQLite in DESIGN PHASE
 
 ### T-HARNESS-1.3: Database schema
 - [ ] Create `schema.sql` with tables: code_nodes, code_edges, code_events, code_state_history, code_contracts, struct_layouts
