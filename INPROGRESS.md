@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.3 — GREEN_LIGHT ✓
+
+**Task:** Map Rust tests  
+**Branch:** `task/T-MAP-3.3` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Scan `crates/*/tests/*.rs`
+- [x] Apply auto-mapping rules
+- [x] Create Tests edges
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Added `GraphBuilder::map_rust_tests()` method
+- Added `GraphBuilder::map_python_tests()` method
+- Added `GraphBuilder::map_all_tests()` method
+- Integrates ConventionMapper and CombinedMapper
+- Supports optional TOML config for explicit mappings
+
+**WHITEBOX** — COMPLETE
+- 9 new tests (whitebox_map_rust_tests.rs)
+- Covers crates/*/tests patterns, blackbox/whitebox naming
+
+**BLACKBOX** — COMPLETE
+- 8 new tests (blackbox_map_rust_tests.rs)
+- Full pipeline integration
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 800 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.2 — GREEN_LIGHT ✓
 
 **Task:** Manual mapping file  

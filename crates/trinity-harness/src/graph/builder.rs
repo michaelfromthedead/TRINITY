@@ -325,6 +325,64 @@ impl<'a> GraphBuilder<'a> {
         let stats = create_crosslang_edges(graph, &all_bindings);
         Ok(stats)
     }
+
+    /// Map Rust tests to their target code nodes.
+    ///
+    /// This scans `crates/*/tests/*.rs` and other test locations,
+    /// applies auto-mapping rules, and creates Tests edges.
+    ///
+    /// Optionally loads explicit mappings from a TOML config file.
+    pub fn map_rust_tests(
+        &self,
+        root_path: &Path,
+        graph: &mut CodeGraph,
+        config_path: Option<&Path>,
+    ) -> Result<super::MappingStats, ScanError> {
+        use super::{create_test_edges, CombinedMapper, MappingConfig};
+
+        let mapper = if let Some(path) = config_path {
+            match MappingConfig::load(path) {
+                Ok(config) => CombinedMapper::with_explicit(config),
+                Err(_) => CombinedMapper::convention_only(),
+            }
+        } else {
+            CombinedMapper::convention_only()
+        };
+
+        let (mappings, mut stats) = mapper.map_tests(graph, root_path);
+        let edges_created = create_test_edges(graph, &mappings);
+        stats.edges_created = edges_created;
+
+        Ok(stats)
+    }
+
+    /// Map Python tests to their target code nodes.
+    ///
+    /// This scans `tests/unit/`, `tests/integration/`, `tests/e2e/`
+    /// and other test locations, applies auto-mapping rules, and creates Tests edges.
+    ///
+    /// Optionally loads explicit mappings from a TOML config file.
+    pub fn map_python_tests(
+        &self,
+        root_path: &Path,
+        graph: &mut CodeGraph,
+        config_path: Option<&Path>,
+    ) -> Result<super::MappingStats, ScanError> {
+        // Python test mapping uses the same combined mapper
+        self.map_rust_tests(root_path, graph, config_path)
+    }
+
+    /// Map all tests (Rust and Python) to their target code nodes.
+    ///
+    /// This is a convenience method that combines both mappers.
+    pub fn map_all_tests(
+        &self,
+        root_path: &Path,
+        graph: &mut CodeGraph,
+        config_path: Option<&Path>,
+    ) -> Result<super::MappingStats, ScanError> {
+        self.map_rust_tests(root_path, graph, config_path)
+    }
 }
 
 /// Persist a code graph to the database.
