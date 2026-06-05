@@ -4,12 +4,53 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.2
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.3
 
-**Task:** SuperSQLite connection  
-**Branch:** `task/T-HARNESS-1.2`  
+**Task:** Database schema  
+**Branch:** `task/T-HARNESS-1.3`  
 **Phase:** 1 — Infrastructure  
 **Status:** IN_PROGRESS
+
+### Deliverables
+- [ ] Create `schema.sql` with tables: code_nodes, code_edges, code_events, code_state_history, code_contracts, struct_layouts
+- [ ] Add indexes for common queries
+- [ ] Test schema creation on fresh database
+
+### Pipeline
+- [ ] DEV
+- [ ] WHITEBOX ∥ BLACKBOX
+- [ ] JUNIOR_QA → SANITY → FINAL
+- [ ] VERDICT
+
+### Worker Log
+
+**DEV** (11b0cceb) — COMPLETE
+- Expanded schema.sql with 6 tables + indexes + views
+- 141 tests passing
+
+**WHITEBOX** — COMPLETE
+- 23 new tests for schema structure, constraints, indexes
+- Tests verify all columns, CHECK constraints, unique constraints
+
+**BLACKBOX** — COMPLETE
+- 19 new tests in blackbox_schema.rs
+- Cleanroom: ✓
+
+**JUNIOR_QA** — COMPLETE
+- 169 tests passing
+- 3 LOW findings (all OVERZEALOUS)
+
+**SENIOR_QA_FINAL** — COMPLETE
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.2 — GREEN_LIGHT ✓
+
+**Task:** SuperSQLite connection  
+**Branch:** `task/T-HARNESS-1.2` (merged, deleted)  
+**Phase:** 1 — Infrastructure  
+**Status:** COMPLETE
 
 ### Deliverables
 - [ ] Implement `HarnessDb::open(path)`

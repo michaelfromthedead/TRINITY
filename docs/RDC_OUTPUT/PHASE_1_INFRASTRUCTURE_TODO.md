@@ -16,10 +16,10 @@
 - [x] Configure pragmas (WAL, cache)
 - [x] Verify extensions loaded (`SELECT core_version()`) — deferred: SuperSQLite in DESIGN PHASE
 
-### T-HARNESS-1.3: Database schema
-- [ ] Create `schema.sql` with tables: code_nodes, code_edges, code_events, code_state_history, code_contracts, struct_layouts
-- [ ] Add indexes for common queries
-- [ ] Test schema creation on fresh database
+### T-HARNESS-1.3: Database schema ✓
+- [x] Create `schema.sql` with tables: code_nodes, code_edges, code_events, code_state_history, code_contracts, struct_layouts
+- [x] Add indexes for common queries
+- [x] Test schema creation on fresh database
 
 ### T-HARNESS-1.4: Rust parser
 - [ ] Implement `RustParser` with syn + tree-sitter
