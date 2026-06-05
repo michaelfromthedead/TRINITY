@@ -15,7 +15,7 @@
 
 use std::collections::HashSet;
 use trinity_harness::graph::{CodeEdge, CodeGraph, CodeNode, EdgeType, NodeId};
-use trinity_harness::parsers::{CodeUnit, Language, UnitType};
+use trinity_harness::parsers::{CodeUnit, ContentHashes, Language, UnitType};
 
 #[test]
 fn test_code_graph_new_is_empty() {
@@ -41,6 +41,7 @@ fn test_add_node_returns_sequential_ids() {
         start_line: 1,
         end_line: 10,
         language: Language::Rust,
+        hashes: ContentHashes::default(),
     };
     let unit2 = CodeUnit {
         unit_type: UnitType::Struct,
@@ -48,6 +49,7 @@ fn test_add_node_returns_sequential_ids() {
         start_line: 20,
         end_line: 30,
         language: Language::Rust,
+        hashes: ContentHashes::default(),
     };
 
     let node1 = CodeNode::new(NodeId(0), "src/a.rs".to_string(), unit1);
@@ -70,6 +72,7 @@ fn test_add_node_stores_node() {
         start_line: 5,
         end_line: 15,
         language: Language::Python,
+        hashes: ContentHashes::default(),
     };
     let node = CodeNode::new(NodeId(0), "script.py".to_string(), unit);
 
@@ -103,6 +106,7 @@ fn test_nodes_returns_all_nodes() {
             start_line: i,
             end_line: i + 10,
             language: Language::Rust,
+            hashes: ContentHashes::default(),
         };
         let node = CodeNode::new(NodeId(i), format!("file_{}.rs", i), unit);
         graph.add_node(node);
@@ -136,6 +140,7 @@ fn test_code_node_new_sets_fields() {
         start_line: 100,
         end_line: 200,
         language: Language::Python,
+        hashes: ContentHashes::default(),
     };
     let node = CodeNode::new(NodeId(42), "/path/to/file.py".to_string(), unit);
 
@@ -152,6 +157,7 @@ fn test_code_node_language_accessor() {
         start_line: 0,
         end_line: 50,
         language: Language::Wgsl,
+        hashes: ContentHashes::default(),
     };
     let node = CodeNode::new(NodeId(0), "shader.wgsl".to_string(), unit);
 
@@ -166,6 +172,7 @@ fn test_code_node_unit_type_accessor() {
         start_line: 0,
         end_line: 100,
         language: Language::Rust,
+        hashes: ContentHashes::default(),
     };
     let node = CodeNode::new(NodeId(0), "utils.rs".to_string(), unit);
 
@@ -180,6 +187,7 @@ fn test_code_node_name_accessor() {
         start_line: 10,
         end_line: 50,
         language: Language::Rust,
+        hashes: ContentHashes::default(),
     };
     let node = CodeNode::new(NodeId(0), "config.rs".to_string(), unit);
 

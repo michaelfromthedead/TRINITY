@@ -1,6 +1,6 @@
 //! Python source code parser using rustpython-parser and tree-sitter.
 
-use super::{CodeUnit, Language, UnitType};
+use super::{CodeUnit, ContentHashes, Language, UnitType};
 use rustpython_parser::{parse, Mode};
 
 /// Parser for Python source code.
@@ -42,6 +42,7 @@ impl PythonParser {
                             start_line: u32::from(f.range.start()) as usize,
                             end_line: u32::from(f.range.end()) as usize,
                             language: Language::Python,
+                            hashes: ContentHashes::default(),
                         });
                     }
                     Stmt::AsyncFunctionDef(f) => {
@@ -51,6 +52,7 @@ impl PythonParser {
                             start_line: u32::from(f.range.start()) as usize,
                             end_line: u32::from(f.range.end()) as usize,
                             language: Language::Python,
+                            hashes: ContentHashes::default(),
                         });
                     }
                     Stmt::ClassDef(c) => {
@@ -60,6 +62,7 @@ impl PythonParser {
                             start_line: u32::from(c.range.start()) as usize,
                             end_line: u32::from(c.range.end()) as usize,
                             language: Language::Python,
+                            hashes: ContentHashes::default(),
                         });
                     }
                     _ => {}

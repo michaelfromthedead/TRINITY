@@ -18,6 +18,19 @@ pub enum Language {
     Wgsl,
 }
 
+/// Content hashes for change detection and dependency tracking.
+#[derive(Debug, Clone, Default)]
+pub struct ContentHashes {
+    /// Hash of the entire source text of the unit.
+    pub full_hash: [u8; 32],
+    /// Hash of just the signature (for functions: name + params + return type).
+    pub signature_hash: [u8; 32],
+    /// Hash of the body only (for functions/methods).
+    pub body_hash: [u8; 32],
+    /// Hash of field layout (for structs: field names, types, order).
+    pub layout_hash: [u8; 32],
+}
+
 /// A parsed code unit representing a function, struct, class, etc.
 #[derive(Debug, Clone)]
 pub struct CodeUnit {
@@ -26,6 +39,8 @@ pub struct CodeUnit {
     pub start_line: usize,
     pub end_line: usize,
     pub language: Language,
+    /// Content hashes for change detection.
+    pub hashes: ContentHashes,
 }
 
 /// Types of code units that can be extracted.
@@ -33,9 +48,12 @@ pub struct CodeUnit {
 pub enum UnitType {
     Function,
     Struct,
+    Enum,
     Class,
     Method,
     Module,
+    Impl,
+    Trait,
 }
 
 /// Registry holding all language parsers.

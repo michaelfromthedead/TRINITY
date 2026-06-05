@@ -21,11 +21,11 @@
 - [x] Add indexes for common queries
 - [x] Test schema creation on fresh database
 
-### T-HARNESS-1.4: Rust parser
-- [ ] Implement `RustParser` with syn + tree-sitter
-- [ ] Extract: functions, structs, enums, impls, modules
-- [ ] Compute hashes: full, signature, body, layout
-- [ ] Return `Vec<RustUnit>`
+### T-HARNESS-1.4: Rust parser ✓
+- [x] Implement `RustParser` with syn + tree-sitter
+- [x] Extract: functions, structs, enums, impls, modules
+- [x] Compute hashes: full, signature, body, layout
+- [x] Return `Vec<RustUnit>`
 
 ### T-HARNESS-1.5: Python parser
 - [ ] Implement `PythonParser` with rustpython_parser + tree-sitter

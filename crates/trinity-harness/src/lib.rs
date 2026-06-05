@@ -10,5 +10,5 @@ pub mod state;
 
 pub use db::HarnessDb;
 pub use graph::{CodeEdge, CodeNode};
-pub use parsers::ParserRegistry;
+pub use parsers::{CodeUnit, ContentHashes, Language, ParserRegistry, UnitType};
 pub use state::StateMachine;

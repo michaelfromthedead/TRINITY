@@ -1,6 +1,6 @@
 //! WGSL shader parser using naga.
 
-use super::{CodeUnit, Language, UnitType};
+use super::{CodeUnit, ContentHashes, Language, UnitType};
 
 /// Parser for WGSL shader source code.
 pub struct WgslParser {
@@ -28,6 +28,7 @@ impl WgslParser {
                             start_line: 0,
                             end_line: 0,
                             language: Language::Wgsl,
+                            hashes: ContentHashes::default(),
                         });
                     }
                 }
@@ -42,6 +43,7 @@ impl WgslParser {
                         start_line: 0,
                         end_line: 0,
                         language: Language::Wgsl,
+                        hashes: ContentHashes::default(),
                     });
                 }
             }
@@ -53,6 +55,7 @@ impl WgslParser {
                     start_line: 0,
                     end_line: 0,
                     language: Language::Wgsl,
+                    hashes: ContentHashes::default(),
                 });
             }
         }
