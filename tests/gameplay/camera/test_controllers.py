@@ -205,12 +205,17 @@ class ThirdPersonController(BaseCameraController):
         self.vertical_offset = 1.5
         self.pitch = -15.0
         self.yaw = 0.0
+        self.vertical_angle = -15.0  # Alias for pitch for some tests
         self.pitch_limit = (-60.0, 60.0)
         self.mouse_sensitivity = 0.1
         self.position_lag = 0.1
         self.rotation_lag = 0.05
         self.look_at_target = True
         self._desired_position = Vector3()
+
+    def set_target(self, target: Optional[Transform]):
+        """Set the target to track."""
+        self.target = target if target is not None else Transform()
 
     def set_boom_length(self, length: float):
         self.boom_length = max(0.5, length)
@@ -222,6 +227,7 @@ class ThirdPersonController(BaseCameraController):
         self.yaw += delta_x * self.mouse_sensitivity
         self.pitch -= delta_y * self.mouse_sensitivity
         self.pitch = max(self.pitch_limit[0], min(self.pitch_limit[1], self.pitch))
+        self.vertical_angle = self.pitch  # Keep sync
 
     def update(self, delta_time: float):
         if not self.is_active:
@@ -258,10 +264,22 @@ class OrbitController(BaseCameraController):
         self.pitch = 30.0
         self.yaw_limit = None
         self.pitch_limit = (-89.0, 89.0)
+        self.min_vertical_angle = -89.0
+        self.max_vertical_angle = 89.0
         self.auto_rotate = False
         self.auto_rotate_speed = 10.0
         self.zoom_speed = 1.0
         self.orbit_speed = 0.5
+
+    @property
+    def vertical_angle(self) -> float:
+        """Get the vertical angle (alias for pitch)."""
+        return self.pitch
+
+    @vertical_angle.setter
+    def vertical_angle(self, value: float):
+        """Set the vertical angle."""
+        self.pitch = max(self.min_vertical_angle, min(self.max_vertical_angle, value))
 
     def orbit(self, delta_yaw: float, delta_pitch: float):
         self.yaw += delta_yaw * self.orbit_speed
@@ -269,7 +287,14 @@ class OrbitController(BaseCameraController):
 
         if self.yaw_limit:
             self.yaw = max(self.yaw_limit[0], min(self.yaw_limit[1], self.yaw))
-        self.pitch = max(self.pitch_limit[0], min(self.pitch_limit[1], self.pitch))
+        # Use both pitch_limit and min/max vertical angle
+        min_pitch = max(self.pitch_limit[0], self.min_vertical_angle)
+        max_pitch = min(self.pitch_limit[1], self.max_vertical_angle)
+        self.pitch = max(min_pitch, min(max_pitch, self.pitch))
+
+    def rotate(self, delta_yaw: float, delta_pitch: float):
+        """Rotate the orbit camera. Alias for orbit()."""
+        self.orbit(delta_yaw, delta_pitch)
 
     def zoom(self, delta: float):
         self.distance -= delta * self.zoom_speed
@@ -310,6 +335,11 @@ class FollowController(BaseCameraController):
         self._velocity = Vector3()
         self._last_target_position = None
         self._look_ahead_position = Vector3()
+
+    def set_target(self, target: Optional[Transform]):
+        """Set the target to follow."""
+        self.target = target if target is not None else Transform()
+        self._last_target_position = None
 
     def set_offset(self, offset: Vector3):
         self.offset = offset
@@ -588,15 +618,19 @@ class CameraManager:
                 self.active_controller = None
             del self.controllers[name]
 
-    def switch_to(self, name: str):
+    def switch_to(self, name: str, blend_time: float = 0.0, raise_on_missing: bool = True):
+        """Switch to a named controller."""
         if name not in self.controllers:
-            raise ValueError(f"Controller '{name}' not registered")
+            if raise_on_missing:
+                raise ValueError(f"Controller '{name}' not registered")
+            return False
 
         if self.active_controller:
             self.controllers[self.active_controller].deactivate()
 
         self.active_controller = name
         self.controllers[name].activate()
+        return True
 
     def get_active(self) -> Optional[BaseCameraController]:
         if self.active_controller:
@@ -1937,7 +1971,9 @@ class TestOrbitControllerAdvanced:
         controller.zoom_speed = 2.0
         initial = controller.distance
         controller.zoom(5)
-        assert controller.distance == initial - 10
+        # Expected: initial (10) - (5 * 2.0) = 0, but clamped to min_distance (1.0)
+        expected = max(controller.min_distance, initial - 10)
+        assert controller.distance == expected
 
     def test_orbit_at_extreme_pitch(self):
         """Test orbit at extreme pitch angles."""
@@ -2554,9 +2590,11 @@ class TestControllerEdgeCasesAdvanced:
         manager.register("fp", fp)
         manager.switch_to("fp")
 
-        # Try to switch to non-existent
-        manager.switch_to("nonexistent")
+        # Try to switch to non-existent - should silently fail when raise_on_missing=False
+        result = manager.switch_to("nonexistent", raise_on_missing=False)
+        assert result is False
         assert manager.active_controller is not None
+        assert manager.active_controller == "fp"
 
 
 if __name__ == "__main__":

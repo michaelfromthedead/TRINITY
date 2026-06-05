@@ -1096,6 +1096,39 @@ class SpatialHashGrid(Broadphase[T]):
         hits: list[RaycastHit] = []
         checked: set[int] = set()
 
+        # If no objects, return early
+        if not self._objects:
+            return hits
+
+        # Compute bounds of all objects for ray clipping
+        min_bounds = Vec3(float("inf"), float("inf"), float("inf"))
+        max_bounds = Vec3(float("-inf"), float("-inf"), float("-inf"))
+        for aabb, _ in self._objects.values():
+            min_bounds = min_bounds.min_components(aabb.min_point)
+            max_bounds = max_bounds.max_components(aabb.max_point)
+
+        # Expand bounds slightly to account for numerical precision
+        margin = self._cell_size
+        min_bounds = min_bounds - Vec3(margin, margin, margin)
+        max_bounds = max_bounds + Vec3(margin, margin, margin)
+
+        # Compute effective max_distance by clipping ray to bounds
+        scene_aabb = AABB(min_bounds, max_bounds)
+        bounds_hit, t_entry, t_exit = scene_aabb.ray_intersect(
+            ray.origin, ray.direction
+        )
+
+        # Determine effective traversal distance
+        if bounds_hit:
+            # Clamp to scene bounds and ray.max_distance
+            effective_max = min(ray.max_distance, t_exit) if t_exit > 0 else 0.0
+        else:
+            # Ray doesn't intersect scene bounds
+            effective_max = 0.0
+
+        if effective_max <= 0:
+            return hits
+
         # Start cell
         current = self._hash_point(ray.origin)
 
@@ -1135,7 +1168,8 @@ class SpatialHashGrid(Broadphase[T]):
         )
 
         t = 0.0
-        while t < ray.max_distance:
+        # Use effective_max (bounded) instead of potentially infinite ray.max_distance
+        while t < effective_max:
             # Check current cell
             if current in self._cells:
                 for obj_id in self._cells[current]:
@@ -1154,7 +1188,13 @@ class SpatialHashGrid(Broadphase[T]):
                         point = ray.point_at(t_min)
                         hits.append(RaycastHit(obj_id, t_min, point))
 
-            # Move to next cell
+            # Move to next cell - find smallest t_max component
+            min_t = min(t_max.x, t_max.y, t_max.z)
+
+            # Check if we've gone beyond effective_max
+            if min_t > effective_max:
+                break
+
             if t_max.x < t_max.y and t_max.x < t_max.z:
                 current = (current[0] + step[0], current[1], current[2])
                 t = t_max.x

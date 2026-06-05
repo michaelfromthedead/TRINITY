@@ -440,7 +440,8 @@ class TestScoringEventTypes:
         """SCORE: ASSIST event type can be added directly."""
         deathmatch.add_score("player_a", ScoringEventType.ASSIST)
         # May be 0 if assist_points=0, but should not error
-        assert True
+        # Score should be non-negative (0 or positive depending on config)
+        assert deathmatch.get_player_score("player_a") >= 0
 
     def test_objective_event_type(self, deathmatch):
         """SCORE: OBJECTIVE_CAPTURE awards points."""
@@ -594,11 +595,13 @@ class TestMatchStats:
     def test_record_kill_tracks_assists(self, match_with_players):
         """MATCH: record_kill increments assists for assisters."""
         match, _ = match_with_players
+        # Add player_c to match so we can verify assist tracking
+        match.add_player("player_c")
         match.record_kill(killer_id="player_a", victim_id="player_b", assists=["player_c"])
 
-        # player_c may or may not be a player in the match
-        # but at minimum the assist was processed without error
-        assert True
+        # Verify the assist was tracked for player_c
+        stats_c = match.get_player_stats("player_c")
+        assert stats_c["assists"] == 1, "Assister should have 1 assist"
 
     def test_multiple_kills_reflected(self, match_with_players):
         """MATCH: multiple kills increment stats correctly."""
@@ -648,8 +651,9 @@ class TestMatchStats:
         """MATCH: record_kill without assists defaults gracefully."""
         match, _ = match_with_players
         match.record_kill(killer_id="player_a", victim_id="player_b")
-        # No crash
-        assert True
+        # Verify kill was recorded (no crash AND state updated)
+        stats = match.get_player_stats("player_a")
+        assert stats["kills"] == 1, "Killer should have 1 kill"
 
 
 # =============================================================================

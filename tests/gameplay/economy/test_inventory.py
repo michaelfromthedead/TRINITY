@@ -95,10 +95,21 @@ def player_inventory():
 
 @pytest.fixture
 def limited_inventory():
-    """Create a small inventory with 5 slots."""
+    """Create a small inventory with 5 slots and weight limit."""
     return InventoryContainer(
         container_type=ContainerType.PLAYER_INVENTORY,
         slot_count=5,
+        weight_limit=50.0,
+        owner_id="player_1",
+    )
+
+
+@pytest.fixture
+def weight_test_inventory():
+    """Create an inventory with enough slots to test weight limits."""
+    return InventoryContainer(
+        container_type=ContainerType.PLAYER_INVENTORY,
+        slot_count=25,  # Enough slots to test weight limits
         weight_limit=50.0,
         owner_id="player_1",
     )
@@ -822,19 +833,19 @@ class TestInventoryContainerAdd:
         assert success is False
         assert qty == 0
 
-    def test_can_add_check_weight(self, limited_inventory, basic_item_def):
+    def test_can_add_check_weight(self, weight_test_inventory, basic_item_def):
         """Test can_add checks weight limit."""
-        # Fill to near weight limit
+        # Fill to near weight limit (19 items * 2.5 = 47.5 weight)
         for _ in range(19):
-            limited_inventory.add(ItemInstance(definition=basic_item_def))
+            weight_test_inventory.add(ItemInstance(definition=basic_item_def))
 
-        # One more should fit
+        # One more should fit (47.5 + 2.5 = 50)
         item = ItemInstance(definition=basic_item_def)
-        assert limited_inventory.can_add(item) is True
-        limited_inventory.add(item)
+        assert weight_test_inventory.can_add(item) is True
+        weight_test_inventory.add(item)
 
-        # Now should not fit
-        assert limited_inventory.can_add(ItemInstance(definition=basic_item_def)) is False
+        # Now should not fit (50 + 2.5 > 50)
+        assert weight_test_inventory.can_add(ItemInstance(definition=basic_item_def)) is False
 
     def test_add_definition_creates_instance(self, player_inventory, stackable_item_def):
         """Test add_definition creates and adds item."""
@@ -1456,18 +1467,16 @@ class TestInventoryContainerWeight:
         limited_inventory.add(item)
         assert limited_inventory.weight_available == pytest.approx(47.5)
 
-    def test_is_over_weight(self, limited_inventory, basic_item_def):
+    def test_is_over_weight(self, weight_test_inventory, basic_item_def):
         """Test over weight detection."""
-        # Force items in without weight check
-        for i in range(25):  # 25 * 2.5 = 62.5 > 50
-            slot = limited_inventory.get_slot(i % 5)
-            if slot.item:
-                slot.item.quantity += 1  # This doesn't work for equipment
-            else:
-                slot.item = ItemInstance(definition=basic_item_def)
-                limited_inventory._current_weight += 2.5
+        # Force items in without weight check by directly setting weight
+        # 25 items at 2.5 weight = 62.5 > 50 weight limit
+        for i in range(25):
+            slot = weight_test_inventory.get_slot(i)
+            slot.item = ItemInstance(definition=basic_item_def)
+            weight_test_inventory._current_weight += 2.5
 
-        assert limited_inventory.is_over_weight is True
+        assert weight_test_inventory.is_over_weight is True
 
     def test_unlimited_weight_never_over(self, player_inventory, basic_item_def):
         """Test unlimited weight container never reports over weight."""

@@ -52,7 +52,7 @@ fn graph_barriers_contain_required_fields() {
         mock_pass_compute(PassIndex(1), "consumer", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("dependent passes compile");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("dependent passes compile");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -96,7 +96,7 @@ fn graph_barriers_contain_all_required_fields() {
         mock_pass_compute(PassIndex(1), "consumer", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -134,7 +134,7 @@ fn graph_barrier_from_to_matches_passes() {
         mock_pass_compute(PassIndex(1), "consumer", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "unique", 800, 600)];
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -164,7 +164,7 @@ fn schedule_barriers_contain_resource_handle() {
         mock_pass_compute(PassIndex(1), "consumer", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("dependent passes compile");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("dependent passes compile");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -208,7 +208,7 @@ fn schedule_barrier_fields_are_valid() {
         mock_pass_compute(PassIndex(1), "consumer", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "target", 800, 600)];
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -261,7 +261,7 @@ fn graph_and_schedule_barrier_counts_match() {
         mock_resource_texture(r2, "tex_b", 1024, 768),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("diamond graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("diamond graph compiles");
     let json = compiled.emit_bridge_json();
 
     let graph_barriers = json["barriers"]
@@ -289,7 +289,7 @@ fn graph_and_schedule_barrier_fields_agree() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
     let json = compiled.emit_bridge_json();
 
     let barriers = json["barriers"]
@@ -350,7 +350,7 @@ fn barrier_optimizer_reduces_barriers_during_compile() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
 
     // The compile succeeded and barriers exist for the chain.
     assert!(!compiled.barriers.is_empty(),
@@ -367,7 +367,7 @@ fn barrier_optimizer_stats_zero_for_no_barriers() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "solo", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("single pass compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("single pass compiles");
 
     // A single pass with no dependencies produces no barriers.
     assert_eq!(
@@ -386,7 +386,7 @@ fn barrier_optimizer_json_has_barriers() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
     let json = compiled.emit_bridge_json();
 
     // JSON must have barriers array and cull_stats.
@@ -432,7 +432,7 @@ fn multi_resource_barriers_count_matches() {
         mock_resource_texture(r_b, "normal", 1920, 1080),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("multi-resource compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("multi-resource compiles");
     let json = compiled.emit_bridge_json();
 
     // Barriers are flat JSON; each entry has from, to, before_state, after_state.
@@ -469,7 +469,7 @@ fn sync_points_contain_expected_fields() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
     let json = compiled.emit_bridge_json();
 
     let sync_points = json["sync_points"]
@@ -530,7 +530,7 @@ fn barrier_optimizer_stats_positive_for_redundant_patterns() {
     ];
     let resources = vec![mock_resource_texture(r, "rt", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
     let stats = compiled.stats;
 
     // The compile pipeline ran with the optimizer active. Verify cull_stats
@@ -553,7 +553,7 @@ fn barrier_optimizer_stats_reflects_optimization() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
     let _stats = compiled.stats;
 
     // The optimizer ran during the compile pipeline. Verify barriers exist.
@@ -574,7 +574,7 @@ fn barrier_optimizer_stats_field_is_available() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
 
     let _stats = compiled.stats;
     let _cull_stats = &compiled.cull_stats;
@@ -598,10 +598,10 @@ fn surviving_barriers_have_valid_resource_handle() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
 
     // Every surviving barrier references valid pass indices and state transitions.
-    for (from, to, before, after) in &compiled.barriers {
+    for (from, to, _resource, _edge_type, before, after) in &compiled.barriers {
         assert!(
             from.0 < to.0,
             "surviving barrier from={} to={} must go forward",
@@ -617,7 +617,7 @@ fn surviving_barriers_have_valid_resource_handle() {
 
 #[test]
 fn empty_graph_stats_are_zero() {
-    let compiled = FrameGraphCompiler::new(vec![], vec![]).expect("empty graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(vec![], vec![]).expect("empty graph compiles");
     let stats = compiled.stats;
 
     assert_eq!(stats.passes_total, 0, "empty graph: 0 passes");
@@ -626,7 +626,7 @@ fn empty_graph_stats_are_zero() {
 
 #[test]
 fn empty_graph_json_export_has_cull_stats() {
-    let compiled = FrameGraphCompiler::new(vec![], vec![]).expect("empty graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(vec![], vec![]).expect("empty graph compiles");
     let json = compiled.emit_bridge_json();
 
     let cull = json["cull_stats"]
@@ -747,7 +747,7 @@ fn cull_stats_is_accessible() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("graph compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("graph compiles");
 
     // Access the cull_stats field.
     let _passes_total = compiled.cull_stats.passes_total;
@@ -778,7 +778,7 @@ fn barriers_reference_valid_pass_indices() {
     ];
     let resources = vec![mock_resource_texture(r, "chain", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources).expect("chain compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, resources).expect("chain compiles");
     let json = compiled.emit_bridge_json();
 
     // Check graph barriers have valid from/to.

@@ -600,7 +600,7 @@ mod tests {
 
     fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let adapter = pollster::block_on(instance.request_adapter(

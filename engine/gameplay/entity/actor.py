@@ -54,6 +54,7 @@ from .constants import (
     TickGroup,
 )
 from .lifecycle import LifecycleCallback, LifecycleEvent, LifecycleManager, LifecycleMixin
+from .eventlog_integration import EntityEventLog
 
 if TYPE_CHECKING:
     from .possession import Controller
@@ -234,7 +235,10 @@ class ComponentContainer:
         """Remove a component from the container."""
         component = self._components.pop(name, None)
         if component is not None:
-            del self._type_to_name[type(component)]
+            # Only remove from type_to_name if this name is the tracked one
+            component_type = type(component)
+            if self._type_to_name.get(component_type) == name:
+                del self._type_to_name[component_type]
 
             # Notify owner
             owner = self._owner()
@@ -343,8 +347,8 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
             self._entity_id = Actor._next_entity_id
             Actor._next_entity_id += 1
 
-        # Basic properties
-        self._name = name or f"{self.__class__.__name__}_{self._entity_id}"
+        # Basic properties - allow empty string, only use default if None
+        self._name = name if name is not None else f"{self.__class__.__name__}_{self._entity_id}"
         if len(self._name) > ENTITY_NAME_MAX_LENGTH:
             self._name = self._name[:ENTITY_NAME_MAX_LENGTH]
 
@@ -370,6 +374,9 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
         # Initialize declared components
         self._init_declared_components()
 
+        # Record spawn event in EntityEventLog
+        self._record_spawn_event()
+
     def _init_declared_components(self) -> None:
         """Initialize components declared in class definition."""
         for name, component_type in getattr(self.__class__, "_declared_components", {}).items():
@@ -385,6 +392,22 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
                         self._components.add(name, instance)
                     except TypeError:
                         pass  # Component requires arguments
+
+    def _record_spawn_event(self) -> None:
+        """Record entity spawn event to EntityEventLog."""
+        event_log = EntityEventLog()
+        spawn_event = event_log.record_spawn(
+            entity_id=self._entity_id,
+            prefab_name=self._name,
+            position=self._transform.position,
+            entity_type=self.__class__.__name__,
+        )
+        # Record state change: UNINITIALIZED -> CREATED
+        event_log.record_state_change(
+            entity_id=self._entity_id,
+            old_state="UNINITIALIZED",
+            new_state="CREATED",
+        )
 
     # =========================================================================
     # IDENTIFICATION
@@ -546,11 +569,23 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
 
     def _on_component_added(self, name: str, component: Any) -> None:
         """Called when a component is added."""
-        pass
+        # Record component added event
+        event_log = EntityEventLog()
+        event_log.record_component_added(
+            entity_id=self._entity_id,
+            component_type=type(component).__name__,
+            component_name=name,
+        )
 
     def _on_component_removed(self, name: str, component: Any) -> None:
         """Called when a component is removed."""
-        pass
+        # Record component removed event
+        event_log = EntityEventLog()
+        event_log.record_component_removed(
+            entity_id=self._entity_id,
+            component_type=type(component).__name__,
+            component_name=name,
+        )
 
     # =========================================================================
     # TAGS
@@ -652,6 +687,13 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
         Args:
             immediate: If True, destroy immediately; otherwise defer
         """
+        # Record destroy event in EntityEventLog
+        event_log = EntityEventLog()
+        event_log.record_destroy(
+            entity_id=self._entity_id,
+            reason="normal",
+            final_state=self._lifecycle_state.name,
+        )
         self.transition_to(LifecycleState.DESTROYING, immediate=immediate)
 
     # =========================================================================

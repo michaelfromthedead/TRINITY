@@ -16,6 +16,18 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
+from engine.world.environment.constants import (
+    DEFAULT_VOLUME_BLEND_RADIUS,
+    DEFAULT_VOLUME_PRIORITY,
+    DEFAULT_GRAVITY_STRENGTH,
+    DEFAULT_GRAVITY_DIRECTION,
+    DEFAULT_WATER_BUOYANCY,
+    DEFAULT_WATER_DRAG,
+    DEFAULT_PAIN_DAMAGE_PER_SECOND,
+    DEFAULT_FOG_DENSITY,
+    DEFAULT_FOG_HEIGHT_FALLOFF,
+)
+
 T = TypeVar("T")
 
 # Type aliases

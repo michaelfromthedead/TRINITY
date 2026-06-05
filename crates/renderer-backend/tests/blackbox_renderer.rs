@@ -58,7 +58,7 @@ fn vertex_layout_size() {
 
 #[test]
 fn wgpu_instance_can_be_created() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
     });
@@ -72,7 +72,7 @@ fn wgpu_instance_can_be_created() {
 
 #[test]
 fn adapter_can_be_requested_with_primary_backend() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
     });
@@ -98,7 +98,7 @@ fn adapter_can_be_requested_with_primary_backend() {
 
 #[test]
 fn device_can_be_created_from_adapter() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
     });
@@ -177,7 +177,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
 #[test]
 fn adapter_surface_properties_queryable() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
     });

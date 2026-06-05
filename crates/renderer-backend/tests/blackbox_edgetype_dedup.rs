@@ -187,8 +187,8 @@ fn json_export_includes_edge_type_field() {
         mock_resource_buffer(r_buf, "data", 4096),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph with RAW+WAW compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph with RAW+WAW compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Check graph section barriers.
@@ -240,8 +240,8 @@ fn json_edge_type_values_are_valid_strings() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Collect barriers from both graph and schedule sections.
@@ -274,8 +274,8 @@ fn json_edge_type_values_are_valid_strings() {
 
 #[test]
 fn empty_graph_no_barriers() {
-    let compiler = FrameGraphCompiler::new(vec![], vec![]);
-    let compiled = compiler.compile().expect("empty graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(vec![], vec![]);
+    let compiled = compiler.expect("empty graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Graph barriers must be empty.
@@ -326,8 +326,8 @@ fn full_pipeline_round_trip_preserves_edge_type() {
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
     // Step 1: Compile.
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
 
     // Step 2: Export to JSON.
     let json = JsonExporter::export_all(&compiled);
@@ -365,8 +365,8 @@ fn full_pipeline_round_trip_preserves_edge_type() {
             .expect("deserialize_from_json must succeed");
 
     // Step 5: Re-compile with the deserialized graph.
-    let re_compiler = FrameGraphCompiler::new(rt_passes, rt_resources);
-    let re_compiled = re_compiler.compile().expect("re-compilation succeeds");
+    let re_compiler = FrameGraphCompiler::from_ir(rt_passes, rt_resources);
+    let re_compiled = re_compiler.expect("re-compilation succeeds");
 
     // Step 6: Export the re-compiled graph and verify barrier edge_type.
     let re_json = JsonExporter::export_all(&re_compiled);

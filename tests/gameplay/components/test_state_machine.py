@@ -95,9 +95,16 @@ class StateMachine:
         if target not in self._states:
             return False
         if not self._transitions:
-            return True  # No restrictions
-        allowed = self._transitions.get(self._current_state, [])
-        return target in allowed or len(allowed) == 0
+            return True  # No restrictions defined at all
+
+        # If current state is not in transitions dict, allow all
+        if self._current_state not in self._transitions:
+            return True
+
+        # If current state is in transitions dict, only allow listed targets
+        # An empty list means NO transitions are allowed
+        allowed = self._transitions[self._current_state]
+        return target in allowed
 
     def transition_to(self, target: str, data: Optional[Dict] = None) -> bool:
         """

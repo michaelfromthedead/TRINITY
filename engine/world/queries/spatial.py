@@ -12,6 +12,12 @@ Query Types:
 Collision Channels:
     - DEFAULT, STATIC, DYNAMIC, PAWN, VEHICLE, PROJECTILE, TRIGGER
 
+Known Limitations:
+    - Capsule sweep is approximated as sphere sweep (capsule treated as sphere)
+    - Sweep queries may miss very thin geometry at grazing angles
+    - Box sweep uses discrete stepping and may tunnel through thin obstacles
+    - Spatial index update frequency affects query accuracy for moving objects
+
 Example:
     >>> query_system = SpatialQuerySystem(spatial_index)
     >>> ray = Ray(origin=(0, 0, 0), direction=(0, 0, 1), max_distance=100.0)

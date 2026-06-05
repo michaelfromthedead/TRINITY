@@ -570,11 +570,15 @@ class GOAPAgent:
         self,
         planner: Optional[GOAPPlanner] = None,
         goals: Optional[List[Goal]] = None,
+        enable_event_logging: bool = True,
+        entity_id: Optional[int] = None,
     ) -> None:
         self.planner = planner or GOAPPlanner()
         self._goals: List[Goal] = goals or []
         self._state = GOAPAgentState()
         self._world_state = WorldState()
+        self._enable_event_logging = enable_event_logging
+        self.entity_id = entity_id
 
     @property
     def goals(self) -> List[Goal]:
@@ -638,7 +642,25 @@ class GOAPAgent:
         self._state.current_action_index = 0
         self._state.is_executing = True
 
+        # Log plan creation event
+        if self._enable_event_logging and self.entity_id is not None:
+            self._log_plan_created(goal, plan)
+
         return True
+
+    def _log_plan_created(self, goal: Goal, plan: "Plan") -> None:
+        """Log a plan creation event to the AI event logger."""
+        try:
+            from .ai_events import get_ai_event_logger
+            logger = get_ai_event_logger()
+            logger.log_goap_plan_created(
+                entity_id=self.entity_id,
+                goal=goal.name,
+                actions=[a.name for a in plan.actions],
+                cost=plan.total_cost,
+            )
+        except ImportError:
+            pass  # AI events module not available
 
     def update(self, context: Any = None) -> bool:
         """
@@ -681,6 +703,10 @@ class GOAPAgent:
         success = action.execute(context)
         action.on_end(context)
 
+        # Log action execution event
+        if self._enable_event_logging and self.entity_id is not None:
+            self._log_action_executed(action, success)
+
         if success:
             # Apply effects to world state
             self._world_state = action.apply_effects(self._world_state)
@@ -691,6 +717,19 @@ class GOAPAgent:
                 return False
 
         return True
+
+    def _log_action_executed(self, action: GOAPAction, success: bool) -> None:
+        """Log an action execution event to the AI event logger."""
+        try:
+            from .ai_events import get_ai_event_logger
+            logger = get_ai_event_logger()
+            logger.log_goap_action_executed(
+                entity_id=self.entity_id,
+                action=action.name,
+                success=success,
+            )
+        except ImportError:
+            pass  # AI events module not available
 
     def abort(self) -> None:
         """Abort the current plan."""

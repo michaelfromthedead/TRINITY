@@ -58,6 +58,21 @@ class AuxSend:
         """Get send level as linear amplitude."""
         return db_to_linear(self.send_level_db)
 
+    @property
+    def target(self) -> Optional[MixBus]:
+        """Alias for target_bus for convenience."""
+        return self.target_bus
+
+    @property
+    def level(self) -> float:
+        """Get send level as linear amplitude (alias for send_level_linear)."""
+        return self.send_level_linear
+
+    @property
+    def pre_fader(self) -> bool:
+        """Check if this is a pre-fader send."""
+        return self.mode == RoutingMode.PRE_FADER
+
     def set_level(self, level_db: float) -> None:
         """Set the send level in dB."""
         self.send_level_db = clamp(level_db, MIN_VOLUME_DB, MAX_SEND_LEVEL)

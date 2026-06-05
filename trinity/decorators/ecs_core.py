@@ -212,6 +212,9 @@ def _after_component(target: Any, params: dict[str, Any]) -> Any:
         from trinity.metaclasses import ComponentMeta
 
         if target.__name__ != "Component":
+            # Initialize _metaclass_steps if not present (class was not created with ComponentMeta)
+            if not hasattr(target, "_metaclass_steps"):
+                target._metaclass_steps = []
             ComponentMeta._process_fields(target)
             ComponentMeta._install_descriptors(target)
             with ComponentMeta._lock:

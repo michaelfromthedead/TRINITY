@@ -162,6 +162,100 @@ class Registry:
         with self._lock:
             return dict(self._metadata.get(cls, {}))
 
+    # --- Tags ---
+
+    def add_tag(self, cls: type, tag: str) -> None:
+        """Add a tag to a registered type."""
+        with self._lock:
+            if cls not in self._metadata:
+                raise ValueError(f"Type {cls.__name__} is not registered")
+            tags = self._metadata[cls].get("_tags", set())
+            if isinstance(tags, frozenset):
+                tags = set(tags)
+            tags.add(tag)
+            self._metadata[cls]["_tags"] = tags
+
+    def remove_tag(self, cls: type, tag: str) -> bool:
+        """Remove a tag from a registered type. Returns True if tag was removed."""
+        with self._lock:
+            meta = self._metadata.get(cls)
+            if not meta:
+                return False
+            tags = meta.get("_tags", set())
+            if isinstance(tags, frozenset):
+                tags = set(tags)
+            if tag in tags:
+                tags.discard(tag)
+                self._metadata[cls]["_tags"] = tags
+                return True
+            return False
+
+    def has_tag(self, cls: type, tag: str) -> bool:
+        """Check if a registered type has a specific tag."""
+        with self._lock:
+            meta = self._metadata.get(cls)
+            if not meta:
+                return False
+            tags = meta.get("_tags", set())
+            return tag in tags
+
+    def get_tags(self, cls: type) -> set[str]:
+        """Get all tags for a registered type."""
+        with self._lock:
+            meta = self._metadata.get(cls)
+            if not meta:
+                return set()
+            tags = meta.get("_tags", set())
+            return set(tags)
+
+    def query(self, tag: Optional[str] = None, **metadata_filters: Any) -> list[type]:
+        """
+        Query registered types by tag and/or metadata filters.
+
+        Args:
+            tag: If provided, only return types with this tag.
+            **metadata_filters: Key-value pairs to filter by metadata.
+                For set-valued metadata (like 'effects' or 'preconditions'),
+                a single value will match if it's contained in the set.
+
+        Returns:
+            List of types matching the query.
+
+        Example:
+            >>> registry.query(tag="bt_node")  # All BT nodes
+            >>> registry.query(tag="bt_node", node_type="action")  # Action nodes
+            >>> registry.query(tag="goap_action", effects="target_damaged")
+        """
+        with self._lock:
+            results = []
+            for cls, meta in self._metadata.items():
+                # Check tag filter
+                if tag is not None:
+                    tags = meta.get("_tags", set())
+                    if tag not in tags:
+                        continue
+
+                # Check metadata filters
+                matches = True
+                for key, expected in metadata_filters.items():
+                    actual = meta.get(key)
+                    if actual is None:
+                        matches = False
+                        break
+                    # Handle set membership for set-valued metadata
+                    if isinstance(actual, (set, frozenset)):
+                        if expected not in actual:
+                            matches = False
+                            break
+                    elif actual != expected:
+                        matches = False
+                        break
+
+                if matches:
+                    results.append(cls)
+
+            return results
+
     # --- Utilities ---
 
     def clear(self) -> None:

@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
+from engine.world.hlod.constants import (
+    TransitionConstantsConfig as _HLODTransitionConstants,
+)
 from .generator import AABB, Vec3
 
 

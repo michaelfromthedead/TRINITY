@@ -631,6 +631,52 @@ class BlendShapeController:
 # =============================================================================
 
 
+# =============================================================================
+# Single Blend Shape Application
+# =============================================================================
+
+
+def apply_blend_shape(
+    base_vertices: np.ndarray,
+    shape: BlendShape,
+    weight: float = 1.0,
+    clamp_weight: bool = False,
+) -> np.ndarray:
+    """
+    Apply a single blend shape to base vertices.
+
+    Args:
+        base_vertices: Base mesh vertices (N, 3)
+        shape: The blend shape to apply
+        weight: Weight for the blend shape (default 1.0)
+        clamp_weight: If True, clamp weight to [0, 1]
+
+    Returns:
+        Morphed vertex positions (N, 3)
+    """
+    if clamp_weight:
+        weight = max(0.0, min(1.0, weight))
+
+    if weight == 0.0 or shape.vertex_count == 0:
+        return base_vertices.copy()
+
+    result = base_vertices.copy()
+
+    if shape.is_sparse:
+        # Sparse application
+        result[shape.vertex_indices] += shape.deltas * weight
+    else:
+        # Dense application (full vertex count)
+        result += shape.deltas * weight
+
+    return result
+
+
+# =============================================================================
+# ARKit 52 Blend Shape Compatibility
+# =============================================================================
+
+
 # Standard ARKit blend shape names for iOS face tracking compatibility
 ARKIT_BLEND_SHAPES = [
     # Eye shapes
@@ -670,6 +716,82 @@ ARKIT_BLEND_SHAPES = [
     # Tongue (may not be tracked)
     "tongueOut",
 ]
+
+# Frozenset version for O(1) lookup and immutability
+_ARKIT_BLEND_SHAPES_SET: frozenset[str] = frozenset(ARKIT_BLEND_SHAPES)
+
+
+def validate_arkit_data(
+    data: dict[str, float],
+    strict: bool = False,
+) -> bool:
+    """
+    Validate ARKit blend shape data.
+
+    Checks that all shape names in the dictionary are valid ARKit blend shapes.
+    Does NOT validate weight ranges (weights are clamped elsewhere).
+
+    Args:
+        data: Dictionary of blend shape names to weights
+        strict: If True, require all 52 shapes; if False, allow partial
+
+    Returns:
+        True if all shape names are valid ARKit names, False otherwise
+    """
+    # Check for unknown shape names
+    for name in data.keys():
+        if name not in _ARKIT_BLEND_SHAPES_SET:
+            return False
+
+    # In strict mode, require all shapes
+    if strict:
+        if set(data.keys()) != _ARKIT_BLEND_SHAPES_SET:
+            return False
+
+    return True
+
+
+def apply_arkit_data(
+    shape_set: BlendShapeSet,
+    arkit_data: dict[str, float],
+) -> np.ndarray:
+    """
+    Apply ARKit face tracking data to a blend shape set.
+
+    Applies the ARKit weights to the corresponding blend shapes and returns
+    the morphed vertices. Invalid shape names are silently ignored.
+
+    Args:
+        shape_set: The blend shape set to update
+        arkit_data: Dictionary of ARKit blend shape weights
+
+    Returns:
+        Morphed vertex positions as numpy array
+    """
+    # Start with base vertices
+    result = shape_set.base_vertices.copy()
+
+    for name, weight in arkit_data.items():
+        # Skip shapes not in the ARKit set
+        if name not in _ARKIT_BLEND_SHAPES_SET:
+            continue
+
+        # Skip shapes not in the blend shape set
+        shape = shape_set.get_shape(name)
+        if shape is None:
+            continue
+
+        # Clamp weight to [0, 1]
+        clamped = max(0.0, min(1.0, weight))
+
+        # Apply this shape
+        if clamped > 0.0 and shape.vertex_count > 0:
+            if shape.is_sparse:
+                result[shape.vertex_indices] += shape.deltas * clamped
+            else:
+                result += shape.deltas * clamped
+
+    return result
 
 
 def create_arkit_compatible_set(name: str, vertex_count: int) -> BlendShapeSet:

@@ -13,6 +13,10 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
+from engine.world.foliage.constants import (
+    DEFAULT_LOD_DISTANCES,
+    DEFAULT_CULL_DISTANCE,
+)
 from .placement import Bounds, PlacementResult
 from .types import FoliageType
 

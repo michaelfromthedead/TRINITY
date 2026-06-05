@@ -121,6 +121,7 @@ RAYCAST_BINARY_SEARCH_ITERATIONS = 8
 
 # Brush defaults
 DEFAULT_BRUSH_SIZE: float = 10.0
+DEFAULT_BRUSH_RADIUS: float = 10.0  # Alias for brush size
 DEFAULT_BRUSH_STRENGTH: float = 0.5
 DEFAULT_BRUSH_FALLOFF: float = 0.5
 
@@ -157,6 +158,9 @@ DEFAULT_BLEND_SHARPNESS: float = 8.0
 
 # Weight threshold for considering a layer active
 WEIGHT_ACTIVE_THRESHOLD: float = 0.001
+
+# Material weight comparison epsilon
+MATERIAL_WEIGHT_EPSILON: float = 1e-6
 
 
 # =============================================================================
@@ -196,6 +200,7 @@ DEFAULT_HOLE_MASK_RESOLUTION: int = 32
 
 # Spline points
 DEFAULT_SPLINE_WIDTH: float = 10.0
+DEFAULT_SPLINE_SEGMENT_LENGTH: float = 5.0
 
 # Spline evaluation
 SPLINE_TANGENT_EPSILON: float = 0.001

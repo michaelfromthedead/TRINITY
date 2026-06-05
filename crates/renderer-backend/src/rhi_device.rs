@@ -231,6 +231,42 @@ impl RhiDevice {
         }
     }
 
+    /// Try to create a headless RhiDevice for testing purposes.
+    ///
+    /// This uses wgpu's low-power adapter request with fallback backends.
+    /// Returns None if no suitable adapter can be found.
+    pub fn try_new_headless() -> Option<Self> {
+        use pollster::FutureExt;
+
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..Default::default()
+        });
+
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })
+            .block_on()?;
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("Headless Test Device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                },
+                None,
+            )
+            .block_on()
+            .ok()?;
+
+        Some(Self::new(device, queue))
+    }
+
     // -- Accessors ---------------------------------------------------------
 
     /// Borrow the underlying [`wgpu::Device`].
@@ -426,7 +462,7 @@ fn features_for_flags(flags: FeatureFlags) -> wgpu::Features {
 /// `Adapter.enumerate()`.
 pub fn create_instance() -> RhiInstance {
     let inner = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
+        backends: wgpu::Backends::VULKAN,
         ..Default::default()
     });
     RhiInstance { inner }
@@ -663,7 +699,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -703,7 +739,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -740,7 +776,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(

@@ -6,21 +6,417 @@ Provides data-driven animation selection using motion matching techniques.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+
+import numpy as np
 
 from engine.core.math import Vec3, Quat, Transform
 from engine.core.ecs import Entity, World
 from engine.animation.config import ANIMATION_SYSTEM_CONFIG
 
+# Import from motionmatching submodule
+from engine.animation.motionmatching.database import (
+    ClipMetadata,
+    DatabaseEntry,
+    MotionDatabase,
+)
+from engine.animation.motionmatching.features import (
+    BoneData,
+    FeatureConfig,
+    FeatureExtractor,
+    FeatureSet,
+    FeatureType,
+    FootContact,
+    TrajectoryPoint,
+)
+from engine.animation.motionmatching.search import (
+    MotionSearch,
+    SearchConfig,
+    SearchMethod,
+    SearchResult,
+)
+from engine.animation.motionmatching.transition import (
+    BlendMode,
+    BoneTransform,
+    InertializationBlender,
+    MotionTransition,
+    Pose,
+    TransitionConfig,
+)
 
-class FeatureType(Enum):
-    """Type of motion feature."""
-    POSITION = auto()  # 3D position
-    VELOCITY = auto()  # 3D velocity
-    DIRECTION = auto()  # 3D direction
-    TRAJECTORY = auto()  # Future/past trajectory points
+# Re-export commonly used types
+__all__ = [
+    "MotionMatchingSystem",
+    "MotionMatchingComponent",
+    "MotionMatchingConfig",
+    "MotionMatchingStatistics",
+    "MotionInput",
+    "MotionFeature",
+    "MotionFrame",
+    "MotionDatabase",
+    "MotionMatchingController",
+    "FeatureType",
+    "FallbackReason",
+    "MotionMatchingMode",
+    "TrajectoryState",
+]
+
+
+# =============================================================================
+# MOTION FRAME
+# =============================================================================
+
+@dataclass
+class MotionFrame:
+    """Single frame of motion data for matching."""
+    clip_index: int = 0
+    frame_index: int = 0
+    time: float = 0.0
+    pose: Optional[Pose] = None
+    features: Optional[np.ndarray] = None
+    velocity: Optional[Vec3] = None
+    angular_velocity: float = 0.0
+    foot_contacts: int = 0  # Bitmask
+    animation_index: int = 0  # Alias for clip_index (legacy compatibility)
+
+    def __post_init__(self):
+        # Sync animation_index and clip_index
+        if self.animation_index != 0 and self.clip_index == 0:
+            self.clip_index = self.animation_index
+        elif self.clip_index != 0 and self.animation_index == 0:
+            self.animation_index = self.clip_index
+
+    def get_feature_vector(self) -> np.ndarray:
+        """Get feature vector for this frame."""
+        if self.features is not None:
+            return self.features
+        return np.zeros(0)
+
+
+# =============================================================================
+# MOTION MATCHING CONTROLLER
+# =============================================================================
+
+class MotionMatchingController:
+    """High-level controller for motion matching."""
+
+    def __init__(self, system: Optional['MotionMatchingSystem'] = None):
+        self.system = system
+        self._active_entities: Set[Entity] = set()
+        self._paused = False
+
+    def register_entity(self, entity: Entity) -> None:
+        """Register an entity for motion matching."""
+        self._active_entities.add(entity)
+
+    def unregister_entity(self, entity: Entity) -> None:
+        """Unregister an entity from motion matching."""
+        self._active_entities.discard(entity)
+
+    def pause(self) -> None:
+        """Pause motion matching for all entities."""
+        self._paused = True
+
+    def resume(self) -> None:
+        """Resume motion matching for all entities."""
+        self._paused = False
+
+    def is_paused(self) -> bool:
+        """Check if motion matching is paused."""
+        return self._paused
+
+    def get_active_entities(self) -> Set[Entity]:
+        """Get all active entities."""
+        return self._active_entities.copy()
+
+    def update(self, dt: float) -> None:
+        """Update motion matching for all active entities."""
+        if self._paused or self.system is None:
+            return
+        # Delegate to system
+
+
+# =============================================================================
+# SYSTEM DECORATOR
+# =============================================================================
+
+
+def system(
+    phase: str = "update",
+    order: int = 0,
+    reads: Optional[List[str]] = None,
+    writes: Optional[List[str]] = None,
+):
+    """Decorator to mark a class as an ECS system with metadata.
+
+    Args:
+        phase: System execution phase (e.g., "animation", "physics")
+        order: Execution order within phase (lower = earlier)
+        reads: List of component types this system reads
+        writes: List of component types this system writes
+    """
+    def decorator(cls):
+        cls._system_phase = phase
+        cls._system_order = order
+        cls._system_reads = reads or []
+        cls._system_writes = writes or []
+        cls._is_system = True
+        return cls
+    return decorator
+
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+
+class FallbackReason(Enum):
+    """Why motion matching fell back to blend tree."""
+    NONE = auto()
+    DISABLED = auto()
+    EXPLICIT_FLAG = auto()
+    DATABASE_EMPTY = auto()
+    NO_DATABASE = auto()
+    SEARCH_FAILED = auto()
+    NO_MATCH_FOUND = auto()
+    QUALITY_TOO_LOW = auto()
+    TRANSITION_LOCKED = auto()
+    BUDGET_EXCEEDED = auto()
+
+
+class MotionMatchingMode(Enum):
+    """Motion matching operating modes."""
+    FULL = auto()              # Full motion matching
+    TRAJECTORY_ONLY = auto()   # Only match trajectory
+    POSE_ONLY = auto()         # Only match pose
+    FALLBACK = auto()          # Using fallback blend tree
+    DISABLED = auto()          # Disabled
+
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+
+@dataclass
+class MotionMatchingConfig:
+    """Motion matching configuration."""
+    search_interval: float = 0.1    # Seconds between searches
+    quality_threshold: float = 0.8  # Min match quality (0-1)
+    blend_time: float = 0.2         # Transition blend duration
+    trajectory_weight: float = 1.0  # Trajectory feature weight
+    pose_weight: float = 1.0        # Pose feature weight
+    velocity_weight: float = 0.5    # Velocity feature weight
+    max_candidates: int = 10        # Max candidates to evaluate
+    budget_ms: float = 2.0          # Frame budget in milliseconds
+    min_search_interval: float = 0.05  # Minimum time between searches
+    min_transition_interval: float = 0.1  # Minimum time between transitions
+
+
+# =============================================================================
+# STATISTICS
+# =============================================================================
+
+
+@dataclass
+class MotionMatchingStatistics:
+    """Runtime statistics for motion matching."""
+    total_queries: int = 0
+    successful_matches: int = 0
+    transitions_triggered: int = 0
+    budget_exceeded_count: int = 0
+    fallback_count: int = 0
+    total_search_time_ms: float = 0.0
+    avg_search_time_ms: float = 0.0
+    avg_match_cost: float = 0.0
+    current_mode: MotionMatchingMode = MotionMatchingMode.FULL
+    last_fallback_reason: FallbackReason = FallbackReason.NONE
+
+    # Internal tracking
+    _total_cost: float = 0.0
+    _cost_count: int = 0
+
+    def record_query(self, search_time_ms: float, cost: float, success: bool) -> None:
+        """Record a search query."""
+        self.total_queries += 1
+        self.total_search_time_ms += search_time_ms
+        self.avg_search_time_ms = self.total_search_time_ms / self.total_queries
+
+        if success:
+            self.successful_matches += 1
+            self._total_cost += cost
+            self._cost_count += 1
+            self.avg_match_cost = self._total_cost / self._cost_count
+
+    def record_transition(self) -> None:
+        """Record a transition."""
+        self.transitions_triggered += 1
+
+    def record_budget_exceeded(self) -> None:
+        """Record a budget exceeded event."""
+        self.budget_exceeded_count += 1
+
+    def record_fallback(self, reason: FallbackReason) -> None:
+        """Record a fallback event."""
+        self.fallback_count += 1
+        self.last_fallback_reason = reason
+        self.current_mode = MotionMatchingMode.FALLBACK
+
+    def reset(self) -> None:
+        """Reset all statistics."""
+        self.total_queries = 0
+        self.successful_matches = 0
+        self.transitions_triggered = 0
+        self.budget_exceeded_count = 0
+        self.fallback_count = 0
+        self.total_search_time_ms = 0.0
+        self.avg_search_time_ms = 0.0
+        self.avg_match_cost = 0.0
+        self.current_mode = MotionMatchingMode.FULL
+        self.last_fallback_reason = FallbackReason.NONE
+        self._total_cost = 0.0
+        self._cost_count = 0
+
+
+# =============================================================================
+# TRAJECTORY STATE
+# =============================================================================
+
+
+@dataclass
+class TrajectoryState:
+    """Future trajectory prediction state.
+
+    Attributes:
+        current_position: Current world position
+        current_facing: Current facing angle (radians)
+        current_velocity: Current velocity
+        desired_trajectory: List of predicted trajectory points
+        foot_contacts: Current foot contact state
+    """
+    current_position: np.ndarray = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
+    current_facing: float = 0.0
+    current_velocity: np.ndarray = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
+    desired_trajectory: List[TrajectoryPoint] = field(default_factory=list)
+    foot_contacts: FootContact = field(default_factory=FootContact)
+
+    def __post_init__(self):
+        if not isinstance(self.current_position, np.ndarray):
+            self.current_position = np.array(self.current_position, dtype=np.float32)
+        if not isinstance(self.current_velocity, np.ndarray):
+            self.current_velocity = np.array(self.current_velocity, dtype=np.float32)
+
+    def compute_trajectory(
+        self,
+        input_direction: np.ndarray,
+        input_speed: float,
+        trajectory_times: List[float],
+        turn_rate: float = 3.0,
+    ) -> None:
+        """Compute desired trajectory from input.
+
+        Args:
+            input_direction: Desired movement direction (normalized)
+            input_speed: Desired movement speed
+            trajectory_times: Time points to compute trajectory for
+            turn_rate: Maximum turn rate in radians per second
+        """
+        self.desired_trajectory = []
+
+        if not trajectory_times:
+            return
+
+        # Compute velocity from direction and speed
+        dir_norm = np.linalg.norm(input_direction)
+        if dir_norm > 1e-6:
+            normalized_dir = input_direction / dir_norm
+            desired_velocity = normalized_dir * input_speed
+            # Compute target facing from direction
+            target_facing = math.atan2(normalized_dir[2], normalized_dir[0])
+        else:
+            desired_velocity = np.zeros(3, dtype=np.float32)
+            target_facing = self.current_facing
+
+        # Compute trajectory points at each time
+        for t in trajectory_times:
+            # Interpolate facing toward target
+            facing_diff = target_facing - self.current_facing
+            # Normalize angle to [-pi, pi]
+            while facing_diff > math.pi:
+                facing_diff -= 2 * math.pi
+            while facing_diff < -math.pi:
+                facing_diff += 2 * math.pi
+
+            max_turn = turn_rate * t
+            if abs(facing_diff) <= max_turn:
+                facing = target_facing
+            else:
+                facing = self.current_facing + max_turn * (1 if facing_diff > 0 else -1)
+
+            # Compute position
+            position = self.current_position + desired_velocity * t
+
+            # Create trajectory point
+            point = TrajectoryPoint(
+                time_offset=t,
+                position=position.copy(),
+                facing=facing,
+                velocity=desired_velocity.copy(),
+            )
+            self.desired_trajectory.append(point)
+
+
+# =============================================================================
+# INPUT
+# =============================================================================
+
+
+@dataclass
+class MotionMatchingInput:
+    """Input state for motion matching (new API)."""
+    desired_velocity: np.ndarray = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float32)
+    )
+    desired_facing: np.ndarray = field(
+        default_factory=lambda: np.array([1, 0, 0], dtype=np.float32)
+    )
+    trajectory: Optional[TrajectoryState] = None
+
+    def __post_init__(self):
+        if not isinstance(self.desired_velocity, np.ndarray):
+            self.desired_velocity = np.array(self.desired_velocity, dtype=np.float32)
+        if not isinstance(self.desired_facing, np.ndarray):
+            self.desired_facing = np.array(self.desired_facing, dtype=np.float32)
+
+
+# =============================================================================
+# LEGACY COMPATIBILITY
+# =============================================================================
+
+
+@dataclass
+class MotionInput:
+    """Input state for motion matching (legacy API).
+
+    Attributes:
+        desired_velocity: Desired movement velocity
+        desired_direction: Desired facing direction
+        trajectory: Future trajectory points (positions)
+        trajectory_times: Times for trajectory points
+        features: Additional feature values
+    """
+    desired_velocity: Vec3 = field(default_factory=Vec3.zero)
+    desired_direction: Vec3 = field(default_factory=Vec3.forward)
+    trajectory: List[Vec3] = field(default_factory=list)
+    trajectory_times: List[float] = field(default_factory=list)
+    features: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -33,127 +429,31 @@ class MotionFeature:
         bone_index: Bone to track (-1 for root)
         weight: Feature weight in matching
         trajectory_times: Times for trajectory features (seconds)
+        values: Feature vector values (for distance calculations)
     """
     name: str = ""
-    feature_type: FeatureType = FeatureType.POSITION
+    feature_type: FeatureType = FeatureType.BONE_POSITION
     bone_index: int = -1
     weight: float = 1.0
-    trajectory_times: list[float] = field(default_factory=list)
+    trajectory_times: List[float] = field(default_factory=list)
+    values: List[float] = field(default_factory=list)
+
+    def distance(self, other: 'MotionFeature') -> float:
+        """Compute squared distance between feature vectors."""
+        if len(self.values) != len(other.values):
+            return float('inf')
+        return sum((a - b) ** 2 for a, b in zip(self.values, other.values))
+
+    def weighted_distance(self, other: 'MotionFeature', weights: List[float]) -> float:
+        """Compute weighted squared distance."""
+        if len(self.values) != len(other.values) or len(weights) != len(self.values):
+            return float('inf')
+        return sum(w * (a - b) ** 2 for w, a, b in zip(weights, self.values, other.values))
 
 
-@dataclass
-class MotionInput:
-    """Input state for motion matching.
-
-    Attributes:
-        desired_velocity: Desired movement velocity
-        desired_direction: Desired facing direction
-        trajectory: Future trajectory points (positions)
-        trajectory_times: Times for trajectory points
-        features: Additional feature values
-    """
-    desired_velocity: Vec3 = field(default_factory=Vec3.zero)
-    desired_direction: Vec3 = field(default_factory=Vec3.forward)
-    trajectory: list[Vec3] = field(default_factory=list)
-    trajectory_times: list[float] = field(default_factory=list)
-    features: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class MotionFrame:
-    """Single frame of motion data.
-
-    Attributes:
-        animation_index: Index of source animation
-        frame_index: Frame within animation
-        feature_vector: Precomputed feature values
-        root_position: Root position at this frame
-        root_rotation: Root rotation at this frame
-    """
-    animation_index: int = 0
-    frame_index: int = 0
-    feature_vector: list[float] = field(default_factory=list)
-    root_position: Vec3 = field(default_factory=Vec3.zero)
-    root_rotation: Quat = field(default_factory=Quat.identity)
-
-
-@dataclass
-class MotionDatabase:
-    """Database of motion frames for matching.
-
-    Attributes:
-        frames: All motion frames
-        features: Feature definitions
-        animation_names: Names of animations
-        frame_rate: Database frame rate
-    """
-    frames: list[MotionFrame] = field(default_factory=list)
-    features: list[MotionFeature] = field(default_factory=list)
-    animation_names: list[str] = field(default_factory=list)
-    frame_rate: float = 30.0
-
-    @property
-    def feature_count(self) -> int:
-        """Number of features in feature vector."""
-        return sum(self._feature_dimension(f) for f in self.features)
-
-    @property
-    def frame_count(self) -> int:
-        return len(self.frames)
-
-    def _feature_dimension(self, feature: MotionFeature) -> int:
-        """Get dimension of feature vector component."""
-        if feature.feature_type == FeatureType.TRAJECTORY:
-            return len(feature.trajectory_times) * 3
-        elif feature.feature_type in (FeatureType.POSITION, FeatureType.VELOCITY, FeatureType.DIRECTION):
-            return 3
-        return 1
-
-    def add_frame(self, frame: MotionFrame) -> int:
-        """Add frame to database."""
-        self.frames.append(frame)
-        return len(self.frames) - 1
-
-    def get_frame(self, index: int) -> MotionFrame | None:
-        """Get frame by index."""
-        if 0 <= index < len(self.frames):
-            return self.frames[index]
-        return None
-
-
-@dataclass
-class MotionMatchResult:
-    """Result of motion matching search."""
-    frame_index: int = -1
-    cost: float = float('inf')
-    animation_index: int = -1
-    animation_frame: int = 0
-
-
-@dataclass
-class MotionMatchingController:
-    """Controller for motion matching.
-
-    Attributes:
-        database: Motion database to search
-        current_frame: Current database frame index
-        transition_time: Time for blending between matches
-        search_interval: Frames between searches
-        pose_cost_weight: Weight for pose cost in matching
-        trajectory_cost_weight: Weight for trajectory cost
-    """
-    database: MotionDatabase | None = None
-    current_frame: int = 0
-    transition_time: float = ANIMATION_SYSTEM_CONFIG.DEFAULT_MOTION_MATCH_TRANSITION
-    search_interval: int = ANIMATION_SYSTEM_CONFIG.MOTION_MATCH_SEARCH_INTERVAL
-    pose_cost_weight: float = 1.0
-    trajectory_cost_weight: float = 1.0
-
-    # Internal state
-    _frames_since_search: int = 0
-    _transition_progress: float = 1.0
-    _previous_frame: int = -1
-    _accumulated_time: float = 0.0
+# =============================================================================
+# COMPONENT
+# =============================================================================
 
 
 @dataclass
@@ -161,47 +461,130 @@ class MotionMatchingComponent:
     """Component for entities using motion matching.
 
     Attributes:
-        controller: Motion matching controller
-        input_provider: Function to get current input
+        database: Motion database to search
+        config: Motion matching configuration
         enabled: Whether motion matching is enabled
-        output_animation: Current animation index
-        output_time: Current animation time
+        use_fallback: Force fallback to blend tree
+        required_tags: Tags required for search results
+        context_modifiers: Tag-based cost modifiers
+        statistics: Runtime statistics
+        current_pose: Current output pose
+        current_clip_index: Current clip being played
+        current_frame: Current frame in clip
+        current_time: Current time in clip
+        current_cost: Cost of current match
     """
-    controller: MotionMatchingController = field(default_factory=MotionMatchingController)
-    input_provider: Callable[[], MotionInput] | None = None
+    database: Optional[MotionDatabase] = None
+    config: MotionMatchingConfig = field(default_factory=MotionMatchingConfig)
     enabled: bool = True
+    use_fallback: bool = False
+    required_tags: Set[str] = field(default_factory=set)
+    context_modifiers: Dict[str, float] = field(default_factory=dict)
+    statistics: MotionMatchingStatistics = field(default_factory=MotionMatchingStatistics)
 
-    # Output
-    output_animation: int = 0
-    output_time: float = 0.0
-    output_pose: dict[int, Transform] = field(default_factory=dict)
+    # Output state
+    current_pose: Optional[Pose] = None
+    current_clip_index: int = -1
+    current_frame: int = 0
+    current_time: float = 0.0
+    current_cost: float = 0.0
+
+    # Internal state
+    _search: Optional[MotionSearch] = None
+    _blender: Optional[InertializationBlender] = None
+    _time_since_search: float = 0.0
+    _time_since_transition: float = 0.0
+    _frame_budget_used_ms: float = 0.0
+    _last_search_time: float = 0.0
+
+    def __post_init__(self):
+        if isinstance(self.required_tags, (list, tuple)):
+            self.required_tags = set(self.required_tags)
+        if self.database is not None:
+            self._search = MotionSearch(self.database)
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if component is ready for motion matching."""
+        return (
+            self.database is not None
+            and self.database.entry_count > 0
+            and self.enabled
+        )
+
+    @property
+    def is_transitioning(self) -> bool:
+        """Check if currently in a transition."""
+        return self._blender is not None
+
+    def set_database(self, database: MotionDatabase) -> None:
+        """Set the motion database.
+
+        Args:
+            database: Motion database to use
+        """
+        self.database = database
+        self._search = MotionSearch(database)
 
 
+# =============================================================================
+# SYSTEM
+# =============================================================================
+
+
+@system(
+    phase="animation",
+    order=0,
+    reads=["MotionMatchingComponent", "MotionMatchingInput"],
+    writes=["MotionMatchingComponent"],
+)
 class MotionMatchingSystem:
     """ECS system for motion matching.
 
     Updates motion matching controllers and produces animation outputs.
     """
 
-    def __init__(self):
-        self._pose_provider: Callable[[int, int], dict[int, Transform]] | None = None
+    def __init__(
+        self,
+        pose_provider: Optional[Callable[[int, int], Pose]] = None,
+        state_machine_fallback: Optional[Callable[[Any, float], Pose]] = None,
+    ):
+        """Initialize motion matching system.
+
+        Args:
+            pose_provider: Function to get poses from clips
+            state_machine_fallback: Fallback callback for blend tree
+        """
+        self.pose_provider = pose_provider
+        self.state_machine_fallback = state_machine_fallback
 
     def set_pose_provider(
         self,
-        provider: Callable[[int, int], dict[int, Transform]]
+        provider: Callable[[int, int], Pose]
     ) -> None:
         """Set function that provides poses.
 
         Args:
-            provider: Function(animation_index, frame) -> pose
+            provider: Function(clip_index, frame) -> Pose
         """
-        self._pose_provider = provider
+        self.pose_provider = provider
+
+    def set_state_machine_fallback(
+        self,
+        fallback: Callable[[Any, float], Pose]
+    ) -> None:
+        """Set fallback callback for blend tree.
+
+        Args:
+            fallback: Function(entity, dt) -> Pose
+        """
+        self.state_machine_fallback = fallback
 
     def update(
         self,
-        world: World,
+        world: Optional[World],
         dt: float,
-        entity_components: list[tuple[Entity, MotionMatchingComponent]]
+        entity_components: List[Tuple[Entity, MotionMatchingComponent]]
     ) -> None:
         """Update all motion matching components.
 
@@ -211,273 +594,318 @@ class MotionMatchingSystem:
             entity_components: List of (entity, component) tuples
         """
         for entity, component in entity_components:
-            if not component.enabled:
-                continue
+            self._update_component(entity, component, dt)
 
-            self._update_component(component, dt)
-
-    def _update_component(self, component: MotionMatchingComponent, dt: float) -> None:
+    def _update_component(
+        self,
+        entity: Optional[Entity],
+        component: MotionMatchingComponent,
+        dt: float
+    ) -> None:
         """Update single motion matching component."""
-        controller = component.controller
+        # Reset frame budget
+        component._frame_budget_used_ms = 0.0
 
-        if not controller.database:
+        # Update timers
+        component._time_since_search += dt
+        component._time_since_transition += dt
+
+        # Check for fallback conditions
+        fallback_reason = self._check_fallback(component)
+        if fallback_reason != FallbackReason.NONE:
+            component.statistics.record_fallback(fallback_reason)
+            pose = self._get_fallback_pose(component, dt)
+            if pose:
+                component.current_pose = pose
             return
 
-        # Get current input
-        input_state = MotionInput()
-        if component.input_provider:
-            input_state = component.input_provider()
+        # Reset mode to FULL if not in fallback
+        component.statistics.current_mode = MotionMatchingMode.FULL
 
-        controller._accumulated_time += dt
-        controller._frames_since_search += 1
+        # Get current input
+        input_state = MotionMatchingInput()
 
         # Perform search if needed
-        if controller._frames_since_search >= controller.search_interval:
-            controller._frames_since_search = 0
+        if self._should_search(component):
+            self._perform_search(component, input_state)
 
-            query = self._build_query(input_state, controller.database.features)
-            result = self._search_database(query, controller)
+        # Update transition blending
+        if component._blender is not None:
+            component._blender.update(dt)
+            if component._blender.is_complete:
+                component._blender = None
 
-            if result.frame_index >= 0 and result.cost < self._get_continuation_cost(controller):
-                # Transition to new match
-                controller._previous_frame = controller.current_frame
-                controller.current_frame = result.frame_index
-                controller._transition_progress = 0.0
+        # Advance playback
+        if component.database is not None:
+            clip = component.database.get_clip_metadata(component.current_clip_index)
+            if clip is not None:
+                component.current_time += dt
+                frame_time = 1.0 / clip.frame_rate if clip.frame_rate > 0 else 1.0 / 30.0
+                frames_to_advance = int(component.current_time / frame_time)
+                if frames_to_advance > 0:
+                    component.current_time -= frames_to_advance * frame_time
+                    component.current_frame += frames_to_advance
+                    # Handle looping
+                    if clip.is_looping:
+                        component.current_frame %= clip.frame_count
+                    else:
+                        component.current_frame = min(component.current_frame, clip.frame_count - 1)
 
-        # Update transition
-        if controller._transition_progress < 1.0:
-            controller._transition_progress += dt / controller.transition_time
-            controller._transition_progress = min(1.0, controller._transition_progress)
+        # Get output pose
+        if self.pose_provider and component.current_clip_index >= 0:
+            pose = self.pose_provider(component.current_clip_index, component.current_frame)
+            if component._blender is not None:
+                pose = component._blender.apply(pose)
+            component.current_pose = pose
 
-        # Advance current frame
-        frame_advance = int(controller._accumulated_time * controller.database.frame_rate)
-        if frame_advance > 0:
-            controller._accumulated_time -= frame_advance / controller.database.frame_rate
-            controller.current_frame = (controller.current_frame + frame_advance) % controller.database.frame_count
+    def _check_fallback(self, component: MotionMatchingComponent) -> FallbackReason:
+        """Check if component should use fallback.
 
-        # Update output
-        current_frame = controller.database.get_frame(controller.current_frame)
-        if current_frame:
-            component.output_animation = current_frame.animation_index
-            component.output_time = current_frame.frame_index / controller.database.frame_rate
+        Args:
+            component: Component to check
 
-            # Get pose
-            if self._pose_provider:
-                current_pose = self._pose_provider(current_frame.animation_index, current_frame.frame_index)
+        Returns:
+            Fallback reason or NONE if no fallback needed
+        """
+        if not component.enabled:
+            return FallbackReason.DISABLED
 
-                # Blend with previous if transitioning
-                if controller._transition_progress < 1.0 and controller._previous_frame >= 0:
-                    prev_frame = controller.database.get_frame(controller._previous_frame)
-                    if prev_frame:
-                        prev_pose = self._pose_provider(prev_frame.animation_index, prev_frame.frame_index)
-                        current_pose = self._blend_poses(prev_pose, current_pose, controller._transition_progress)
+        if component.use_fallback:
+            return FallbackReason.EXPLICIT_FLAG
 
-                component.output_pose = current_pose
+        if component.database is None or component.database.entry_count == 0:
+            return FallbackReason.DATABASE_EMPTY
+
+        if component._frame_budget_used_ms >= component.config.budget_ms:
+            return FallbackReason.BUDGET_EXCEEDED
+
+        return FallbackReason.NONE
+
+    def _should_search(self, component: MotionMatchingComponent) -> bool:
+        """Check if a search should be performed.
+
+        Args:
+            component: Component to check
+
+        Returns:
+            True if search should be performed
+        """
+        # Check budget
+        if component.config.budget_ms <= 0:
+            return False
+
+        if component._frame_budget_used_ms >= component.config.budget_ms:
+            return False
+
+        # Check search interval
+        if component._time_since_search < component.config.min_search_interval:
+            return False
+
+        # Check transition interval
+        if component._time_since_transition < component.config.min_transition_interval:
+            return False
+
+        return True
+
+    def _perform_search(
+        self,
+        component: MotionMatchingComponent,
+        input_state: MotionMatchingInput
+    ) -> None:
+        """Perform motion matching search.
+
+        Args:
+            component: Component to search for
+            input_state: Current input state
+        """
+        if component._search is None or component.database is None:
+            return
+
+        start_time = time.perf_counter()
+
+        # Build query from input
+        query = self._build_query(component, input_state)
+
+        # Configure search
+        search_config = SearchConfig(
+            max_results=component.config.max_candidates,
+            required_tags=component.required_tags if component.required_tags else None,
+        )
+
+        # Perform search
+        try:
+            results = component._search.search(query, search_config)
+        except Exception:
+            results = []
+
+        end_time = time.perf_counter()
+        search_time_ms = (end_time - start_time) * 1000.0
+
+        # Update budget
+        component._frame_budget_used_ms += search_time_ms
+        component._time_since_search = 0.0
+
+        # Process results
+        if results:
+            best = results[0]
+            component.statistics.record_query(search_time_ms, best.cost, True)
+
+            # Check if we should transition
+            if self._should_transition(component, best):
+                self._start_transition(component, best)
+        else:
+            component.statistics.record_query(search_time_ms, 0.0, False)
 
     def _build_query(
         self,
-        input_state: MotionInput,
-        features: list[MotionFeature]
-    ) -> list[float]:
-        """Build query feature vector from input state."""
-        query = []
+        component: MotionMatchingComponent,
+        input_state: MotionMatchingInput
+    ) -> np.ndarray:
+        """Build query feature vector from input.
 
-        for feature in features:
-            if feature.feature_type == FeatureType.VELOCITY:
-                query.extend([
-                    input_state.desired_velocity.x,
-                    input_state.desired_velocity.y,
-                    input_state.desired_velocity.z,
-                ])
-            elif feature.feature_type == FeatureType.DIRECTION:
-                query.extend([
-                    input_state.desired_direction.x,
-                    input_state.desired_direction.y,
-                    input_state.desired_direction.z,
-                ])
-            elif feature.feature_type == FeatureType.TRAJECTORY:
-                for t_time in feature.trajectory_times:
-                    # Find closest trajectory point
-                    pos = Vec3.zero()
-                    for i, input_time in enumerate(input_state.trajectory_times):
-                        if abs(input_time - t_time) < 0.1 and i < len(input_state.trajectory):
-                            pos = input_state.trajectory[i]
-                            break
-                    query.extend([pos.x, pos.y, pos.z])
-            elif feature.feature_type == FeatureType.POSITION:
-                value = input_state.features.get(feature.name, Vec3.zero())
-                if isinstance(value, Vec3):
-                    query.extend([value.x, value.y, value.z])
-                else:
-                    query.extend([0, 0, 0])
+        Args:
+            component: Component context
+            input_state: Current input state
+
+        Returns:
+            Query feature vector
+        """
+        # Create a basic query from the database's feature dimension
+        if component.database is None:
+            return np.zeros(47, dtype=np.float32)
+
+        dim = component.database.feature_dimension
+        query = np.zeros(dim, dtype=np.float32)
+
+        # Fill with velocity if available
+        if input_state.desired_velocity is not None:
+            query[:min(3, dim)] = input_state.desired_velocity[:3]
 
         return query
 
-    def _search_database(
+    def _should_transition(
         self,
-        query: list[float],
-        controller: MotionMatchingController
-    ) -> MotionMatchResult:
-        """Search database for best matching frame."""
-        database = controller.database
-        if not database or not database.frames:
-            return MotionMatchResult()
-
-        best_result = MotionMatchResult()
-        feature_weights = [f.weight for f in database.features]
-
-        for i, frame in enumerate(database.frames):
-            cost = self._compute_cost(query, frame.feature_vector, feature_weights, database.features)
-
-            if cost < best_result.cost:
-                best_result.frame_index = i
-                best_result.cost = cost
-                best_result.animation_index = frame.animation_index
-                best_result.animation_frame = frame.frame_index
-
-        return best_result
-
-    def _compute_cost(
-        self,
-        query: list[float],
-        frame_features: list[float],
-        weights: list[float],
-        features: list[MotionFeature]
-    ) -> float:
-        """Compute matching cost between query and frame features."""
-        if len(query) != len(frame_features):
-            return float('inf')
-
-        total_cost = 0.0
-        idx = 0
-
-        for i, feature in enumerate(features):
-            weight = weights[i] if i < len(weights) else 1.0
-            dim = self._feature_dimension(feature)
-
-            feature_cost = 0.0
-            for j in range(dim):
-                if idx + j < len(query):
-                    diff = query[idx + j] - frame_features[idx + j]
-                    feature_cost += diff * diff
-
-            total_cost += feature_cost * weight
-            idx += dim
-
-        return total_cost
-
-    def _feature_dimension(self, feature: MotionFeature) -> int:
-        """Get dimension of feature."""
-        if feature.feature_type == FeatureType.TRAJECTORY:
-            return len(feature.trajectory_times) * 3
-        return 3
-
-    def _get_continuation_cost(self, controller: MotionMatchingController) -> float:
-        """Get cost threshold for continuing current animation.
-
-        Lower values make system more likely to switch.
-        """
-        return ANIMATION_SYSTEM_CONFIG.MOTION_MATCH_CONTINUATION_COST  # Tunable threshold
-
-    def _blend_poses(
-        self,
-        pose_a: dict[int, Transform],
-        pose_b: dict[int, Transform],
-        blend: float
-    ) -> dict[int, Transform]:
-        """Blend two poses together."""
-        result = {}
-        all_bones = set(pose_a.keys()) | set(pose_b.keys())
-
-        for bone in all_bones:
-            t_a = pose_a.get(bone, Transform.identity())
-            t_b = pose_b.get(bone, Transform.identity())
-            result[bone] = t_a.lerp(t_b, blend)
-
-        return result
-
-    def build_database(
-        self,
-        animations: list[tuple[str, list[dict[int, Transform]]]],
-        features: list[MotionFeature],
-        frame_rate: float = 30.0
-    ) -> MotionDatabase:
-        """Build motion database from animations.
+        component: MotionMatchingComponent,
+        result: SearchResult
+    ) -> bool:
+        """Check if we should transition to a new match.
 
         Args:
-            animations: List of (name, frames) where frames is list of poses
-            features: Feature definitions
-            frame_rate: Frame rate of animations
+            component: Component context
+            result: Search result to check
 
         Returns:
-            Built motion database
+            True if transition should occur
         """
-        database = MotionDatabase(
-            features=features,
-            frame_rate=frame_rate,
-        )
+        # Always transition if no current clip
+        if component.current_clip_index < 0:
+            return True
 
-        for anim_idx, (name, frames) in enumerate(animations):
-            database.animation_names.append(name)
+        # Check if cost is significantly better
+        if result.cost < component.current_cost * 0.8:
+            return True
 
-            for frame_idx, pose in enumerate(frames):
-                feature_vector = self._extract_features(pose, features, frames, frame_idx, frame_rate)
+        return False
 
-                root_transform = pose.get(0, Transform.identity())
-
-                motion_frame = MotionFrame(
-                    animation_index=anim_idx,
-                    frame_index=frame_idx,
-                    feature_vector=feature_vector,
-                    root_position=root_transform.translation,
-                    root_rotation=root_transform.rotation,
-                )
-
-                database.add_frame(motion_frame)
-
-        return database
-
-    def _extract_features(
+    def _start_transition(
         self,
-        pose: dict[int, Transform],
-        features: list[MotionFeature],
-        all_frames: list[dict[int, Transform]],
-        frame_idx: int,
-        frame_rate: float
-    ) -> list[float]:
-        """Extract feature vector from pose."""
-        result = []
+        component: MotionMatchingComponent,
+        result: SearchResult
+    ) -> None:
+        """Start a transition to a new match.
 
-        for feature in features:
-            if feature.feature_type == FeatureType.POSITION:
-                transform = pose.get(feature.bone_index, Transform.identity())
-                result.extend([transform.translation.x, transform.translation.y, transform.translation.z])
+        Args:
+            component: Component to transition
+            result: Search result to transition to
+        """
+        if self.pose_provider is None:
+            return
 
-            elif feature.feature_type == FeatureType.VELOCITY:
-                # Compute velocity from adjacent frames
-                velocity = Vec3.zero()
-                if frame_idx > 0:
-                    prev_transform = all_frames[frame_idx - 1].get(feature.bone_index, Transform.identity())
-                    curr_transform = pose.get(feature.bone_index, Transform.identity())
-                    delta = curr_transform.translation - prev_transform.translation
-                    velocity = delta * frame_rate
+        # Get poses for transition
+        from_pose = component.current_pose or Pose()
+        to_pose = self.pose_provider(result.entry.clip_index, result.entry.frame)
 
-                result.extend([velocity.x, velocity.y, velocity.z])
+        # Create blender
+        config = TransitionConfig(
+            blend_duration=component.config.blend_time,
+            blend_mode=BlendMode.INERTIALIZATION,
+        )
+        component._blender = InertializationBlender(config)
+        component._blender.compute_offsets(from_pose, to_pose)
 
-            elif feature.feature_type == FeatureType.DIRECTION:
-                transform = pose.get(feature.bone_index, Transform.identity())
-                forward = transform.rotation.forward()
-                result.extend([forward.x, forward.y, forward.z])
+        # Update state
+        component.current_clip_index = result.entry.clip_index
+        component.current_frame = result.entry.frame
+        component.current_time = 0.0
+        component.current_cost = result.cost
+        component._time_since_transition = 0.0
 
-            elif feature.feature_type == FeatureType.TRAJECTORY:
-                for t_time in feature.trajectory_times:
-                    future_frame = frame_idx + int(t_time * frame_rate)
-                    if 0 <= future_frame < len(all_frames):
-                        transform = all_frames[future_frame].get(feature.bone_index, Transform.identity())
-                        result.extend([transform.translation.x, transform.translation.y, transform.translation.z])
-                    else:
-                        # Extrapolate or use current
-                        transform = pose.get(feature.bone_index, Transform.identity())
-                        result.extend([transform.translation.x, transform.translation.y, transform.translation.z])
+        component.statistics.record_transition()
 
-        return result
+    def _get_fallback_pose(
+        self,
+        component: MotionMatchingComponent,
+        dt: float
+    ) -> Optional[Pose]:
+        """Get fallback pose from state machine.
+
+        Args:
+            component: Component context
+            dt: Delta time
+
+        Returns:
+            Fallback pose or current pose
+        """
+        if self.state_machine_fallback is not None:
+            return self.state_machine_fallback(component, dt)
+        return component.current_pose
+
+    def get_debug_info(self, component: MotionMatchingComponent) -> Dict[str, Any]:
+        """Get debug information for a component.
+
+        Args:
+            component: Component to get info for
+
+        Returns:
+            Dictionary of debug information
+        """
+        return {
+            "enabled": component.enabled,
+            "is_ready": component.is_ready,
+            "is_transitioning": component.is_transitioning,
+            "mode": component.statistics.current_mode.name,
+            "clip_index": component.current_clip_index,
+            "frame": component.current_frame,
+            "time": component.current_time,
+            "current_cost": component.current_cost,
+            "time_since_search": component._time_since_search,
+            "time_since_transition": component._time_since_transition,
+            "budget_used_ms": component._frame_budget_used_ms,
+            "total_queries": component.statistics.total_queries,
+            "successful_matches": component.statistics.successful_matches,
+            "transitions": component.statistics.transitions_triggered,
+            "fallbacks": component.statistics.fallback_count,
+            "avg_search_time_ms": component.statistics.avg_search_time_ms,
+            "avg_match_cost": component.statistics.avg_match_cost,
+        }
+
+    def reset_statistics(self, component: MotionMatchingComponent) -> None:
+        """Reset statistics for a component.
+
+        Args:
+            component: Component to reset
+        """
+        component.statistics.reset()
+
+    def get_statistics(
+        self, component: MotionMatchingComponent
+    ) -> MotionMatchingStatistics:
+        """Get statistics for a component.
+
+        Args:
+            component: Component to get stats for
+
+        Returns:
+            Component statistics
+        """
+        return component.statistics

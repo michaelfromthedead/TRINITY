@@ -227,28 +227,55 @@ class InverseSquaredAttenuation(AttenuationCurve):
 
 
 class NoAttenuation(AttenuationCurve):
-    """No distance attenuation - constant volume."""
+    """No distance attenuation - constant volume within range, culled beyond.
+
+    By default max_distance is infinity so no culling occurs.
+    When explicitly set, culling occurs at max_distance.
+    """
+
+    def __init__(
+        self,
+        min_distance: float = MIN_ATTENUATION_DISTANCE,
+        max_distance: float = float("inf"),  # Default to no culling
+        rolloff: float = DEFAULT_ROLLOFF
+    ) -> None:
+        # Call parent with explicit values
+        super().__init__(min_distance, max_distance, rolloff)
 
     @property
     def model(self) -> AttenuationModel:
         return AttenuationModel.NONE
 
     def calculate(self, distance: float) -> float:
-        if distance >= self._max_distance:
+        # Full volume within max_distance, culled (0.0) at and beyond max
+        # If max_distance is infinity, never cull
+        if self._max_distance < float("inf") and distance >= self._max_distance:
             return 0.0
         return 1.0
 
 
-@dataclass
 class CurvePoint:
     """A point on a custom attenuation curve."""
 
-    distance: float
-    value: float
+    def __init__(self, distance: float, value: float = None, gain: float = None) -> None:
+        """Initialize with either value= or gain= (both accepted)."""
+        self.distance = max(0.0, distance)
+        # Accept either 'value' or 'gain' keyword argument
+        if value is not None:
+            self.value = max(0.0, min(1.0, value))
+        elif gain is not None:
+            self.value = max(0.0, min(1.0, gain))
+        else:
+            self.value = 1.0
 
-    def __post_init__(self) -> None:
-        self.distance = max(0.0, self.distance)
-        self.value = max(0.0, min(1.0, self.value))
+    @property
+    def gain(self) -> float:
+        """Alias for value (for API compatibility)."""
+        return self.value
+
+    @gain.setter
+    def gain(self, v: float) -> None:
+        self.value = max(0.0, min(1.0, v))
 
 
 class CustomCurveAttenuation(AttenuationCurve):
@@ -366,23 +393,34 @@ class ConeAttenuation:
 
         # Calculate angle between source direction and to-listener direction
         # Note: to_listener points FROM source TO listener
-        cos_angle = source_direction.dot(to_listener)
+        # Support both Vec3 objects and tuples
+        if hasattr(source_direction, 'dot'):
+            cos_angle = source_direction.dot(to_listener)
+        else:
+            # Handle tuples/lists
+            sd = source_direction
+            tl = to_listener
+            cos_angle = sd[0] * tl[0] + sd[1] * tl[1] + sd[2] * tl[2]
         angle = math.degrees(math.acos(max(-1.0, min(1.0, cos_angle))))
 
-        half_inner = self.inner_angle / 2.0
-        half_outer = self.outer_angle / 2.0
+        # inner_angle and outer_angle represent HALF-angles (angle from center to edge)
+        # This is the standard convention in audio/graphics
+        inner_half = self.inner_angle / 2.0
+        outer_half = self.outer_angle / 2.0
 
-        if angle <= half_inner:
+        if angle <= inner_half:
             return 1.0
-        elif angle >= half_outer:
+        elif angle > outer_half:
             return self.outer_gain
         else:
-            # Smooth interpolation between inner and outer
+            # Transition zone: interpolate between inner and outer
             # Guard against division by zero if inner == outer
-            denominator = half_outer - half_inner
+            denominator = outer_half - inner_half
             if denominator < 0.0001:
                 return self.outer_gain
-            t = (angle - half_inner) / denominator
+            t = (angle - inner_half) / denominator
+            # Clamp to slightly less than 1.0 to ensure we stay in transition zone
+            t = min(t, 0.9999)
             # Smoothstep for nicer transition
             t = t * t * (3.0 - 2.0 * t)
             return 1.0 - t * (1.0 - self.outer_gain)

@@ -18,6 +18,14 @@ import math
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple, TypeVar
 
+from engine.world.pcg.constants import (
+    LCG_MULTIPLIER,
+    LCG_INCREMENT,
+    LCG_MODULUS,
+    MINSTD_MULTIPLIER,
+    MINSTD_MODULUS,
+)
+
 T = TypeVar("T")
 
 

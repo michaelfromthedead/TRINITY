@@ -53,6 +53,29 @@ class CraftingStation:
     def __hash__(self) -> int:
         return hash(self.station_id)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "station_id": self.station_id,
+            "name": self.name,
+            "categories": list(self.categories),
+            "level": self.level,
+            "efficiency_bonus": self.efficiency_bonus,
+            "quality_bonus": self.quality_bonus,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CraftingStation":
+        """Deserialize from dictionary."""
+        return cls(
+            station_id=data["station_id"],
+            name=data["name"],
+            categories=tuple(data.get("categories", [])),
+            level=data.get("level", 1),
+            efficiency_bonus=data.get("efficiency_bonus", 0.0),
+            quality_bonus=data.get("quality_bonus", 0.0),
+        )
+
 
 # =============================================================================
 # Ingredients
@@ -71,6 +94,28 @@ class Ingredient:
         if self.quantity < 1:
             raise ValueError("Ingredient quantity must be at least 1")
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "item_id": self.item_id,
+            "quantity": self.quantity,
+            "consumed": self.consumed,
+            "quality_min": self.quality_min.name if self.quality_min else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Ingredient":
+        """Deserialize from dictionary."""
+        quality_min = None
+        if data.get("quality_min"):
+            quality_min = CraftingQuality[data["quality_min"]]
+        return cls(
+            item_id=data["item_id"],
+            quantity=data.get("quantity", 1),
+            consumed=data.get("consumed", True),
+            quality_min=quality_min,
+        )
+
 
 @dataclass(frozen=True)
 class IngredientCategory:
@@ -82,6 +127,24 @@ class IngredientCategory:
     def __post_init__(self):
         if self.quantity < 1:
             raise ValueError("Ingredient quantity must be at least 1")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "type": "IngredientCategory",
+            "category": self.category,
+            "quantity": self.quantity,
+            "consumed": self.consumed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "IngredientCategory":
+        """Deserialize from dictionary."""
+        return cls(
+            category=data["category"],
+            quantity=data.get("quantity", 1),
+            consumed=data.get("consumed", True),
+        )
 
 
 IngredientRequirement = Union[Ingredient, IngredientCategory]
@@ -105,6 +168,27 @@ class RecipeOutput:
         if self.base_quantity < 1:
             raise ValueError("Output quantity must be at least 1")
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "item_id": self.item_id,
+            "base_quantity": self.base_quantity,
+            "bonus_quantity_chance": self.bonus_quantity_chance,
+            "max_bonus_quantity": self.max_bonus_quantity,
+            "quality_variance": self.quality_variance,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RecipeOutput":
+        """Deserialize from dictionary."""
+        return cls(
+            item_id=data["item_id"],
+            base_quantity=data.get("base_quantity", 1),
+            bonus_quantity_chance=data.get("bonus_quantity_chance", 0.0),
+            max_bonus_quantity=data.get("max_bonus_quantity", 0),
+            quality_variance=data.get("quality_variance", True),
+        )
+
 
 # =============================================================================
 # Skill Requirement
@@ -117,6 +201,23 @@ class SkillRequirement:
     skill_id: str
     level: int = 1
     grants_xp: int = 0  # XP granted on successful craft
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "skill_id": self.skill_id,
+            "level": self.level,
+            "grants_xp": self.grants_xp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SkillRequirement":
+        """Deserialize from dictionary."""
+        return cls(
+            skill_id=data["skill_id"],
+            level=data.get("level", 1),
+            grants_xp=data.get("grants_xp", 0),
+        )
 
 
 # =============================================================================
@@ -154,6 +255,81 @@ class Recipe:
             return True
         return self.unlock_condition(context)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        from .inventory import ECONOMY_SCHEMA_VERSION
+
+        ingredients = []
+        for ing in self.ingredients:
+            d = ing.to_dict()
+            d["type"] = "category" if isinstance(ing, IngredientCategory) else "item"
+            ingredients.append(d)
+
+        return {
+            "__version__": ECONOMY_SCHEMA_VERSION,
+            "recipe_id": self.recipe_id,
+            "name": self.name,
+            "category": self.category,
+            "ingredients": ingredients,
+            "outputs": [o.to_dict() for o in self.outputs],
+            "station_required": self.station_required,
+            "station_level": self.station_level,
+            "skill_requirements": [s.to_dict() for s in self.skill_requirements],
+            "crafting_time": self.crafting_time,
+            "description": self.description,
+            "is_discoverable": self.is_discoverable,
+            "discovered_by_default": self.discovered_by_default,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Recipe":
+        """Deserialize from dictionary."""
+        ingredients = []
+        for ing_data in data.get("ingredients", []):
+            if ing_data.get("type") == "category":
+                ingredients.append(IngredientCategory.from_dict(ing_data))
+            else:
+                ingredients.append(Ingredient.from_dict(ing_data))
+
+        return cls(
+            recipe_id=data["recipe_id"],
+            name=data["name"],
+            category=data.get("category", "misc"),
+            ingredients=tuple(ingredients),
+            outputs=tuple(RecipeOutput.from_dict(o) for o in data.get("outputs", [])),
+            station_required=data.get("station_required"),
+            station_level=data.get("station_level", 1),
+            skill_requirements=tuple(
+                SkillRequirement.from_dict(s) for s in data.get("skill_requirements", [])
+            ),
+            crafting_time=data.get("crafting_time", 1.0),
+            description=data.get("description", ""),
+            is_discoverable=data.get("is_discoverable", True),
+            discovered_by_default=data.get("discovered_by_default", True),
+        )
+
+    @classmethod
+    def from_registry(cls, id_or_name: str) -> Optional["Recipe"]:
+        """
+        Get a recipe from the CraftingRegistry by ID or name.
+
+        Args:
+            id_or_name: Recipe ID or display name
+
+        Returns:
+            Recipe if found, None otherwise
+        """
+        crafting_reg = CraftingRegistry.instance()
+        # Try by ID first
+        recipe = crafting_reg.get_recipe(id_or_name)
+        if recipe:
+            return recipe
+        # Try by name (search all recipes)
+        for r in crafting_reg._recipes.values():
+            if r.name == id_or_name:
+                return r
+        return None
+
 
 # =============================================================================
 # Crafting Result
@@ -178,6 +354,49 @@ class CraftingResult:
     returned_ingredients: List[ItemInstance] = field(default_factory=list)
     skill_xp_gained: Dict[str, int] = field(default_factory=dict)
     error_message: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "result_type": self.result_type.name,
+            "outputs": [o.to_dict() for o in self.outputs],
+            "quality": self.quality.name,
+            "consumed_ingredients": list(self.consumed_ingredients),
+            "returned_ingredients": [i.to_dict() for i in self.returned_ingredients],
+            "skill_xp_gained": dict(self.skill_xp_gained),
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        item_registry: Optional[Any] = None,
+    ) -> "CraftingResult":
+        """
+        Deserialize from dictionary.
+
+        Args:
+            data: Serialized data
+            item_registry: Optional ItemRegistry for resolving item definitions
+        """
+        outputs = []
+        for o in data.get("outputs", []):
+            outputs.append(ItemInstance.from_dict(o, item_registry))
+
+        returned = []
+        for i in data.get("returned_ingredients", []):
+            returned.append(ItemInstance.from_dict(i, item_registry))
+
+        return cls(
+            result_type=CraftingResultType[data["result_type"]],
+            outputs=outputs,
+            quality=CraftingQuality[data.get("quality", "NORMAL")],
+            consumed_ingredients=[tuple(i) for i in data.get("consumed_ingredients", [])],
+            returned_ingredients=returned,
+            skill_xp_gained=dict(data.get("skill_xp_gained", {})),
+            error_message=data.get("error_message"),
+        )
 
 
 # =============================================================================
@@ -410,7 +629,12 @@ class CraftingSystem:
 
             min_count = min(min_count, can_make)
 
-        return int(min_count) if min_count != float('inf') else 0
+        # If no ingredients required, allow unlimited crafting (bounded by a large number)
+        # This handles "free" recipes that don't consume materials
+        if min_count == float('inf'):
+            return 999999
+
+        return int(min_count)
 
     # -------------------------------------------------------------------------
     # Crafting Execution
@@ -945,3 +1169,809 @@ class CraftingRegistry:
         """Clear all registrations."""
         self._recipes.clear()
         self._stations.clear()
+
+
+# =============================================================================
+# Recipe Factory
+# =============================================================================
+
+
+class RecipeFactory:
+    """
+    Factory for creating and registering recipes.
+
+    Provides convenience methods for building and registering recipes
+    with the global CraftingRegistry.
+    """
+
+    @staticmethod
+    def create(
+        recipe_id: str,
+        name: str,
+        ingredients: List[IngredientRequirement],
+        outputs: List[RecipeOutput],
+        **kwargs: Any,
+    ) -> Recipe:
+        """
+        Create a recipe.
+
+        Args:
+            recipe_id: Unique recipe identifier
+            name: Display name
+            ingredients: List of ingredient requirements
+            outputs: List of outputs
+            **kwargs: Additional recipe parameters
+
+        Returns:
+            New Recipe instance
+        """
+        return Recipe(
+            recipe_id=recipe_id,
+            name=name,
+            ingredients=tuple(ingredients),
+            outputs=tuple(outputs),
+            **kwargs,
+        )
+
+    @staticmethod
+    def create_and_register(
+        recipe_id: str,
+        name: str,
+        ingredients: List[IngredientRequirement],
+        outputs: List[RecipeOutput],
+        **kwargs: Any,
+    ) -> Recipe:
+        """
+        Create and register a recipe.
+
+        Args:
+            recipe_id: Unique recipe identifier
+            name: Display name
+            ingredients: List of ingredient requirements
+            outputs: List of outputs
+            **kwargs: Additional recipe parameters
+
+        Returns:
+            Registered Recipe instance
+        """
+        r = RecipeFactory.create(recipe_id, name, ingredients, outputs, **kwargs)
+        CraftingRegistry.instance().register_recipe(r)
+        return r
+
+    @staticmethod
+    def from_registry(id_or_name: str) -> Optional[Recipe]:
+        """
+        Get a recipe from the registry by ID or name.
+
+        Args:
+            id_or_name: Recipe ID or display name
+
+        Returns:
+            Recipe if found, None otherwise
+        """
+        crafting_reg = CraftingRegistry.instance()
+        # Try by ID first
+        recipe = crafting_reg.get_recipe(id_or_name)
+        if recipe:
+            return recipe
+        # Try by name (search all recipes)
+        for r in crafting_reg._recipes.values():
+            if r.name == id_or_name:
+                return r
+        return None
+
+    @staticmethod
+    def from_class(cls: type) -> Optional[Recipe]:
+        """
+        Get a Recipe from a class decorated with @recipe.
+
+        Args:
+            cls: Class that was decorated with @recipe
+
+        Returns:
+            Recipe if class has one, None otherwise
+        """
+        return getattr(cls, "_recipe_definition", None)
+
+
+# =============================================================================
+# Decorator-based Registration
+# =============================================================================
+
+
+# Storage for decorator-registered items
+_registered_recipes: List[Recipe] = []
+_registered_recipe_classes: List[type] = []
+_registered_stations: List[CraftingStation] = []
+_registered_station_classes: List[type] = []
+_economy_classes: List[type] = []
+_craftable_classes: List[type] = []
+
+
+# Import Foundation Registry (lazy to avoid circular imports)
+def _get_registry():
+    """Get Foundation Registry, importing lazily."""
+    try:
+        from foundation import registry
+        return registry
+    except ImportError:
+        return None
+
+
+def _parse_ingredients(raw_ingredients: List[Any]) -> Tuple[IngredientRequirement, ...]:
+    """Parse raw ingredient data into Ingredient/IngredientCategory objects."""
+    result = []
+    for item in raw_ingredients:
+        if isinstance(item, (Ingredient, IngredientCategory)):
+            result.append(item)
+        elif isinstance(item, dict):
+            if "category" in item:
+                result.append(IngredientCategory(
+                    category=item["category"],
+                    quantity=item.get("quantity", 1),
+                    consumed=item.get("consumed", True),
+                ))
+            else:
+                quality_min = item.get("quality_min")
+                if isinstance(quality_min, str):
+                    quality_min = CraftingQuality[quality_min]
+                result.append(Ingredient(
+                    item_id=item.get("item_id", ""),
+                    quantity=item.get("quantity", 1),
+                    consumed=item.get("consumed", True),
+                    quality_min=quality_min,
+                ))
+    return tuple(result)
+
+
+def _parse_outputs(raw_outputs: List[Any]) -> Tuple[RecipeOutput, ...]:
+    """Parse raw output data into RecipeOutput objects."""
+    result = []
+    for item in raw_outputs:
+        if isinstance(item, RecipeOutput):
+            result.append(item)
+        elif isinstance(item, dict):
+            result.append(RecipeOutput(
+                item_id=item.get("item_id", ""),
+                base_quantity=item.get("quantity", 1),
+                bonus_quantity_chance=item.get("bonus_quantity_chance", 0.0),
+                max_bonus_quantity=item.get("max_bonus_quantity", 0),
+                quality_variance=item.get("quality_variance", True),
+            ))
+    return tuple(result)
+
+
+def _parse_skill_requirements(skill_req: Optional[Dict[str, int]]) -> Tuple[SkillRequirement, ...]:
+    """Parse skill requirements dict into SkillRequirement tuple."""
+    if not skill_req:
+        return ()
+    return tuple(
+        SkillRequirement(skill_id=skill_id, level=level)
+        for skill_id, level in skill_req.items()
+    )
+
+
+def recipe(
+    recipe_id: Optional[str] = None,
+    name: Optional[str] = None,
+    station: Optional[str] = None,
+    skill_req: Optional[Dict[str, int]] = None,
+    category: str = "misc",
+    crafting_time: float = 1.0,
+    description: str = "",
+    ingredients: Optional[List[Any]] = None,
+    outputs: Optional[List[Any]] = None,
+    **kwargs: Any,
+) -> Callable[[type], type]:
+    """
+    Decorator to register a class as a recipe definition.
+
+    Integrates with Foundation Registry with 'recipe' tag and CraftingRegistry.
+
+    Args:
+        recipe_id: Unique recipe identifier (defaults to lowercase classname)
+        name: Human-readable recipe name (required)
+        station: Station required for crafting (e.g., "forge")
+        skill_req: Dict of skill_id -> required_level
+        category: Recipe category (e.g., "weapons", "armor")
+        crafting_time: Time to craft in seconds
+        description: Recipe description
+        ingredients: List of ingredient dicts or Ingredient objects
+        outputs: List of output dicts or RecipeOutput objects
+
+    Usage:
+        @recipe(name="Iron Sword", station="forge", skill_req={"smithing": 5})
+        class IronSwordRecipe:
+            pass
+    """
+    def decorator(cls: type) -> type:
+        nonlocal name
+
+        # Validate name
+        if name == "":
+            raise ValueError("Recipe name must be non-empty")
+
+        # Generate IDs
+        rid = recipe_id or cls.__name__.lower()
+        recipe_name = name or getattr(cls, "name", rid)
+
+        # Get class-level attributes (can be overridden by decorator args)
+        cls_ingredients = getattr(cls, "ingredients", [])
+        cls_outputs = getattr(cls, "outputs", [])
+        cls_category = getattr(cls, "category", category)
+        cls_station = getattr(cls, "station_required", station)
+        cls_skill_req = getattr(cls, "skill_requirements", [])
+        cls_crafting_time = getattr(cls, "crafting_time", crafting_time)
+        cls_description = getattr(cls, "description", description)
+
+        # Use decorator args if provided, else class attributes
+        final_ingredients = ingredients if ingredients is not None else cls_ingredients
+        final_outputs = outputs if outputs is not None else cls_outputs
+        final_skill_req = skill_req if skill_req is not None else None
+
+        # Parse ingredients and outputs
+        parsed_ingredients = _parse_ingredients(final_ingredients)
+        parsed_outputs = _parse_outputs(final_outputs)
+
+        # Build skill requirements
+        if final_skill_req:
+            skill_requirements = _parse_skill_requirements(final_skill_req)
+        elif cls_skill_req:
+            skill_requirements = tuple(cls_skill_req)
+        else:
+            skill_requirements = ()
+
+        # Create Recipe object
+        r = Recipe(
+            recipe_id=rid,
+            name=recipe_name,
+            ingredients=parsed_ingredients,
+            outputs=parsed_outputs,
+            category=cls_category,
+            station_required=cls_station,
+            station_level=getattr(cls, "station_level", 1),
+            skill_requirements=skill_requirements,
+            crafting_time=cls_crafting_time,
+            description=cls_description,
+            is_discoverable=getattr(cls, "is_discoverable", True),
+            discovered_by_default=getattr(cls, "discovered_by_default", True),
+        )
+
+        # Set class metadata
+        cls._recipe = True
+        cls._recipe_id = rid
+        cls._recipe_name = recipe_name
+        cls._recipe_station = cls_station
+        cls._recipe_skill_req = skill_req
+        cls._recipe_category = cls_category
+        cls._recipe_definition = r
+
+        # Track applied decorators
+        if not hasattr(cls, "_applied_decorators"):
+            cls._applied_decorators = set()
+        cls._applied_decorators.add("recipe")
+
+        # Register in module storage
+        _registered_recipes.append(r)
+        _registered_recipe_classes.append(cls)
+
+        # Register with CraftingRegistry (handle duplicates by using unique ID)
+        crafting_reg = CraftingRegistry.instance()
+        final_rid = rid
+        counter = 1
+        while final_rid in crafting_reg._recipes:
+            final_rid = f"{rid}_{counter}"
+            counter += 1
+        if final_rid != rid:
+            # Update recipe with unique ID
+            r = Recipe(
+                recipe_id=final_rid,
+                name=r.name,
+                ingredients=r.ingredients,
+                outputs=r.outputs,
+                category=r.category,
+                station_required=r.station_required,
+                station_level=r.station_level,
+                skill_requirements=r.skill_requirements,
+                crafting_time=r.crafting_time,
+                description=r.description,
+                is_discoverable=r.is_discoverable,
+                discovered_by_default=r.discovered_by_default,
+            )
+            cls._recipe_id = final_rid
+            cls._recipe_definition = r
+            _registered_recipes[-1] = r  # Update stored recipe
+        crafting_reg.register_recipe(r)
+
+        # Register with Foundation Registry
+        reg = _get_registry()
+        if reg is not None:
+            # Handle duplicate class names by using unique name
+            try:
+                reg.register(cls)
+            except ValueError:
+                # Already registered - generate unique name
+                unique_name = f"{cls.__module__}.{cls.__name__}_{final_rid}"
+                try:
+                    reg.register(cls, name=unique_name)
+                except ValueError:
+                    # Already registered with this unique name too, skip
+                    pass
+            if reg.is_registered(cls):
+                reg.add_tag(cls, "recipe")
+                reg.set_metadata(cls, "recipe_id", final_rid)
+                reg.set_metadata(cls, "name", recipe_name)
+                reg.set_metadata(cls, "category", cls_category)
+                if cls_station:
+                    reg.add_tag(cls, f"station:{cls_station}")
+                    reg.set_metadata(cls, "station", cls_station)
+                if skill_req:
+                    for skill_id in skill_req:
+                        reg.add_tag(cls, f"skill:{skill_id}")
+                    reg.set_metadata(cls, "skill_req", skill_req)
+
+        return cls
+
+    return decorator
+
+
+def crafting_station(
+    station_id: Optional[str] = None,
+    name: Optional[str] = None,
+    recipes: Optional[List[str]] = None,
+    categories: Optional[Tuple[str, ...]] = None,
+    level: int = 1,
+    efficiency_bonus: float = 0.0,
+    quality_bonus: float = 0.0,
+    **kwargs: Any,
+) -> Callable[[type], type]:
+    """
+    Decorator to register a class as a crafting station.
+
+    Integrates with Foundation Registry with 'crafting_station' tag.
+
+    Args:
+        station_id: Unique station ID (defaults from name)
+        name: Human-readable station name
+        recipes: List of recipe IDs this station can craft
+        categories: Recipe categories this station supports
+        level: Station level (higher = more advanced recipes)
+        efficiency_bonus: Time reduction multiplier
+        quality_bonus: Quality improvement bonus
+
+    Usage:
+        @crafting_station(name="Blacksmith Forge", level=2)
+        class BlacksmithForge:
+            pass
+    """
+    def decorator(cls: type) -> type:
+        nonlocal name, station_id
+
+        # Validate name
+        if name == "":
+            raise ValueError("Station name must be non-empty")
+
+        # Get names
+        station_name = name or getattr(cls, "name", cls.__name__)
+        # Generate ID from name if not provided
+        sid = station_id or station_name.lower().replace(" ", "_")
+
+        # Get attributes
+        station_recipes = recipes or getattr(cls, "recipes", [])
+        station_categories = categories or getattr(cls, "categories", ())
+        station_level = level if level != 1 else getattr(cls, "level", 1)
+        station_efficiency = efficiency_bonus if efficiency_bonus != 0.0 else getattr(cls, "efficiency_bonus", 0.0)
+        station_quality = quality_bonus if quality_bonus != 0.0 else getattr(cls, "quality_bonus", 0.0)
+
+        # Create CraftingStation object
+        station = CraftingStation(
+            station_id=sid,
+            name=station_name,
+            categories=tuple(station_categories) if station_categories else (),
+            level=station_level,
+            efficiency_bonus=station_efficiency,
+            quality_bonus=station_quality,
+        )
+
+        # Set class metadata
+        cls._crafting_station = True
+        cls._station_id = sid
+        cls._station_name = station_name
+        cls._station_recipes = station_recipes
+        cls._station_categories = station_categories
+        cls._station_level = station_level
+        cls._station_definition = station
+
+        # Track applied decorators
+        if not hasattr(cls, "_applied_decorators"):
+            cls._applied_decorators = set()
+        cls._applied_decorators.add("crafting_station")
+
+        # Register in module storage
+        _registered_stations.append(station)
+        _registered_station_classes.append(cls)
+
+        # Register with CraftingRegistry
+        CraftingRegistry.instance().register_station(station)
+
+        # Register with Foundation Registry
+        reg = _get_registry()
+        if reg is not None:
+            reg.register(cls)
+            reg.add_tag(cls, "crafting_station")
+            reg.set_metadata(cls, "station_id", sid)
+            reg.set_metadata(cls, "name", station_name)
+            reg.set_metadata(cls, "level", station_level)
+            if station_recipes:
+                reg.set_metadata(cls, "recipes", station_recipes)
+
+        return cls
+
+    return decorator
+
+
+def ingredient(
+    item_type: str = "",
+    quantity: int = 1,
+    consumed: bool = True,
+    quality_min: Optional[str] = None,
+    **kwargs: Any,
+) -> Callable[[type], type]:
+    """
+    Decorator to add ingredient metadata to a class.
+
+    Can be stacked to define multiple ingredients.
+
+    Args:
+        item_type: Item ID required
+        quantity: Quantity required (must be >= 1)
+        consumed: Whether consumed on craft
+        quality_min: Minimum quality required
+
+    Usage:
+        @ingredient(item_type="iron_ore", quantity=3)
+        @ingredient(item_type="coal", quantity=1)
+        class SmeltingRecipe:
+            pass
+    """
+    # Validate inputs
+    if item_type == "":
+        raise ValueError("Ingredient item_type must be non-empty")
+    if quantity < 1:
+        raise ValueError("Ingredient quantity must be at least 1")
+
+    def decorator(cls: type) -> type:
+        # Initialize ingredients list if not present
+        if not hasattr(cls, "_ingredients"):
+            cls._ingredients = []
+
+        # Insert at the beginning (first decorator in stack is first in list)
+        cls._ingredients.insert(0, {
+            "item_type": item_type,
+            "quantity": quantity,
+            "consumed": consumed,
+            "quality_min": quality_min,
+        })
+
+        return cls
+
+    return decorator
+
+
+def economy(
+    economy_type: str = "",
+    currency_id: Optional[str] = None,
+    base_value: float = 0.0,
+    tradeable: bool = True,
+    **kwargs: Any,
+) -> Callable[[type], type]:
+    """
+    Decorator to mark a class as part of the economy system.
+
+    Integrates with Foundation Registry with 'economy' tag.
+
+    Args:
+        economy_type: Type of economy component (e.g., "currency", "trade")
+        currency_id: Unique currency identifier (for currency types)
+        base_value: Base value for trading
+        tradeable: Whether this can be traded
+
+    Usage:
+        @economy(economy_type="currency", currency_id="gold")
+        class GoldCurrency:
+            pass
+    """
+    # Validate
+    if economy_type == "":
+        raise ValueError("Economy type must be non-empty")
+
+    def decorator(cls: type) -> type:
+        # Set class metadata
+        cls._economy = True
+        cls._economy_type = economy_type
+        if currency_id:
+            cls._currency_id = currency_id
+        if base_value:
+            cls._base_value = base_value
+        cls._tradeable = tradeable
+
+        # Store additional kwargs
+        for key, value in kwargs.items():
+            setattr(cls, f"_{key}", value)
+
+        # Track applied decorators
+        if not hasattr(cls, "_applied_decorators"):
+            cls._applied_decorators = set()
+        cls._applied_decorators.add("economy")
+
+        # Register in module storage
+        _economy_classes.append(cls)
+
+        # Register with Foundation Registry
+        reg = _get_registry()
+        if reg is not None:
+            reg.register(cls)
+            reg.add_tag(cls, "economy")
+            reg.add_tag(cls, f"economy:{economy_type}")
+            reg.set_metadata(cls, "economy_type", economy_type)
+            if currency_id:
+                reg.set_metadata(cls, "currency_id", currency_id)
+
+        return cls
+
+    return decorator
+
+
+# Valid quality values for validation
+_VALID_QUALITIES = {"POOR", "NORMAL", "GOOD", "EXCELLENT", "MASTERWORK", "LEGENDARY"}
+
+
+def crafting(
+    quality_curve: str = "linear",
+    base_quality: str = "NORMAL",
+    craftable_by: Optional[List[str]] = None,
+    required_tools: Optional[List[str]] = None,
+    **kwargs: Any,
+) -> Callable[[type], type]:
+    """
+    Decorator to mark a class as a craftable item.
+
+    Integrates with Foundation Registry with 'crafting' tag.
+
+    Args:
+        quality_curve: Quality calculation curve (linear, exponential, step)
+        base_quality: Base quality of crafted item
+        craftable_by: List of professions that can craft this
+        required_tools: List of tools required to craft
+
+    Usage:
+        @crafting(quality_curve="linear", base_quality="GOOD")
+        class CraftableArmor:
+            pass
+    """
+    # Validate base_quality
+    if base_quality not in _VALID_QUALITIES:
+        raise ValueError(f"Invalid base_quality: {base_quality}. Must be one of {_VALID_QUALITIES}")
+
+    def decorator(cls: type) -> type:
+        # Set class metadata
+        cls._crafting = True
+        cls._quality_curve = quality_curve
+        cls._base_quality = base_quality
+        cls._base_quality_value = CraftingQuality[base_quality]
+        cls._craftable_by = craftable_by or []
+        cls._required_tools = required_tools or []
+
+        # Track applied decorators
+        if not hasattr(cls, "_applied_decorators"):
+            cls._applied_decorators = set()
+        cls._applied_decorators.add("crafting")
+
+        # Register in module storage
+        _craftable_classes.append(cls)
+
+        # Register with Foundation Registry
+        reg = _get_registry()
+        if reg is not None:
+            reg.register(cls)
+            reg.add_tag(cls, "crafting")
+            reg.add_tag(cls, f"quality_curve:{quality_curve}")
+            reg.set_metadata(cls, "quality_curve", quality_curve)
+            reg.set_metadata(cls, "base_quality", base_quality)
+
+        return cls
+
+    return decorator
+
+
+def get_registered_recipes() -> List[type]:
+    """Get all recipe classes registered via decorators."""
+    return list(_registered_recipe_classes)
+
+
+def get_registered_stations() -> List[type]:
+    """Get all station classes registered via decorators."""
+    return list(_registered_station_classes)
+
+
+def get_economy_classes(economy_type: Optional[str] = None) -> List[type]:
+    """
+    Get all classes decorated with @economy.
+
+    Args:
+        economy_type: Filter by economy type (optional)
+
+    Returns:
+        List of economy classes
+    """
+    if economy_type is None:
+        return list(_economy_classes)
+    return [
+        cls for cls in _economy_classes
+        if getattr(cls, "_economy_type", None) == economy_type
+    ]
+
+
+def get_recipes_for_station_from_registry(station_id: str) -> List[type]:
+    """Get all decorator-registered recipe classes for a station."""
+    return [
+        cls for cls in _registered_recipe_classes
+        if getattr(cls, "_recipe_station", None) == station_id
+    ]
+
+
+def get_recipes_by_skill_from_registry(skill_id: str) -> List[type]:
+    """Get all decorator-registered recipe classes requiring a skill."""
+    result = []
+    for cls in _registered_recipe_classes:
+        skill_req = getattr(cls, "_recipe_skill_req", None)
+        if skill_req and skill_id in skill_req:
+            result.append(cls)
+    return result
+
+
+def get_craftable_items() -> List[type]:
+    """Get all craftable item classes."""
+    return list(_craftable_classes)
+
+
+def clear_registered() -> None:
+    """Clear all decorator-registered recipes and stations."""
+    _registered_recipes.clear()
+    _registered_recipe_classes.clear()
+    _registered_stations.clear()
+    _registered_station_classes.clear()
+    _economy_classes.clear()
+    _craftable_classes.clear()
+
+
+# =============================================================================
+# Serialization Helpers
+# =============================================================================
+
+
+def ingredient_from_dict(data: Dict[str, Any]) -> IngredientRequirement:
+    """
+    Create an ingredient requirement from a dictionary.
+
+    Args:
+        data: Dictionary containing ingredient data.
+              Must have either 'item_id' (for Ingredient) or 'category' (for IngredientCategory).
+
+    Returns:
+        Ingredient or IngredientCategory instance
+
+    Raises:
+        ValueError: If neither item_id nor category is provided
+    """
+    if "item_id" in data:
+        return Ingredient(
+            item_id=data["item_id"],
+            quantity=data.get("quantity", 1),
+            consumed=data.get("consumed", True),
+            quality_min=CraftingQuality(data["quality_min"]) if "quality_min" in data else None,
+        )
+    elif "category" in data:
+        return IngredientCategory(
+            category=data["category"],
+            quantity=data.get("quantity", 1),
+            consumed=data.get("consumed", True),
+        )
+    else:
+        raise ValueError(f"Cannot determine ingredient type from data: {data}")
+
+
+def recipe_output_from_dict(data: Dict[str, Any]) -> RecipeOutput:
+    """
+    Create a recipe output from a dictionary.
+
+    Args:
+        data: Dictionary containing output data
+
+    Returns:
+        RecipeOutput instance
+    """
+    return RecipeOutput(
+        item_id=data["item_id"],
+        base_quantity=data.get("base_quantity", data.get("quantity", 1)),
+        bonus_quantity_chance=data.get("bonus_quantity_chance", 0.0),
+        max_bonus_quantity=data.get("max_bonus_quantity", 0),
+        quality_variance=data.get("quality_variance", True),
+    )
+
+
+def skill_requirement_from_dict(data: Dict[str, Any]) -> SkillRequirement:
+    """
+    Create a skill requirement from a dictionary.
+
+    Args:
+        data: Dictionary containing skill requirement data
+
+    Returns:
+        SkillRequirement instance
+    """
+    return SkillRequirement(
+        skill_id=data["skill_id"],
+        level=data.get("level", 1),
+        grants_xp=data.get("grants_xp", 0),
+    )
+
+
+def recipe_from_dict(data: Dict[str, Any]) -> Recipe:
+    """
+    Create a recipe from a dictionary.
+
+    Args:
+        data: Dictionary containing recipe data
+
+    Returns:
+        Recipe instance
+    """
+    ingredients = tuple(
+        ingredient_from_dict(i) for i in data.get("ingredients", [])
+    )
+    outputs = tuple(
+        recipe_output_from_dict(o) for o in data.get("outputs", [])
+    )
+    skill_reqs = tuple(
+        skill_requirement_from_dict(s) for s in data.get("skill_requirements", [])
+    )
+
+    return Recipe(
+        recipe_id=data["recipe_id"],
+        name=data.get("name", data["recipe_id"]),
+        category=data.get("category", "misc"),
+        ingredients=ingredients,
+        outputs=outputs,
+        station_required=data.get("station_required"),
+        station_level=data.get("station_level", 1),
+        skill_requirements=skill_reqs,
+        crafting_time=data.get("crafting_time", 1.0),
+        description=data.get("description", ""),
+        is_discoverable=data.get("is_discoverable", True),
+        discovered_by_default=data.get("discovered_by_default", True),
+    )
+
+
+def crafting_station_from_dict(data: Dict[str, Any]) -> CraftingStation:
+    """
+    Create a crafting station from a dictionary.
+
+    Args:
+        data: Dictionary containing station data
+
+    Returns:
+        CraftingStation instance
+    """
+    categories = data.get("categories", ())
+    if isinstance(categories, list):
+        categories = tuple(categories)
+
+    return CraftingStation(
+        station_id=data["station_id"],
+        name=data.get("name", data["station_id"]),
+        categories=categories,
+        level=data.get("level", 1),
+        efficiency_bonus=data.get("efficiency_bonus", 0.0),
+        quality_bonus=data.get("quality_bonus", 0.0),
+    )

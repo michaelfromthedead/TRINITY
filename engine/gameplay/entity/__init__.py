@@ -665,6 +665,18 @@ class LifecycleManager:
         return list(self._actors.values())
 
 
+from engine.gameplay.entity.eventlog_integration import (
+    EntitySpawned,
+    EntityDestroyed,
+    ComponentAdded,
+    ComponentRemoved,
+    EntityStateChanged,
+    EntityEventLog,
+    get_entity_event_log,
+    clear_entity_event_log,
+)
+
+
 __all__ = [
     # Config
     "ActorConfig",
@@ -684,4 +696,13 @@ __all__ = [
     "LifecycleEvent",
     "LifecycleCallback",
     "LifecycleManager",
+    # EventLog Integration
+    "EntitySpawned",
+    "EntityDestroyed",
+    "ComponentAdded",
+    "ComponentRemoved",
+    "EntityStateChanged",
+    "EntityEventLog",
+    "get_entity_event_log",
+    "clear_entity_event_log",
 ]

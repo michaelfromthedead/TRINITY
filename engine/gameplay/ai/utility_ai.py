@@ -465,12 +465,14 @@ class UtilityAI:
         momentum: float = UTILITY_DEFAULT_MOMENTUM,
         min_score_threshold: float = UTILITY_MIN_SCORE_THRESHOLD,
         history_size: int = UTILITY_ACTION_HISTORY_SIZE,
+        entity_id: Optional[int] = None,
     ) -> None:
         self.name = name
         self.update_rate = update_rate
         self.momentum = momentum
         self.min_score_threshold = min_score_threshold
         self.history_size = history_size
+        self.entity_id = entity_id
 
         self._actions: List[UtilityAction] = []
         self._state = UtilityAIState()
@@ -535,6 +537,10 @@ class UtilityAI:
 
             score = action.calculate_score(context)
 
+            # Log consideration scores during evaluation
+            if self.entity_id is not None:
+                self._log_consideration_scores(score)
+
             # Apply momentum if this is the current action
             if action == self._state.current_action and self.momentum > 0:
                 score.score += self.momentum
@@ -546,6 +552,21 @@ class UtilityAI:
         self._state.all_scores = scores
 
         return scores
+
+    def _log_consideration_scores(self, action_score: ActionScore) -> None:
+        """Log consideration scores during evaluation."""
+        try:
+            from .ai_events import get_ai_event_logger
+            logger = get_ai_event_logger()
+
+            for consideration_name, score in action_score.consideration_scores.items():
+                logger.log_utility_score_computed(
+                    entity_id=self.entity_id,
+                    consideration=consideration_name,
+                    score=score,
+                )
+        except ImportError:
+            pass  # AI events module not available
 
     def select_action(
         self,
@@ -569,6 +590,10 @@ class UtilityAI:
         if best.score < self.min_score_threshold:
             return None
 
+        # Log the action selection event
+        if self.entity_id is not None:
+            self._log_action_selected(best, scores)
+
         # Track action change
         if best.action != self._state.current_action:
             if self._state.current_action is not None:
@@ -589,6 +614,33 @@ class UtilityAI:
                 self._state.action_history.pop(0)
 
         return best.action
+
+    def _log_action_selected(
+        self, selected: ActionScore, all_scores: List[ActionScore]
+    ) -> None:
+        """Log an action selection event to the AI event logger."""
+        try:
+            from .ai_events import get_ai_event_logger
+            logger = get_ai_event_logger()
+
+            # Log individual consideration scores
+            for consideration_name, score in selected.consideration_scores.items():
+                logger.log_utility_score_computed(
+                    entity_id=self.entity_id,
+                    consideration=consideration_name,
+                    score=score,
+                )
+
+            # Log the action selection
+            all_scores_dict = {s.action.name: s.score for s in all_scores}
+            logger.log_utility_action_selected(
+                entity_id=self.entity_id,
+                action=selected.action.name,
+                score=selected.score,
+                all_scores=all_scores_dict,
+            )
+        except ImportError:
+            pass  # AI events module not available
 
     def update(
         self,
@@ -639,6 +691,24 @@ class UtilityAI:
         """Reset the AI state."""
         self._state = UtilityAIState()
 
+    @classmethod
+    def from_registry(cls, ai_id: str, *args: Any, **kwargs: Any) -> "UtilityAI":
+        """
+        Create a utility AI instance from the registry by ID.
+
+        Args:
+            ai_id: The utility_id used when decorating with @utility_ai.
+            *args: Positional arguments to pass to the constructor.
+            **kwargs: Keyword arguments to pass to the constructor.
+
+        Returns:
+            A new instance of the registered utility AI class.
+
+        Raises:
+            ValueError: If the ID is not found in the registry.
+        """
+        return create_utility_ai_from_registry(ai_id, *args, **kwargs)
+
     def get_debug_info(self) -> Dict[str, Any]:
         """Get debug information about the current state."""
         return {
@@ -653,17 +723,41 @@ class UtilityAI:
         }
 
 
+# Registry tag
+TAG_UTILITY_AI = "utility_ai"
+
+# Import Foundation registry
+try:
+    from foundation import registry
+    FOUNDATION_AVAILABLE = True
+except ImportError:
+    registry = None
+    FOUNDATION_AVAILABLE = False
+
+
 def utility_ai(
     id: str,
     update_rate: float = UTILITY_DEFAULT_UPDATE_RATE,
+    description: Optional[str] = None,
+    track_instances: bool = False,
 ) -> Callable[[type], type]:
     """
-    Decorator to mark a class as using utility AI.
+    Decorator to register a class as a utility AI with the Foundation Registry.
+
+    Args:
+        id: Unique identifier for this utility AI type.
+        update_rate: How often to re-evaluate actions (seconds).
+        description: Optional description of what this AI does.
+        track_instances: If True, track all instances via WeakSet.
 
     Usage:
         @utility_ai(id="combat", update_rate=0.5)
-        class CombatAI:
+        class CombatAI(UtilityAI):
             pass
+
+        # Query all utility AIs:
+        >>> from foundation import registry
+        >>> registry.query(tag="utility_ai")
     """
     def decorator(cls: type) -> type:
         if not id:
@@ -671,11 +765,63 @@ def utility_ai(
         if update_rate <= 0:
             raise ValueError(f"update_rate must be > 0, got {update_rate}")
 
+        # Set class attributes for introspection
         cls._utility_ai = True
         cls._utility_id = id
         cls._utility_update_rate = update_rate
+        cls._utility_description = description
+
+        # Register with Foundation Registry if available
+        if FOUNDATION_AVAILABLE and registry is not None:
+            registry_name = f"utility_ai.{id}"
+            try:
+                registry.register(cls, name=registry_name, track_instances=track_instances)
+            except ValueError:
+                # Already registered - fine in reload scenarios
+                pass
+
+            # Add utility_ai tag
+            registry.add_tag(cls, TAG_UTILITY_AI)
+
+            # Store metadata
+            registry.set_metadata(cls, "utility_id", id)
+            registry.set_metadata(cls, "update_rate", update_rate)
+            registry.set_metadata(cls, "considerations", [])
+            if description:
+                registry.set_metadata(cls, "description", description)
+
         return cls
     return decorator
+
+
+def get_all_utility_ai() -> List[type]:
+    """Get all registered utility AI classes."""
+    if FOUNDATION_AVAILABLE and registry is not None:
+        return registry.query(tag=TAG_UTILITY_AI)
+    return []
+
+
+def get_utility_ai_by_id(ai_id: str) -> Optional[type]:
+    """Get a utility AI class by its ID."""
+    if FOUNDATION_AVAILABLE and registry is not None:
+        results = registry.query(tag=TAG_UTILITY_AI, utility_id=ai_id)
+        return results[0] if results else None
+    return None
+
+
+def get_utility_ai_by_update_rate(update_rate: float) -> List[type]:
+    """Get utility AI classes with the specified update rate."""
+    if FOUNDATION_AVAILABLE and registry is not None:
+        return registry.query(tag=TAG_UTILITY_AI, update_rate=update_rate)
+    return []
+
+
+def create_utility_ai_from_registry(ai_id: str, *args: Any, **kwargs: Any) -> "UtilityAI":
+    """Create a utility AI instance from the registry."""
+    cls = get_utility_ai_by_id(ai_id)
+    if cls is None:
+        raise ValueError(f"Utility AI '{ai_id}' not found in registry")
+    return cls(*args, **kwargs)
 
 
 # =============================================================================
@@ -708,4 +854,11 @@ __all__ = [
     "UtilityAI",
     # Decorator
     "utility_ai",
+    # Registry
+    "TAG_UTILITY_AI",
+    "UTILITY_DEFAULT_UPDATE_RATE",
+    "create_utility_ai_from_registry",
+    "get_all_utility_ai",
+    "get_utility_ai_by_id",
+    "get_utility_ai_by_update_rate",
 ]

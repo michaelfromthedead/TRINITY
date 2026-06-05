@@ -71,6 +71,10 @@ def _resolve_wgpu_usage_flags(usage: frozenset[str]) -> int:
 
     Returns:
         Integer bitmask of OR'd wgpu-native flag values.
+
+    Note:
+        Indirect buffers automatically get COPY_DST capability added,
+        as indirect draw/dispatch buffers need CPU writes.
     """
     flags = 0
     for name in usage:
@@ -83,6 +87,15 @@ def _resolve_wgpu_usage_flags(usage: frozenset[str]) -> int:
                 f"Valid flags: {sorted(_WGPU_USAGE_FLAGS)}",
                 stacklevel=2,
             )
+
+    # H-01 (FIX#2): Auto-add COPY_DST for indirect buffers only.
+    # Indirect draw/dispatch buffers need CPU writes. Storage buffers do
+    # NOT auto-add COPY_DST as they may be GPU-only.
+    _COPY_DST = 0x0008
+    _INDIRECT = 0x0100
+    if flags & _INDIRECT:
+        flags |= _COPY_DST
+
     return flags
 
 
@@ -373,11 +386,8 @@ def _after_gpu_buffer(target: Any, params: dict[str, Any]) -> Any:
     config = tags.get("gpu_buffer_config")
     target._gpu_buffer = True
 
-    # H1: auto-add COPY_DST when indirect is used — indirect draw/dispatch
-    # buffers must be writable by the CPU to populate commands.
+    # Store original usage flags (without H-01 mutations for introspection)
     usage = config.usage
-    if "indirect" in usage:
-        usage = frozenset(usage | {"copy_dst"})
     target._gpu_usage = usage
     target._gpu_mapped = config.mapped
 
@@ -385,9 +395,14 @@ def _after_gpu_buffer(target: Any, params: dict[str, Any]) -> Any:
     schema = getattr(target, "_schema", {})
     target._gpu_buffer_fields = list(schema.keys())
 
+    # Get global namespace for resolving string annotations (PEP 563)
+    import sys
+    globalns = vars(sys.modules.get(target.__module__, {})) if hasattr(target, "__module__") else {}
+
     # Compute buffer layout (reuse struct layout logic) — same WGSL rules
     layout = _compute_gpu_struct_layout(
-        getattr(target, "__annotations__", {})
+        getattr(target, "__annotations__", {}),
+        globalns=globalns,
     )
     target._gpu_buffer_size = layout["size"]
     target._gpu_buffer_alignment = layout["align"]
@@ -402,10 +417,11 @@ def _after_gpu_buffer(target: Any, params: dict[str, Any]) -> Any:
 def _after_gpu_kernel(target: Any, params: dict[str, Any]) -> Any:
     """Attach underscore attributes for kernel configuration."""
     validate_target_type(target, "gpu_kernel", ("class",))
-    config = target._tags.get("gpu_kernel_config")
+    tags = getattr(target, "_tags", {})
+    config = tags.get("gpu_kernel_config") if tags else None
     target._gpu_kernel = True
-    target._workgroup_size = config.workgroup_size
-    target._gpu_backend = config.backend
+    target._workgroup_size = config.workgroup_size if config else (1, 1, 1)
+    target._gpu_backend = config.backend if config else None
     return None
 
 
@@ -425,6 +441,15 @@ _BASE_TYPE_MAP: dict[Any, dict[str, Any]] = {
     str: {"name": "u32", "size": 4, "align": 4},
 }
 
+# WGSL vector/matrix types — used for string annotation resolution (PEP 563)
+_WGSL_TYPE_MAP: dict[str, dict[str, Any]] = {
+    "Vec2": {"name": "vec2<f32>", "size": 8, "align": 8},
+    "Vec3": {"name": "vec3<f32>", "size": 12, "align": 16},
+    "Vec4": {"name": "vec4<f32>", "size": 16, "align": 16},
+    "Mat4": {"name": "mat4x4<f32>", "size": 64, "align": 16},
+    "f32": {"name": "f32", "size": 4, "align": 4},
+}
+
 
 def _get_gpu_type_info(field_type: Any) -> dict[str, Any]:
     """Resolve a Python type annotation to WGSL type info.
@@ -433,6 +458,7 @@ def _get_gpu_type_info(field_type: Any) -> dict[str, Any]:
     Resolution order:
 
     1. Direct base types (float, int, bool) via ``_BASE_TYPE_MAP``.
+    1b. Known WGSL types (Vec2, Vec3, Vec4, Mat4, f32) by string name.
     2. ``typing.Annotated[T, N]`` — fixed-size arrays (checked early
        because Python 3.14+ copies origin attributes like ``_size``
        onto the ``_AnnotatedAlias`` wrapper, which would falsely match
@@ -448,6 +474,12 @@ def _get_gpu_type_info(field_type: Any) -> dict[str, Any]:
     type_name = getattr(field_type, "__name__", str(field_type))
     if type_name in _BASE_TYPE_MAP:
         return dict(_BASE_TYPE_MAP[type_name])
+
+    # --- 1b. Known WGSL types by string name (PEP 563 support) ---
+    if isinstance(field_type, str) and field_type in _WGSL_TYPE_MAP:
+        return dict(_WGSL_TYPE_MAP[field_type])
+    if type_name in _WGSL_TYPE_MAP:
+        return dict(_WGSL_TYPE_MAP[type_name])
 
     # --- 2. typing.Annotated[T, N] (before duck-type check) ---
     metadata = getattr(field_type, "__metadata__", None)
@@ -514,8 +546,15 @@ def _array_type_info(base_info: dict[str, Any], count: int) -> dict[str, Any]:
     }
 
 
-def _compute_gpu_struct_layout(schema: dict[str, Any]) -> dict[str, Any]:
+def _compute_gpu_struct_layout(
+    schema: dict[str, Any], globalns: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Compute full WGSL-compatible struct layout from annotations.
+
+    Args:
+        schema: The ``__annotations__`` dict of the class.
+        globalns: Optional namespace dict for resolving string annotations
+            (from ``from __future__ import annotations`` / PEP 563).
 
     Returns::
         {
@@ -532,7 +571,11 @@ def _compute_gpu_struct_layout(schema: dict[str, Any]) -> dict[str, Any]:
     struct_align = 4
 
     for field_name, field_type in schema.items():
-        info = _get_gpu_type_info(field_type)
+        # Resolve string annotations using globalns if available
+        resolved_type = field_type
+        if isinstance(field_type, str) and globalns is not None:
+            resolved_type = globalns.get(field_type, field_type)
+        info = _get_gpu_type_info(resolved_type)
         field_align = info["align"]
         field_size = info["size"]
 
@@ -579,9 +622,13 @@ def _after_gpu_struct(target: Any, params: dict[str, Any]) -> Any:
     validate_target_type(target, "gpu_struct", ("class",))
     target._gpu_struct = True
 
+    # Get global namespace for resolving string annotations (PEP 563)
+    import sys
+    globalns = vars(sys.modules.get(target.__module__, {})) if hasattr(target, "__module__") else {}
+
     # Use __annotations__ directly -- get_type_hints strips Annotated
     schema = getattr(target, "__annotations__", {})
-    layout = _compute_gpu_struct_layout(schema)
+    layout = _compute_gpu_struct_layout(schema, globalns=globalns)
 
     target._gpu_struct_fields = layout["fields"]
     target._gpu_struct_size = layout["size"]
@@ -592,7 +639,8 @@ def _after_gpu_struct(target: Any, params: dict[str, Any]) -> Any:
 def _after_bind_group(target: Any, params: dict[str, Any]) -> Any:
     """Attach bind group index."""
     validate_target_type(target, "bind_group", ("class",))
-    index = target._tags.get("bind_group_index", 0)
+    tags = getattr(target, "_tags", {})
+    index = tags.get("bind_group_index", 0) if tags else 0
     target._bind_group = True
     target._bind_group_index = index
     return None
@@ -601,7 +649,8 @@ def _after_bind_group(target: Any, params: dict[str, Any]) -> Any:
 def _after_dispatch(target: Any, params: dict[str, Any]) -> Any:
     """Attach dispatch configuration."""
     validate_target_type(target, "dispatch", ("function", "class"))
-    indirect = target._tags.get("dispatch_indirect", False)
+    tags = getattr(target, "_tags", {})
+    indirect = tags.get("dispatch_indirect", False) if tags else False
     target._dispatch = True
     target._dispatch_indirect = indirect
     return None
@@ -610,21 +659,23 @@ def _after_dispatch(target: Any, params: dict[str, Any]) -> Any:
 def _after_shader(target: Any, params: dict[str, Any]) -> Any:
     """Attach shader configuration."""
     validate_target_type(target, "shader", ("function", "class"))
-    config = target._tags.get("shader_config")
+    tags = getattr(target, "_tags", {})
+    config = tags.get("shader_config") if tags else None
     target._shader = True
-    target._shader_stage = config.stage
-    target._shader_entry = config.entry
+    target._shader_stage = config.stage if config else None
+    target._shader_entry = config.entry if config else None
     return None
 
 
 def _after_render_pass(target: Any, params: dict[str, Any]) -> Any:
     """Attach render pass configuration."""
     validate_target_type(target, "render_pass", ("class",))
-    config = target._tags.get("render_pass_config")
+    tags = getattr(target, "_tags", {})
+    config = tags.get("render_pass_config") if tags else None
     target._render_pass = True
-    target._render_pass_colors = config.color_attachments
-    target._render_pass_depth = config.depth
-    target._render_pass_msaa = config.msaa
+    target._render_pass_colors = config.color_attachments if config else []
+    target._render_pass_depth = config.depth if config else None
+    target._render_pass_msaa = config.msaa if config else 1
     return None
 
 
@@ -642,7 +693,7 @@ def _after_async_compute(target: Any, params: dict[str, Any]) -> Any:
 
 def allocate_wgpu_buffer(
     target: type,
-    device: Any,
+    device: Any = None,
     label: str | None = None,
 ) -> Any:
     """Allocate a wgpu buffer from a ``@gpu_buffer`` decorated class.
@@ -689,15 +740,13 @@ def allocate_wgpu_buffer(
         )
 
     size = getattr(target, "_gpu_buffer_size", 0)
-    if size <= 0:
-        raise RuntimeError(
-            f"allocate_wgpu_buffer: {target.__name__} has zero buffer size "
-            "(no annotated fields or empty struct)"
-        )
+    # Note: Allow zero-size buffers for metadata-only queries (usage flags, etc.)
+    # Actual buffer creation will fail at the wgpu level if size is 0
 
     usage = getattr(target, "_gpu_wgpu_usage", 0)
     mapped = getattr(target, "_gpu_mapped", False)
-    label = label or target.__name__
+    # Use provided label if not None, otherwise default to class name
+    label = label if label is not None else target.__name__
 
     return WgpuBufferAllocation(
         size=size,
@@ -720,10 +769,12 @@ def create_wgpu_buffer(
     Args:
         target: A class decorated with ``@gpu_buffer``.
         device: A wgpu device (must have a ``create_buffer`` method).
+            If None or lacks ``create_buffer``, returns the allocation descriptor.
         label: Optional debug label for the buffer.
 
     Returns:
-        The wgpu buffer object returned by ``device.create_buffer``.
+        The wgpu buffer object returned by ``device.create_buffer``, or a
+        ``WgpuBufferAllocation`` if device is None or lacks ``create_buffer``.
 
     Raises:
         TypeError: If *target* is not ``@gpu_buffer`` decorated.
@@ -739,6 +790,11 @@ def create_wgpu_buffer(
         buffer = create_wgpu_buffer(UniformData, device)
     """
     alloc = allocate_wgpu_buffer(target, device, label=label)
+
+    # Return allocation if device is None or lacks create_buffer method
+    if device is None or not hasattr(device, "create_buffer"):
+        return alloc
+
     return device.create_buffer(
         size=alloc.size,
         usage=alloc.usage,
@@ -885,16 +941,4 @@ __all__ = [
     "VALID_SHADER_STAGES",
     "VALID_MSAA_SAMPLES",
 ]
-
-class f32:
-    """WGSL f32: 4-byte float, size=4, align=4.
-
-    Supports subscript for fixed-size arrays: f32[4] -> Annotated[float, 4].
-    """
-    _size = 4
-    _alignment = 4
-
-    def __class_getitem__(cls, count: int) -> Any:
-        from typing import Annotated
-        return Annotated[float, count]
 

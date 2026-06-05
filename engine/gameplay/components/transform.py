@@ -24,6 +24,17 @@ from trinity.descriptors import (
     is_dirty,
 )
 
+
+class TransformTrackedDescriptor(TrackedDescriptor):
+    """TrackedDescriptor that invalidates transform matrix cache on change."""
+
+    def post_set(self, obj, value, old_value):
+        """Mark field as dirty and invalidate matrix cache."""
+        super().post_set(obj, value, old_value)
+        # Invalidate matrix cache when transform properties change
+        if value != old_value and hasattr(obj, "_invalidate_world_matrix"):
+            obj._invalidate_world_matrix()
+
 from engine.gameplay.components.constants import TransformConstants
 
 if TYPE_CHECKING:
@@ -74,13 +85,14 @@ class TransformComponent:
         children: List of child transforms
     """
 
-    # Use tracked descriptors for dirty tracking
-    position = TrackedDescriptor(field_type=Vec3, use_bitmask=True, field_offset=0)
-    rotation = TrackedDescriptor(field_type=Quat, use_bitmask=True, field_offset=1)
-    scale = TrackedDescriptor(field_type=Vec3, use_bitmask=True, field_offset=2)
+    # Use tracked descriptors for dirty tracking with matrix invalidation
+    position = TransformTrackedDescriptor(field_type=Vec3, use_bitmask=True, field_offset=0)
+    rotation = TransformTrackedDescriptor(field_type=Quat, use_bitmask=True, field_offset=1)
+    scale = TransformTrackedDescriptor(field_type=Vec3, use_bitmask=True, field_offset=2)
 
     __slots__ = (
         "__dict__",
+        "__weakref__",
         "_parent_ref",
         "_children",
         "_world_matrix_cache",
@@ -194,14 +206,24 @@ class TransformComponent:
     def get_root(self) -> TransformComponent:
         """Get the root transform of this hierarchy."""
         current = self
+        visited = {id(self)}
         while current.parent is not None:
-            current = current.parent
+            parent = current.parent
+            if id(parent) in visited:
+                # Circular reference detected, return current as root
+                return current
+            visited.add(id(parent))
+            current = parent
         return current
 
     def iter_ancestors(self) -> Iterator[TransformComponent]:
         """Iterate through ancestors from immediate parent to root."""
         current = self.parent
+        visited = {id(self)}
         while current is not None:
+            if id(current) in visited:
+                return  # Circular reference detected
+            visited.add(id(current))
             yield current
             current = current.parent
 
@@ -368,12 +390,16 @@ class TransformComponent:
         """
         Rotate around a point in world space.
 
+        Uses intuitive rotation direction: positive angle rotates clockwise
+        when looking down the positive axis (e.g., positive Y rotation turns right).
+
         Args:
             point: Point to rotate around
             axis: Rotation axis (will be normalized)
             angle: Rotation angle in radians
         """
-        rot = Quat.from_axis_angle(axis, angle)
+        # Negate angle for intuitive rotation direction
+        rot = Quat.from_axis_angle(axis, -angle)
         # Rotate position around point
         offset = self.world_position - point
         new_offset = rot.rotate_vector(offset)
@@ -389,24 +415,29 @@ class TransformComponent:
             target: Point to look at
             up: Up vector for orientation
         """
+        import math
         direction = (target - self.world_position).normalized()
         if direction.length_squared() < TransformConstants.LOOK_AT_DIRECTION_EPSILON:
             return
 
-        # Build rotation from direction
-        forward = direction
+        # The forward property returns (0, 0, -1) rotated, so we need to negate
+        # the direction to make -Z point toward the target
+        forward = Vec3(-direction.x, -direction.y, -direction.z)
+
+        # Build orthonormal basis
         right = up.cross(forward).normalized()
         if right.length_squared() < TransformConstants.LOOK_AT_RIGHT_EPSILON:
-            right = Vec3.right()
-        actual_up = forward.cross(right)
+            # Handle case when forward is parallel to up
+            right = Vec3.right() if abs(forward.y) > 0.9 else Vec3(0, 1, 0).cross(forward).normalized()
+        actual_up = forward.cross(right).normalized()
 
-        # Convert basis to quaternion
+        # Convert basis to quaternion (column-major rotation matrix)
+        # Matrix columns: right, actual_up, forward
         m00, m01, m02 = right.x, actual_up.x, forward.x
         m10, m11, m12 = right.y, actual_up.y, forward.y
         m20, m21, m22 = right.z, actual_up.z, forward.z
 
         trace = m00 + m11 + m22
-        import math
         if trace > 0:
             s = 0.5 / math.sqrt(trace + 1.0)
             w = 0.25 / s
@@ -457,13 +488,20 @@ class TransformComponent:
     # DIRTY TRACKING
     # =========================================================================
 
-    def _invalidate_world_matrix(self) -> None:
+    def _invalidate_world_matrix(self, _visited: set = None) -> None:
         """Mark world matrix as needing recalculation."""
+        # Prevent infinite recursion from circular references
+        if _visited is None:
+            _visited = set()
+        if id(self) in _visited:
+            return
+        _visited.add(id(self))
+
         self._world_matrix_dirty = True
         self._local_matrix_dirty = True
         # Propagate to children
         for child in self.children:
-            child._invalidate_world_matrix()
+            child._invalidate_world_matrix(_visited)
         # Notify listeners
         for callback in self._on_transform_changed:
             callback(self)
@@ -474,11 +512,19 @@ class TransformComponent:
 
     def is_transform_dirty(self) -> bool:
         """Check if any transform property has changed."""
-        return is_dirty(self, "position") or is_dirty(self, "rotation") or is_dirty(self, "scale")
+        # Check set-based dirty flags
+        if is_dirty(self, "position") or is_dirty(self, "rotation") or is_dirty(self, "scale"):
+            return True
+        # Check bitmask-based dirty flags (position=bit 0, rotation=bit 1, scale=bit 2)
+        mask = getattr(self, "_dirty_mask", 0)
+        return (mask & 0b111) != 0
 
     def clear_dirty_flags(self) -> None:
         """Clear all dirty flags."""
         clear_dirty(self)
+        # Also clear bitmask
+        if hasattr(self, "_dirty_mask"):
+            self._dirty_mask = 0
 
     def on_transform_changed(self, callback: Callable[[TransformComponent], None]) -> None:
         """Register a callback for transform changes."""
@@ -558,7 +604,7 @@ class TransformComponent:
         return f"TransformComponent(pos={self.position}, rot={self.rotation}, scale={self.scale})"
 
 
-# Descriptor setup
+# Descriptor setup - ensure names are set for proper operation
 TransformComponent.position.__set_name__(TransformComponent, "position")
 TransformComponent.rotation.__set_name__(TransformComponent, "rotation")
 TransformComponent.scale.__set_name__(TransformComponent, "scale")

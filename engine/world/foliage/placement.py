@@ -14,7 +14,14 @@ Uses @procedural_placement decorator for scatter rules.
 import hashlib
 import math
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Protocol, Tuple
+from typing import Callable, Dict, List, Optional, Protocol, Tuple, Type
+from typing import runtime_checkable
+
+from engine.world.foliage.constants import (
+    DEFAULT_DENSITY,
+    DEFAULT_MIN_SPACING,
+    DEFAULT_SCALE_RANGE,
+)
 
 
 @dataclass
@@ -118,6 +125,7 @@ class PlacementResult:
         ]
 
 
+@runtime_checkable
 class TerrainInterface(Protocol):
     """Protocol for terrain data access."""
 
@@ -688,7 +696,7 @@ def procedural_placement(
     terrain_layers: Optional[List[int]] = None,
     noise_threshold: float = 0.0,
     noise_scale: float = 10.0,
-):
+) -> Callable[[Type], Type]:
     """
     Decorator for defining procedural placement rules.
 
@@ -709,7 +717,7 @@ def procedural_placement(
         Decorator function
     """
 
-    def decorator(cls):
+    def decorator(cls: Type) -> Type:
         rule = PlacementRule(
             slope_range=slope_range,
             height_range=height_range,

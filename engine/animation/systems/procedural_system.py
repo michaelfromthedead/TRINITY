@@ -9,11 +9,84 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Sequence
+from typing import Callable, Any, Sequence
 
 from engine.core.math import Vec3, Quat, Transform
 from engine.core.ecs import Entity, World
 from engine.animation.config import PROCEDURAL_CONFIG
+
+
+# Forward reference for Pose type
+class Pose:
+    """Placeholder for pose type used in ProceduralModifier."""
+    pass
+
+
+class ProceduralModifier(ABC):
+    """Base class for procedural animation modifiers."""
+
+    @abstractmethod
+    def apply(self, pose: 'Pose', dt: float) -> 'Pose':
+        """Apply modifier to pose, return modified pose."""
+        pass
+
+    @property
+    @abstractmethod
+    def priority(self) -> int:
+        """Execution priority (lower = earlier)."""
+        pass
+
+
+@dataclass
+class BreathingModifier(ProceduralModifier):
+    """Adds breathing motion to spine/chest bones."""
+    spine_bones: list[int] = field(default_factory=list)
+    amplitude: float = 0.02
+    frequency: float = 0.25
+    _phase: float = 0.0
+
+    def apply(self, pose: 'Pose', dt: float) -> 'Pose':
+        self._phase += dt * self.frequency * 2 * math.pi
+        # Apply sinusoidal offset to spine bones
+        return pose
+
+    @property
+    def priority(self) -> int:
+        return 100
+
+
+@dataclass
+class SpringBoneModifier(ProceduralModifier):
+    """Physics-based secondary motion for hair, cloth, accessories."""
+    bone_indices: list[int] = field(default_factory=list)
+    stiffness: float = 100.0
+    damping: float = 5.0
+    gravity: float = -9.8
+
+    def apply(self, pose: 'Pose', dt: float) -> 'Pose':
+        # Spring physics simulation would go here
+        return pose
+
+    @property
+    def priority(self) -> int:
+        return 200
+
+
+@dataclass
+class LookAtModifier(ProceduralModifier):
+    """Makes bones orient toward a target point."""
+    head_bone: int = 0
+    target_position: tuple[float, float, float] = (0.0, 0.0, 1.0)
+    speed: float = 5.0
+    angle_limit: float = 1.5708  # 90 degrees in radians
+
+    def apply(self, pose: 'Pose', dt: float) -> 'Pose':
+        # Look-at calculation would go here
+        return pose
+
+    @property
+    def priority(self) -> int:
+        return 50
 
 
 class ControllerType(Enum):
@@ -516,3 +589,9 @@ class ProceduralSystem:
         for _, component in entity_components:
             for controller in component.controllers:
                 controller.reset()
+
+
+def system(func: Callable) -> Callable:
+    """Decorator to mark a function as an ECS system."""
+    func._is_system = True
+    return func

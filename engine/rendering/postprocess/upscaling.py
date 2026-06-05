@@ -18,6 +18,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from .postprocess_stack import EffectPriority, EffectSettings, PostProcessEffect
 
 
+class LanczosKernel(Enum):
+    """Lanczos kernel size enum."""
+
+    LANCZOS2 = 2  # Lanczos-2: radius 2, good balance of sharpness/ringing
+    LANCZOS3 = 3  # Lanczos-3: radius 3, sharper but more ringing
+
+
 class UpscalerType(Enum):
     """Type of upscaler."""
 
@@ -34,6 +41,7 @@ class UpscalerType(Enum):
     DLSS = auto()  # NVIDIA DLSS
     DLSS_FG = auto()  # NVIDIA DLSS with frame gen
     XESS = auto()  # Intel XeSS
+    TSR_LANCZOS = auto()  # Native Lanczos-based temporal super-resolution
 
 
 class UpscaleQuality(Enum):
@@ -648,6 +656,529 @@ class XeSSUpscaler(TemporalUpscaler):
         return self._output_buffer
 
 
+def lanczos_kernel(x: float, a: int = 2) -> float:
+    """Compute Lanczos kernel value at position x.
+
+    The Lanczos kernel is defined as:
+        L(x) = sinc(x) * sinc(x/a)  if |x| < a
+        L(x) = 0                     otherwise
+
+    where sinc(x) = sin(pi*x) / (pi*x) for x != 0, and sinc(0) = 1.
+
+    Args:
+        x: Position to evaluate kernel at.
+        a: Kernel size (2 for Lanczos-2, 3 for Lanczos-3).
+
+    Returns:
+        Kernel value at position x.
+    """
+    if x == 0.0:
+        return 1.0
+
+    if abs(x) >= a:
+        return 0.0
+
+    # sinc(x) = sin(pi*x) / (pi*x)
+    pi_x = math.pi * x
+    sinc_x = math.sin(pi_x) / pi_x
+
+    # sinc(x/a)
+    pi_x_a = math.pi * x / a
+    sinc_x_a = math.sin(pi_x_a) / pi_x_a
+
+    return sinc_x * sinc_x_a
+
+
+def generate_lanczos_weights(
+    scale: float,
+    a: int = 2,
+    threshold: float = 0.0001,
+) -> List[Tuple[int, float]]:
+    """Generate normalized Lanczos filter weights for a given scale factor.
+
+    Args:
+        scale: Scale factor (< 1 means upscaling, e.g., 0.5 = 2x upscale).
+        a: Lanczos kernel size (2 or 3).
+        threshold: Minimum weight magnitude to include.
+
+    Returns:
+        List of (offset, weight) tuples, normalized to sum to 1.0.
+    """
+    if scale <= 0:
+        scale = 1.0
+
+    # Calculate support radius
+    radius = int(math.ceil(a / scale))
+
+    # Generate raw weights
+    weights: List[Tuple[int, float]] = []
+    for i in range(-radius, radius + 1):
+        w = lanczos_kernel(i * scale, a)
+        if abs(w) > threshold:
+            weights.append((i, w))
+
+    # Normalize weights to sum to 1.0
+    if weights:
+        total = sum(w for _, w in weights)
+        if total != 0:
+            weights = [(offset, w / total) for offset, w in weights]
+
+    return weights
+
+
+def measure_local_contrast(
+    center: Tuple[float, float, float],
+    neighbors: List[Tuple[float, float, float]],
+) -> float:
+    """Measure local contrast between center pixel and neighbors.
+
+    Uses luminance-weighted contrast calculation (Rec. 709).
+
+    Args:
+        center: Center pixel RGB (0-1 range).
+        neighbors: List of neighbor pixel RGB values.
+
+    Returns:
+        Contrast value in [0, 1] range.
+    """
+    if not neighbors:
+        return 0.0
+
+    # Rec. 709 luminance weights
+    def luminance(rgb: Tuple[float, float, float]) -> float:
+        return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+
+    center_lum = luminance(center)
+
+    # Calculate average neighbor luminance
+    neighbor_lums = [luminance(n) for n in neighbors]
+    avg_lum = sum(neighbor_lums) / len(neighbor_lums)
+
+    # Contrast is the absolute difference, scaled by 2 and clamped
+    contrast = abs(center_lum - avg_lum) * 2.0
+    return min(1.0, max(0.0, contrast))
+
+
+def get_adaptive_sharpening_for_quality(quality: str) -> Tuple[float, float]:
+    """Get recommended adaptive sharpening min/max for a quality preset.
+
+    Args:
+        quality: Quality preset name ("ultra", "high", "medium", "low").
+
+    Returns:
+        Tuple of (min_sharpening, max_sharpening) values.
+    """
+    sharpening_table = {
+        "ultra": (0.4, 0.9),
+        "high": (0.3, 0.8),
+        "medium": (0.2, 0.6),
+        "low": (0.1, 0.4),
+    }
+    return sharpening_table.get(quality.lower(), (0.3, 0.8))
+
+
+@dataclass
+class TSRLanczosSettings:
+    """Settings for TSR Lanczos upscaler.
+
+    Attributes:
+        enabled: Whether the upscaler is enabled.
+        kernel: Lanczos kernel size (LANCZOS2 or LANCZOS3).
+        scale_factor: Target upscale factor (e.g., 2.0 for 2x).
+        sharpness: Post-upscale sharpening amount [0, 1].
+        temporal_blend: Temporal blending factor [0, 1] (0 = disabled).
+        separable: Use separable (faster) vs 2D (higher quality) filtering.
+        jitter_sequence: Jitter pattern name ("halton_8" or "halton_16").
+        sharpening: Enable sharpening.
+        adaptive_sharpening: Use contrast-adaptive sharpening.
+        sharpening_min: Minimum sharpening strength for adaptive mode.
+        sharpening_max: Maximum sharpening strength for adaptive mode.
+        contrast_threshold: Contrast level below which min sharpening is used.
+    """
+
+    enabled: bool = True
+    kernel: LanczosKernel = LanczosKernel.LANCZOS2
+    scale_factor: float = 2.0
+    sharpness: float = 0.5
+    temporal_blend: float = 0.1
+    separable: bool = True
+    jitter_sequence: str = "halton_8"
+    sharpening: bool = True
+    adaptive_sharpening: bool = True
+    sharpening_min: float = 0.3
+    sharpening_max: float = 0.8
+    contrast_threshold: float = 0.1
+
+
+class TSRLanczosUpscaler:
+    """Temporal Super-Resolution Lanczos Upscaler.
+
+    A native Lanczos-based temporal super-resolution implementation
+    that serves as a fallback when DLSS/FSR2/XeSS are unavailable.
+
+    Features:
+        - Lanczos-2 or Lanczos-3 kernel for high-quality spatial upscaling
+        - Halton jitter sequence for temporal anti-aliasing
+        - Separable filter option for better performance
+        - Adaptive sharpening based on local contrast
+        - Temporal blending with previous frames
+
+    Example:
+        >>> upscaler = TSRLanczosUpscaler()
+        >>> for frame in frames:
+        ...     jitter = upscaler.get_jitter_offset()
+        ...     apply_jitter(camera, jitter)
+        ...     render()
+        ...     output = upscaler.upscale(color, depth, motion)
+        ...     upscaler.advance_frame()
+    """
+
+    # Halton sequences (base 2 and 3, centered at 0)
+    _HALTON_8_X = [0.0, -0.25, 0.25, -0.375, 0.125, -0.125, 0.375, -0.4375]
+    _HALTON_8_Y = [
+        1 / 3 - 0.5,
+        2 / 3 - 0.5,
+        1 / 9 - 0.5,
+        4 / 9 - 0.5,
+        7 / 9 - 0.5,
+        2 / 9 - 0.5,
+        5 / 9 - 0.5,
+        8 / 9 - 0.5,
+    ]
+
+    def __init__(self, settings: Optional[TSRLanczosSettings] = None) -> None:
+        """Initialize TSR Lanczos upscaler.
+
+        Args:
+            settings: Upscaler configuration, or None for defaults.
+        """
+        self._settings: TSRLanczosSettings = settings or TSRLanczosSettings()
+        self._frame_index: int = 0
+        self._history_buffer: Any = None
+
+        # Generate Halton-16 sequence (extend from Halton-8)
+        self._halton_16_x: List[float] = []
+        self._halton_16_y: List[float] = []
+        self._generate_halton_16()
+
+        # Pre-compute Lanczos weights for horizontal and vertical passes
+        self._weights_h: List[Tuple[int, float]] = []
+        self._weights_v: List[Tuple[int, float]] = []
+        self._compute_weights()
+
+    def _generate_halton_16(self) -> None:
+        """Generate 16-sample Halton sequence."""
+        # Base-2 Halton sequence for X
+        for i in range(1, 17):
+            x = 0.0
+            f = 0.5
+            j = i
+            while j > 0:
+                x += f * (j % 2)
+                j //= 2
+                f *= 0.5
+            self._halton_16_x.append(x - 0.5)
+
+        # Base-3 Halton sequence for Y
+        for i in range(1, 17):
+            y = 0.0
+            f = 1 / 3
+            j = i
+            while j > 0:
+                y += f * (j % 3)
+                j //= 3
+                f /= 3
+            self._halton_16_y.append(y - 0.5)
+
+    def _compute_weights(self) -> None:
+        """Pre-compute Lanczos weights for horizontal and vertical passes."""
+        scale = 1.0 / self._settings.scale_factor if self._settings.scale_factor > 0 else 1.0
+        a = self._settings.kernel.value
+
+        self._weights_h = generate_lanczos_weights(scale, a)
+        self._weights_v = generate_lanczos_weights(scale, a)
+
+    @staticmethod
+    def is_available() -> bool:
+        """Check if TSR Lanczos is available.
+
+        Always returns True as it's a pure software implementation.
+
+        Returns:
+            Always True.
+        """
+        return True
+
+    @property
+    def settings(self) -> TSRLanczosSettings:
+        """Get current settings."""
+        return self._settings
+
+    @property
+    def kernel_radius(self) -> int:
+        """Get kernel radius (2 for Lanczos-2, 3 for Lanczos-3)."""
+        return self._settings.kernel.value
+
+    @property
+    def output_scale(self) -> Tuple[float, float]:
+        """Get output scale factor (x, y)."""
+        return (self._settings.scale_factor, self._settings.scale_factor)
+
+    def get_jitter_offset(self) -> Tuple[float, float]:
+        """Get current frame jitter offset for temporal AA.
+
+        Returns:
+            (x, y) jitter offset in [-0.5, 0.5] range.
+        """
+        if self._settings.jitter_sequence == "halton_16":
+            idx = self._frame_index % 16
+            return (self._halton_16_x[idx], self._halton_16_y[idx])
+        else:  # halton_8
+            idx = self._frame_index % 8
+            return (self._HALTON_8_X[idx], self._HALTON_8_Y[idx])
+
+    def advance_frame(self) -> None:
+        """Advance to next frame in jitter sequence."""
+        self._frame_index += 1
+
+    def reset(self) -> None:
+        """Reset temporal accumulation and frame index."""
+        self._frame_index = 0
+        self._history_buffer = None
+
+    def sample_lanczos(
+        self,
+        image: List[List[Tuple[float, float, float]]],
+        x: float,
+        y: float,
+    ) -> Tuple[float, float, float]:
+        """Sample image at fractional position using Lanczos filter.
+
+        Args:
+            image: 2D image as list of rows of RGB tuples.
+            x: X coordinate (fractional).
+            y: Y coordinate (fractional).
+
+        Returns:
+            Interpolated RGB color.
+        """
+        if not image or not image[0]:
+            return (0.0, 0.0, 0.0)
+
+        height = len(image)
+        width = len(image[0])
+        a = self._settings.kernel.value
+
+        if self._settings.separable:
+            return self._sample_separable(image, x, y, width, height, a)
+        else:
+            return self._sample_2d(image, x, y, width, height, a)
+
+    def _sample_separable(
+        self,
+        image: List[List[Tuple[float, float, float]]],
+        x: float,
+        y: float,
+        width: int,
+        height: int,
+        a: int,
+    ) -> Tuple[float, float, float]:
+        """Sample using separable (horizontal then vertical) Lanczos."""
+        ix = int(math.floor(x))
+        iy = int(math.floor(y))
+        fx = x - ix
+        fy = y - iy
+
+        # First pass: horizontal filter for each row
+        h_samples: List[Tuple[float, float, float]] = []
+        for row_offset in range(-a + 1, a + 1):
+            row_idx = min(max(iy + row_offset, 0), height - 1)
+            row = image[row_idx]
+
+            r, g, b = 0.0, 0.0, 0.0
+            total_weight = 0.0
+
+            for col_offset in range(-a + 1, a + 1):
+                col_idx = min(max(ix + col_offset, 0), width - 1)
+                dist = col_offset - fx
+                w = lanczos_kernel(dist, a)
+                pixel = row[col_idx]
+                r += pixel[0] * w
+                g += pixel[1] * w
+                b += pixel[2] * w
+                total_weight += w
+
+            if total_weight > 0:
+                h_samples.append((r / total_weight, g / total_weight, b / total_weight))
+            else:
+                h_samples.append((0.0, 0.0, 0.0))
+
+        # Second pass: vertical filter
+        r, g, b = 0.0, 0.0, 0.0
+        total_weight = 0.0
+
+        for i, sample in enumerate(h_samples):
+            row_offset = i - a + 1
+            dist = row_offset - fy
+            w = lanczos_kernel(dist, a)
+            r += sample[0] * w
+            g += sample[1] * w
+            b += sample[2] * w
+            total_weight += w
+
+        if total_weight > 0:
+            return (r / total_weight, g / total_weight, b / total_weight)
+        return (0.0, 0.0, 0.0)
+
+    def _sample_2d(
+        self,
+        image: List[List[Tuple[float, float, float]]],
+        x: float,
+        y: float,
+        width: int,
+        height: int,
+        a: int,
+    ) -> Tuple[float, float, float]:
+        """Sample using full 2D Lanczos kernel."""
+        ix = int(math.floor(x))
+        iy = int(math.floor(y))
+        fx = x - ix
+        fy = y - iy
+
+        r, g, b = 0.0, 0.0, 0.0
+        total_weight = 0.0
+
+        for row_offset in range(-a + 1, a + 1):
+            row_idx = min(max(iy + row_offset, 0), height - 1)
+            row = image[row_idx]
+            dy = row_offset - fy
+
+            for col_offset in range(-a + 1, a + 1):
+                col_idx = min(max(ix + col_offset, 0), width - 1)
+                dx = col_offset - fx
+
+                # 2D Lanczos is product of 1D Lanczos
+                w = lanczos_kernel(dx, a) * lanczos_kernel(dy, a)
+                pixel = row[col_idx]
+                r += pixel[0] * w
+                g += pixel[1] * w
+                b += pixel[2] * w
+                total_weight += w
+
+        if total_weight > 0:
+            return (r / total_weight, g / total_weight, b / total_weight)
+        return (0.0, 0.0, 0.0)
+
+    def apply_sharpening(
+        self,
+        color: Tuple[float, float, float],
+        neighbors: List[Tuple[float, float, float]],
+    ) -> Tuple[float, float, float]:
+        """Apply contrast-adaptive sharpening.
+
+        When adaptive_sharpening is enabled, the sharpening strength is
+        interpolated between sharpening_min and sharpening_max based on
+        the local contrast. Low contrast areas get less sharpening to
+        avoid amplifying noise.
+
+        Args:
+            color: Center pixel RGB.
+            neighbors: List of neighbor pixel RGB values.
+
+        Returns:
+            Sharpened RGB color.
+        """
+        # Early exit conditions
+        if not self._settings.sharpening:
+            return color
+        if self._settings.sharpness <= 0:
+            # Zero sharpness means no sharpening, regardless of adaptive mode
+            return color
+        if not neighbors:
+            return color
+
+        # Calculate neighbor average
+        avg_r = sum(n[0] for n in neighbors) / len(neighbors)
+        avg_g = sum(n[1] for n in neighbors) / len(neighbors)
+        avg_b = sum(n[2] for n in neighbors) / len(neighbors)
+
+        # Determine sharpening strength
+        if self._settings.adaptive_sharpening:
+            # Calculate local contrast
+            contrast = measure_local_contrast(color, neighbors)
+
+            # Interpolate between min and max based on contrast
+            threshold = self._settings.contrast_threshold
+            if contrast <= threshold:
+                sharpness = self._settings.sharpening_min
+            else:
+                # Linear interpolation from min to max
+                t = min(1.0, (contrast - threshold) / (1.0 - threshold))
+                sharpness = (
+                    self._settings.sharpening_min
+                    + t * (self._settings.sharpening_max - self._settings.sharpening_min)
+                )
+        else:
+            # Use fixed sharpness value
+            sharpness = self._settings.sharpness
+
+        if sharpness <= 0:
+            return color
+
+        # Unsharp mask: output = center + sharpness * (center - avg)
+        r = color[0] + sharpness * (color[0] - avg_r)
+        g = color[1] + sharpness * (color[1] - avg_g)
+        b = color[2] + sharpness * (color[2] - avg_b)
+
+        # Clamp to valid range
+        r = max(0.0, min(1.0, r))
+        g = max(0.0, min(1.0, g))
+        b = max(0.0, min(1.0, b))
+
+        return (r, g, b)
+
+    def get_budget_ms(self) -> float:
+        """Estimate performance budget in milliseconds.
+
+        Returns:
+            Estimated GPU time in milliseconds.
+        """
+        # Base cost depends on kernel size and filter type
+        kernel_cost = 0.2 if self._settings.kernel == LanczosKernel.LANCZOS2 else 0.4
+
+        # Separable is roughly half the cost
+        if self._settings.separable:
+            kernel_cost *= 0.5
+
+        # Scale factor affects output pixel count
+        scale_cost = self._settings.scale_factor * 0.1
+
+        return kernel_cost + scale_cost
+
+
+def create_tsr_lanczos(
+    scale: float = 2.0,
+    kernel: LanczosKernel = LanczosKernel.LANCZOS2,
+    temporal: bool = True,
+) -> TSRLanczosUpscaler:
+    """Factory function to create a TSR Lanczos upscaler.
+
+    Args:
+        scale: Target upscale factor.
+        kernel: Lanczos kernel size.
+        temporal: Enable temporal blending.
+
+    Returns:
+        Configured TSRLanczosUpscaler instance.
+    """
+    settings = TSRLanczosSettings(
+        kernel=kernel,
+        scale_factor=scale,
+        temporal_blend=0.1 if temporal else 0.0,
+    )
+    return TSRLanczosUpscaler(settings)
+
+
 class UpscalingEffect(PostProcessEffect[UpscalingSettings]):
     """Complete upscaling post-process effect."""
 
@@ -726,6 +1257,7 @@ class UpscalingEffect(PostProcessEffect[UpscalingSettings]):
             UpscalerType.DLSS,
             UpscalerType.DLSS_FG,
             UpscalerType.XESS,
+            UpscalerType.TSR_LANCZOS,
         ):
             inputs.extend(["depth", "velocity"])
 
@@ -868,19 +1400,33 @@ class UpscalingEffect(PostProcessEffect[UpscalingSettings]):
 
 
 __all__ = [
+    # Enums
+    "LanczosKernel",
     "UpscalerType",
     "UpscaleQuality",
     "FrameGenerationMode",
+    # Data classes
     "UpscaleResolution",
-    "get_render_resolution",
     "UpscalingSettings",
+    "TSRLanczosSettings",
+    # Functions
+    "get_render_resolution",
+    "lanczos_kernel",
+    "generate_lanczos_weights",
+    "measure_local_contrast",
+    "get_adaptive_sharpening_for_quality",
+    "create_tsr_lanczos",
+    # Spatial upscalers
     "SpatialUpscaler",
     "BilinearUpscaler",
     "FSR1Upscaler",
     "CASUpscaler",
+    # Temporal upscalers
     "TemporalUpscaler",
     "FSR2Upscaler",
     "DLSSUpscaler",
     "XeSSUpscaler",
+    "TSRLanczosUpscaler",
+    # Effect
     "UpscalingEffect",
 ]

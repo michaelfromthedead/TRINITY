@@ -146,7 +146,7 @@ class CapsuleNode(SdfPrimitiveNode):
     def children(self):
         return (self.position, self.endpoint_a, self.endpoint_b)
     def label(self):
-        return f"Capsule(a={self.endpoint_a.as_tuple()}, b={self.endpoint_b.as_tuple()}, r={self.radius.value})"
+        return f"Capsule(r={self.radius.value})"
 
 @dataclass(frozen=True)
 class CombineNode(ExprNode):
@@ -218,12 +218,29 @@ class CameraNode(ExprNode):
     def label(self):
         return f"Camera(fov={self.fov.value}, ar={self.aspect_ratio.value})"
 
+class LightType(Enum):
+    """Light type enumeration for lighting calculations."""
+    POINT = "point"
+    DIRECTIONAL = "directional"
+    AREA = "area"
+    SPOT = "spot"
+
+
 @dataclass(frozen=True)
 class LightNode(ExprNode):
     """A directional or point light source."""
     position: Vec3Node
     color: Vec3Node
     intensity: FloatNode
+    light_type: LightType = LightType.POINT
+    direction: Vec3Node = None
+    radius: FloatNode = None
+    def __post_init__(self):
+        # Set defaults for optional fields using object.__setattr__ for frozen dataclass
+        if self.direction is None:
+            object.__setattr__(self, 'direction', Vec3Node(0.0, -1.0, 0.0))
+        if self.radius is None:
+            object.__setattr__(self, 'radius', FloatNode(10.0))
     def label(self):
         return f"Light(pos={self.position.as_tuple()}, color={self.color.as_tuple()}, i={self.intensity.value})"
 
@@ -236,8 +253,132 @@ class RenderSettingsNode(ExprNode):
     max_distance: float = 100.0
     workgroup_size_x: int = 8
     workgroup_size_y: int = 8
+    epsilon: float = 0.001
     def label(self):
         return f"RenderSettings({self.width}x{self.height}, steps={self.max_steps}, dist={self.max_distance})"
+
+
+# =============================================================================
+# Additional SDF Primitive Nodes
+# =============================================================================
+
+@dataclass(frozen=True)
+class EllipsoidNode(SdfPrimitiveNode):
+    """Ellipsoid SDF primitive with radii along each axis."""
+    radii: Vec3Node
+    def label(self):
+        return f"Ellipsoid(radii={self.radii.as_tuple()})"
+
+
+@dataclass(frozen=True)
+class BoxFrameNode(SdfPrimitiveNode):
+    """Hollow box frame (edges only) SDF primitive."""
+    size: Vec3Node
+    edge_thickness: FloatNode
+    def label(self):
+        return f"BoxFrame(size={self.size.as_tuple()}, edge={self.edge_thickness.value})"
+
+
+@dataclass(frozen=True)
+class RoundedBoxNode(SdfPrimitiveNode):
+    """Box with rounded corners SDF primitive."""
+    size: Vec3Node
+    corner_radius: FloatNode
+    def label(self):
+        return f"RoundedBox(size={self.size.as_tuple()}, r={self.corner_radius.value})"
+
+
+@dataclass(frozen=True)
+class OctahedronNode(SdfPrimitiveNode):
+    """Regular octahedron SDF primitive."""
+    size: FloatNode
+    def label(self):
+        return f"Octahedron(size={self.size.value})"
+
+
+@dataclass(frozen=True)
+class PyramidNode(SdfPrimitiveNode):
+    """Square pyramid SDF primitive."""
+    height: FloatNode
+    base_size: FloatNode = None
+    def __post_init__(self):
+        if self.base_size is None:
+            object.__setattr__(self, 'base_size', FloatNode(1.0))
+    def label(self):
+        return f"Pyramid(h={self.height.value}, base={self.base_size.value})"
+
+
+# =============================================================================
+# Material Node
+# =============================================================================
+
+@dataclass(frozen=True)
+class MaterialNode(ExprNode):
+    """PBR material properties for shading."""
+    albedo: Vec3Node = None
+    roughness: FloatNode = None
+    metallic: FloatNode = None
+    ambient_occlusion: FloatNode = None
+    emission: Vec3Node = None
+    material_id: int = 0
+    def __post_init__(self):
+        if self.albedo is None:
+            object.__setattr__(self, 'albedo', Vec3Node(0.8, 0.8, 0.8))
+        if self.roughness is None:
+            object.__setattr__(self, 'roughness', FloatNode(0.5))
+        if self.metallic is None:
+            object.__setattr__(self, 'metallic', FloatNode(0.0))
+        if self.ambient_occlusion is None:
+            object.__setattr__(self, 'ambient_occlusion', FloatNode(1.0))
+        if self.emission is None:
+            object.__setattr__(self, 'emission', Vec3Node(0.0, 0.0, 0.0))
+    def label(self):
+        return f"Material(id={self.material_id}, roughness={self.roughness.value}, metallic={self.metallic.value})"
+
+
+# =============================================================================
+# Full Scene Node
+# =============================================================================
+
+@dataclass(frozen=True)
+class FullSceneNode(ExprNode):
+    """Complete scene with geometry, camera, lights, and materials."""
+    scene_graph: SceneGraph
+    name: str = ""
+    camera: CameraNode = None
+    lights: Tuple[LightNode, ...] = ()
+    materials: Tuple[MaterialNode, ...] = ()
+    render_settings: RenderSettingsNode = None
+    settings: RenderSettingsNode = None  # Alias for render_settings
+    def __post_init__(self):
+        # Handle 'settings' alias for 'render_settings'
+        if self.settings is not None and self.render_settings is None:
+            object.__setattr__(self, 'render_settings', self.settings)
+        if self.camera is None:
+            object.__setattr__(self, 'camera', CameraNode(
+                origin=Vec3Node(0.0, 0.0, 5.0),
+                look_at=Vec3Node(0.0, 0.0, 0.0),
+                up=Vec3Node(0.0, 1.0, 0.0),
+                fov=FloatNode(60.0),
+                aspect_ratio=FloatNode(16.0/9.0),
+            ))
+        if self.render_settings is None:
+            object.__setattr__(self, 'render_settings', RenderSettingsNode())
+        # Keep settings in sync with render_settings for backwards compatibility
+        if self.settings is None:
+            object.__setattr__(self, 'settings', self.render_settings)
+    def children(self):
+        result = [self.scene_graph]
+        if self.camera:
+            result.append(self.camera)
+        result.extend(self.lights)
+        result.extend(self.materials)
+        if self.render_settings:
+            result.append(self.render_settings)
+        return tuple(result)
+    def label(self):
+        name = f" {self.name!r}" if self.name else ""
+        return f"FullScene{name}({len(self.lights)} lights, {len(self.materials)} materials)"
 
 
 SDF_PRIMITIVE_TYPE_MAP = {
@@ -247,6 +388,12 @@ SDF_PRIMITIVE_TYPE_MAP = {
     CylinderNode: "sdCylinder",
     ConeNode: "sdCone",
     PlaneNode: "sdPlane",
+    CapsuleNode: "sdCapsule",
+    EllipsoidNode: "sdEllipsoid",
+    BoxFrameNode: "sdBoxFrame",
+    RoundedBoxNode: "sdRoundedBox",
+    OctahedronNode: "sdOctahedron",
+    PyramidNode: "sdPyramid",
 }
 
 DOMAIN_OP_TYPE_MAP = {

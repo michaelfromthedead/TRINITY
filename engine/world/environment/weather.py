@@ -13,6 +13,15 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from engine.world.environment.constants import (
+    DEFAULT_WEATHER_TRANSITION_DURATION,
+    DEFAULT_WIND_SPEED,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_HUMIDITY,
+    DEFAULT_VISIBILITY,
+    DEFAULT_ATMOSPHERIC_PRESSURE,
+)
+
 # Type aliases
 Point3D = Tuple[float, float, float]
 WeatherCallback = Callable[["WeatherType", "WeatherType"], None]

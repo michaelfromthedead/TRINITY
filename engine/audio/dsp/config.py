@@ -70,8 +70,8 @@ COMPRESSOR_DEFAULT_RATIO: Final[float] = 4.0
 COMPRESSOR_DEFAULT_THRESHOLD_DB: Final[float] = -20.0
 """Default compressor threshold in dB."""
 
-COMPRESSOR_DEFAULT_ATTACK_MS: Final[float] = 10.0
-"""Default compressor attack time in milliseconds."""
+COMPRESSOR_DEFAULT_ATTACK_MS: Final[float] = 0.1
+"""Default compressor attack time in milliseconds (very fast for responsive compression)."""
 
 COMPRESSOR_DEFAULT_RELEASE_MS: Final[float] = 100.0
 """Default compressor release time in milliseconds."""
@@ -108,8 +108,8 @@ GATE_DEFAULT_HOLD_MS: Final[float] = 50.0
 GATE_DEFAULT_THRESHOLD_DB: Final[float] = -40.0
 """Default gate threshold in dB."""
 
-GATE_DEFAULT_ATTACK_MS: Final[float] = 1.0
-"""Default gate attack time in milliseconds."""
+GATE_DEFAULT_ATTACK_MS: Final[float] = 0.1
+"""Default gate attack time in milliseconds (fast for responsive gating)."""
 
 GATE_DEFAULT_RELEASE_MS: Final[float] = 100.0
 """Default gate release time in milliseconds."""

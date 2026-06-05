@@ -13,6 +13,16 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from engine.world.environment.constants import (
+    HOURS_PER_DAY,
+    DEFAULT_TIME_HOURS,
+    DEFAULT_TIME_SCALE,
+    DEFAULT_LATITUDE,
+    DEFAULT_DAY_OF_YEAR,
+    SOLAR_DECLINATION_MAX,
+    DEGREES_PER_HOUR_ANGLE,
+)
+
 # Type aliases
 Color3 = Tuple[float, float, float]
 TimeCallback = Callable[["TimeOfDayPeriod", "TimeOfDayPeriod"], None]

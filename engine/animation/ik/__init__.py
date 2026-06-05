@@ -122,7 +122,49 @@ from engine.animation.ik.foot_placement import (
     FootState,
     FootPlacementAnimated,
     MultiLegFootPlacement,
+    RaycastHit,
     RaycastCallback,
+)
+
+# IK Layer integration
+from engine.animation.ik.ik_layer import (
+    IKBlendMode,
+    IKGoalContext,
+    IKLayerResult,
+    IKLayer,
+    IKLayerStack,
+)
+
+# Graph + IK integration
+from engine.animation.ik.graph_integration import (
+    IKSolveOrder,
+    IKGoalSource,
+    AnimationIKResult,
+    AnimationIKController,
+    ComponentGoalSource,
+    CallbackGoalSource,
+    StaticGoalSource,
+)
+
+# ECS Components
+from engine.animation.ik.ecs_components import (
+    FullBodyIKController,
+    AnimationGraphController,
+    LookAtTarget,
+    FootPlacementController,
+    IKTargetComponent,
+)
+
+# ECS Systems
+from engine.animation.ik.ecs_systems import (
+    AnimationIKSystemStats,
+    AnimationGraphIKSystem,
+    FootPlacementSystem,
+    FullBodyIKSystem,
+    LookAtSystem,
+    AnimationIKCompositeSystem,
+    register_animation_ik_systems,
+    register_composite_system,
 )
 
 # Configuration constants
@@ -218,7 +260,37 @@ __all__ = [
     "FootState",
     "FootPlacementAnimated",
     "MultiLegFootPlacement",
+    "RaycastHit",
     "RaycastCallback",
+    # IK Layer integration
+    "IKBlendMode",
+    "IKGoalContext",
+    "IKLayerResult",
+    "IKLayer",
+    "IKLayerStack",
+    # Graph + IK integration
+    "IKSolveOrder",
+    "IKGoalSource",
+    "AnimationIKResult",
+    "AnimationIKController",
+    "ComponentGoalSource",
+    "CallbackGoalSource",
+    "StaticGoalSource",
+    # ECS Components
+    "FullBodyIKController",
+    "AnimationGraphController",
+    "LookAtTarget",
+    "FootPlacementController",
+    "IKTargetComponent",
+    # ECS Systems
+    "AnimationIKSystemStats",
+    "AnimationGraphIKSystem",
+    "FootPlacementSystem",
+    "FullBodyIKSystem",
+    "LookAtSystem",
+    "AnimationIKCompositeSystem",
+    "register_animation_ik_systems",
+    "register_composite_system",
     # Config constants
     "IK_DEFAULT_TOLERANCE",
     "IK_TOLERANCE_TIGHT",

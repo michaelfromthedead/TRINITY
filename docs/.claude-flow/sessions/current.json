@@ -1,0 +1,13 @@
+{
+  "id": "session-1779696098271",
+  "startedAt": "2026-05-25T08:01:38.271Z",
+  "cwd": "/home/user/dev/USER/PROJECTS_VOID/TRINITY/docs",
+  "context": {},
+  "metrics": {
+    "edits": 0,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "restoredAt": "2026-05-25T08:01:38.277Z"
+}

@@ -791,9 +791,10 @@ fn generate_barriers_single_texture_barrier() {
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
+        r_tex,
+        EdgeType::RAW,
         ResourceState::ColorAttachment,
         ResourceState::ShaderRead,
-        r_tex,
     )];
 
     let result = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -821,9 +822,10 @@ fn generate_barriers_single_buffer_barrier() {
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
+        r_buf,
+        EdgeType::RAW,
         ResourceState::ShaderReadWrite,
         ResourceState::ShaderRead,
-        r_buf,
     )];
 
     let result = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -863,16 +865,18 @@ fn generate_barriers_mixed_texture_and_buffer() {
         (
             PassIndex(0),
             PassIndex(1),
+            r_tex,
+            EdgeType::RAW,
             ResourceState::ShaderReadWrite,
             ResourceState::ShaderRead,
-            r_tex,
         ),
         (
             PassIndex(1),
             PassIndex(2),
+            r_buf,
+            EdgeType::RAW,
             ResourceState::ShaderReadWrite,
             ResourceState::ShaderRead,
-            r_buf,
         ),
     ];
 
@@ -906,16 +910,18 @@ fn generate_barriers_multiple_boundaries_produce_multiple_commands() {
         (
             PassIndex(0),
             PassIndex(1),
+            r_tex,
+            EdgeType::RAW,
             ResourceState::ShaderReadWrite,
             ResourceState::ShaderRead,
-            r_tex,
         ),
         (
             PassIndex(1),
             PassIndex(2),
+            r_tex,
+            EdgeType::RAW,
             ResourceState::ShaderReadWrite,
             ResourceState::ShaderRead,
-            r_tex,
         ),
     ];
 
@@ -942,9 +948,10 @@ fn generate_barriers_unknown_resource_skips_barrier() {
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
+        r_unknown,
+        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
-        r_unknown,
     )];
 
     // The barrier tuple is skipped because r_99 has no descriptor.

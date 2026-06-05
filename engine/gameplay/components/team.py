@@ -314,6 +314,7 @@ class TeamComponent:
 
     __slots__ = (
         "__dict__",
+        "__weakref__",
         "_iff_tags",
         "_secondary_teams",
         "_custom_relations",

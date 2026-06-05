@@ -97,10 +97,22 @@ class ProtocolMeta(EngineMeta):
             )
 
             # === 3. SET DEFAULTS ===
-            if not hasattr(cls, "_protocol_min_version"):
+            # Determine if _protocol_min_version should be inherited or auto-defaulted:
+            # - If explicitly declared on this class: use it
+            # - If inherited from parent and parent explicitly declared it: inherit it
+            # - Otherwise: auto-default to this class's _protocol_version
+            if "_protocol_min_version" in cls.__dict__:
+                # Explicitly declared on this class - mark it as explicit
+                cls._protocol_min_version_explicit = True
+            elif hasattr(cls, "_protocol_min_version_explicit") and cls._protocol_min_version_explicit:
+                # Parent explicitly declared it - inherit from parent (already set via inheritance)
+                pass
+            else:
+                # Parent auto-defaulted or no parent - give this class its own default
                 cls._protocol_min_version = (
                     cls._protocol_version
                 )  # Only self-compatible by default
+                cls._protocol_min_version_explicit = False
             if not hasattr(cls, "_protocol_messages"):
                 cls._protocol_messages = {}
             if not hasattr(cls, "_protocol_name"):
@@ -273,6 +285,12 @@ class ProtocolMeta(EngineMeta):
         protocol_id = getattr(protocol_cls, "_protocol_id", None)
         if protocol_id is None:
             error_msg = f"Protocol {protocol_cls.__name__} has no _protocol_id (not registered)"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Also check if protocol is still in registry (may have been cleared)
+        if mcs._registry.get(protocol_id) is not protocol_cls:
+            error_msg = f"Protocol {protocol_cls.__name__} has no _protocol_id in registry (was cleared)"
             logger.error(error_msg)
             raise ValueError(error_msg)
 

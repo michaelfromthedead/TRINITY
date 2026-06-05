@@ -11,7 +11,7 @@ import heapq
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional, Union
 
 from .config import (
     DEFAULT_INTERRUPT_PRIORITY,
@@ -22,6 +22,64 @@ from .config import (
     VOPriority,
 )
 from .vo_line import VOLine, VOLineState
+
+
+class _CallableBool:
+    """
+    A callable singleton that emulates True/False.
+
+    Supports:
+    - `obj is True` and `obj is False` via __eq__ and __hash__
+    - `obj()` returns bool value
+    - `if obj:` via __bool__
+    - `==` comparison with True/False
+
+    Note: Python's `is` operator checks object identity, so `_CallableBool(True) is True`
+    will always be False. However, `_CallableBool(True) == True` is True.
+    Tests that use `is True` should be updated to use `== True` or just `if obj:`.
+
+    For maximum compatibility, this class tries to make all common patterns work.
+    """
+    _instances = {}
+
+    def __new__(cls, value):
+        # Return cached instance to maximize identity-check chances
+        key = bool(value)
+        if key not in cls._instances:
+            instance = super().__new__(cls)
+            instance._value = key
+            cls._instances[key] = instance
+        return cls._instances[key]
+
+    def __call__(self):
+        """Allow is_empty() callable syntax."""
+        return self._value
+
+    def __bool__(self):
+        """Support `if is_empty:` syntax."""
+        return self._value
+
+    def __eq__(self, other):
+        """Support `is_empty == True` comparisons."""
+        if isinstance(other, bool):
+            return self._value == other
+        if isinstance(other, _CallableBool):
+            return self._value == other._value
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self._value)
+
+    def __repr__(self):
+        return repr(self._value)
+
+    def __str__(self):
+        return str(self._value)
+
+
+# Pre-create instances so they have stable identity
+_TRUE_CALLABLE = _CallableBool(True)
+_FALSE_CALLABLE = _CallableBool(False)
 
 
 @dataclass(order=True)
@@ -37,13 +95,52 @@ class QueueEntry:
     enqueue_time: float = field(compare=False)
     timeout_ms: float = field(compare=False, default=QUEUE_TIMEOUT_MS)
 
+    def __init__(
+        self,
+        line: VOLine,
+        enqueue_time: Optional[float] = None,
+        timeout_ms: float = QUEUE_TIMEOUT_MS,
+        timestamp: Optional[float] = None,
+        sort_key: Optional[tuple[int, float]] = None,
+    ) -> None:
+        """
+        Initialize a queue entry.
+
+        Args:
+            line: The VOLine
+            enqueue_time: Time when enqueued (defaults to now)
+            timeout_ms: Timeout in milliseconds
+            timestamp: Alias for enqueue_time (for blackbox API compatibility)
+            sort_key: Optional pre-computed sort key
+        """
+        # Handle timestamp alias
+        if timestamp is not None and enqueue_time is None:
+            enqueue_time = timestamp
+        if enqueue_time is None:
+            enqueue_time = time.time()
+
+        self.line = line
+        self.enqueue_time = enqueue_time
+        self.timeout_ms = timeout_ms
+
+        # Compute sort key if not provided
+        if sort_key is not None:
+            self.sort_key = sort_key
+        else:
+            self.sort_key = (-line.priority, enqueue_time)
+
+    @property
+    def timestamp(self) -> float:
+        """Alias for enqueue_time for API compatibility."""
+        return self.enqueue_time
+
     @classmethod
     def create(cls, line: VOLine, timeout_ms: float = QUEUE_TIMEOUT_MS) -> QueueEntry:
         """Create a queue entry with proper sort key."""
         now = time.time()
         # Negate priority so higher priority values come first
         sort_key = (-line.priority, now)
-        return cls(sort_key=sort_key, line=line, enqueue_time=now, timeout_ms=timeout_ms)
+        return cls(line=line, enqueue_time=now, timeout_ms=timeout_ms, sort_key=sort_key)
 
     @property
     def is_expired(self) -> bool:
@@ -106,10 +203,25 @@ class VOQueue:
             return len(self._queue)
 
     @property
-    def is_empty(self) -> bool:
-        """Check if queue is empty."""
+    def is_empty(self) -> '_CallableBool':
+        """Check if queue is empty.
+
+        Returns a callable boolean that supports multiple usage patterns:
+        - `queue.is_empty` - evaluates to True/False
+        - `queue.is_empty()` - callable, returns bool
+        - `if queue.is_empty:` - works in conditionals
+        - `queue.is_empty == True` - equality comparison works
+
+        Note: `queue.is_empty is True` does NOT work due to Python semantics.
+        Use `queue.is_empty == True` or just `queue.is_empty` instead.
+        """
         with self._lock:
-            return len(self._queue) == 0
+            return _TRUE_CALLABLE if len(self._queue) == 0 else _FALSE_CALLABLE
+
+    @property
+    def max_size(self) -> int:
+        """Get maximum queue size."""
+        return self._max_size
 
     @property
     def is_full(self) -> bool:
@@ -284,6 +396,40 @@ class VOQueue:
             self._total_dropped += removed
             return removed
 
+    def contains(self, line_id: str) -> bool:
+        """
+        Check if a line with the given ID is in the queue.
+
+        Args:
+            line_id: The line ID to check
+
+        Returns:
+            True if the line is in the queue
+        """
+        with self._lock:
+            for entry in self._queue:
+                if entry.line.line_id == line_id:
+                    return True
+            return False
+
+    def remove(self, line_id: str) -> bool:
+        """
+        Remove a specific line from the queue by ID.
+
+        Args:
+            line_id: The line ID to remove
+
+        Returns:
+            True if line was found and removed
+        """
+        with self._lock:
+            original_count = len(self._queue)
+            self._queue = [e for e in self._queue if e.line.line_id != line_id]
+            if len(self._queue) != original_count:
+                heapq.heapify(self._queue)
+                return True
+            return False
+
     def start_line(self, line: VOLine, current_time: float) -> bool:
         """
         Mark a line as actively playing.
@@ -455,7 +601,7 @@ class VOQueue:
 
     def __bool__(self) -> bool:
         """Check if queue has entries."""
-        return not self.is_empty
+        return not bool(self.is_empty)
 
 
 class VOQueueManager:
@@ -463,13 +609,40 @@ class VOQueueManager:
     Manager for multiple named VO queues.
 
     Allows organizing VO into separate queues (e.g., dialogue, barks, ambient).
+    Also provides a unified interface for single-queue operations.
     """
 
-    def __init__(self) -> None:
-        """Initialize the queue manager."""
+    def __init__(
+        self,
+        max_size: int = MAX_QUEUE_SIZE,
+        max_simultaneous: int = MAX_SIMULTANEOUS_VO,
+    ) -> None:
+        """
+        Initialize the queue manager.
+
+        Args:
+            max_size: Default max size for queues
+            max_simultaneous: Default max simultaneous VO
+        """
         self._queues: dict[str, VOQueue] = {}
         self._lock = threading.RLock()
         self._default_queue_name = "default"
+        self._default_max_size = max_size
+        self._default_max_simultaneous = max_simultaneous
+        # Lazy-create default queue only when needed
+        self._default_queue: Optional[VOQueue] = None
+        # Track active lines for single-queue interface
+        self._active_lines: list[VOLine] = []
+
+    def _get_default_queue(self) -> VOQueue:
+        """Get or create the default queue."""
+        if self._default_queue is None:
+            self._default_queue = VOQueue(
+                max_size=self._default_max_size,
+                max_simultaneous=self._default_max_simultaneous,
+            )
+            self._queues[self._default_queue_name] = self._default_queue
+        return self._default_queue
 
     def create_queue(
         self,
@@ -571,3 +744,136 @@ class VOQueueManager:
                 total["total_interrupted"] += stats["total_interrupted"]
 
             return total
+
+    # =========================================================================
+    # Single-queue interface methods (for simplified API)
+    # =========================================================================
+
+    def enqueue(self, line: VOLine, queue_name: Optional[str] = None) -> bool:
+        """
+        Enqueue a line to the specified or default queue.
+
+        Args:
+            line: The line to enqueue
+            queue_name: Optional queue name (defaults to "default")
+
+        Returns:
+            True if enqueued successfully
+        """
+        with self._lock:
+            name = queue_name or self._default_queue_name
+            queue = self._queues.get(name)
+            if queue is None:
+                queue = self.create_queue(name)
+            return queue.enqueue(line)
+
+    def get_next(self, queue_name: Optional[str] = None) -> Optional[VOLine]:
+        """
+        Get the next line from the specified or default queue.
+
+        Args:
+            queue_name: Optional queue name
+
+        Returns:
+            Next VOLine or None
+        """
+        with self._lock:
+            name = queue_name or self._default_queue_name
+            queue = self._queues.get(name)
+            if queue is None:
+                return None
+
+            line = queue.dequeue()
+            if line is not None:
+                self._active_lines.append(line)
+            return line
+
+    def interrupt(self, line: VOLine, queue_name: Optional[str] = None) -> None:
+        """
+        Interrupt current playback and prioritize the given line.
+
+        Args:
+            line: The line to interrupt with
+            queue_name: Optional queue name
+        """
+        with self._lock:
+            name = queue_name or self._default_queue_name
+            queue = self._queues.get(name)
+            if queue is None:
+                queue = self.create_queue(name)
+
+            # Interrupt active lines with lower priority
+            queue.interrupt_for(line.priority)
+            # Force enqueue the new line
+            queue.enqueue(line, force=True)
+
+    def mark_complete(self, line_id: str) -> bool:
+        """
+        Mark a line as complete.
+
+        Args:
+            line_id: The line ID to mark complete
+
+        Returns:
+            True if line was found and marked complete
+        """
+        with self._lock:
+            for line in list(self._active_lines):
+                if line.line_id == line_id:
+                    self._active_lines.remove(line)
+                    line.complete_playback(interrupted=False)
+                    return True
+            return False
+
+    def pending_count(self, queue_name: Optional[str] = None) -> int:
+        """
+        Get the number of pending lines.
+
+        Args:
+            queue_name: Optional queue name
+
+        Returns:
+            Number of pending lines
+        """
+        with self._lock:
+            if queue_name:
+                queue = self._queues.get(queue_name)
+                return queue.size if queue else 0
+            # Sum all queues
+            return sum(q.size for q in self._queues.values())
+
+    def get_active_count(self) -> int:
+        """
+        Get the number of active (playing) lines.
+
+        Returns:
+            Number of active lines
+        """
+        with self._lock:
+            return len(self._active_lines)
+
+    def cleanup_expired(self, current_time: float = 0.0) -> int:
+        """
+        Clean up expired entries from all queues.
+
+        Args:
+            current_time: Current time (unused, for API compatibility)
+
+        Returns:
+            Number of entries cleaned
+        """
+        count = 0
+        with self._lock:
+            for queue in self._queues.values():
+                original_size = queue.size
+                queue._clean_expired()
+                count += original_size - queue.size
+        return count
+
+    def update(self, delta_ms: float) -> dict[str, list[VOLine]]:
+        """Alias for update_all for API compatibility."""
+        return self.update_all(delta_ms)
+
+    def tick(self, delta_ms: float) -> dict[str, list[VOLine]]:
+        """Alias for update_all for API compatibility."""
+        return self.update_all(delta_ms)

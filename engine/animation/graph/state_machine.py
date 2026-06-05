@@ -41,6 +41,35 @@ from .config import get_config
 
 
 # =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
+
+class StateMachineBuilderError(Exception):
+    """Raised when state machine builder encounters invalid configuration."""
+    pass
+
+
+class ParameterTypeError(TypeError):
+    """Raised when parameter type doesn't match expected type."""
+    pass
+
+
+# =============================================================================
+# INTERRUPT MODE
+# =============================================================================
+
+
+class InterruptMode(Enum):
+    """How transitions can be interrupted."""
+
+    NONE = auto()  # Cannot be interrupted
+    HIGHER_PRIORITY = auto()  # Can be interrupted by higher priority transitions
+    ANY = auto()  # Can be interrupted by any transition
+    SAME_PRIORITY = auto()  # Can be interrupted by same or higher priority
+
+
+# =============================================================================
 # BLEND CURVES
 # =============================================================================
 
@@ -77,6 +106,29 @@ def evaluate_blend_curve(curve: BlendCurve, t: float) -> float:
 
 
 # =============================================================================
+# MOTION MODE
+# =============================================================================
+
+
+class MotionMode(Enum):
+    """Mode for handling root motion in animation states.
+
+    ``NONE``
+        No root motion is applied.
+    ``IN_PLACE``
+        Animation plays in place, root motion is discarded.
+    ``EXTRACT``
+        Root motion is extracted and applied to the character.
+    ``BLEND``
+        Root motion is blended with gameplay-driven movement.
+    """
+    NONE = auto()
+    IN_PLACE = auto()
+    EXTRACT = auto()
+    BLEND = auto()
+
+
+# =============================================================================
 # TRANSITION CONDITIONS
 # =============================================================================
 
@@ -87,11 +139,19 @@ class ComparisonOp(Enum):
     EQUALS = auto()
     NOT_EQUALS = auto()
     GREATER = auto()
+    GREATER_THAN = GREATER  # Alias
     GREATER_EQUALS = auto()
+    GREATER_OR_EQUAL = GREATER_EQUALS  # Alias
     LESS = auto()
+    LESS_THAN = LESS  # Alias
     LESS_EQUALS = auto()
+    LESS_OR_EQUAL = LESS_EQUALS  # Alias
     IS_TRUE = auto()
     IS_FALSE = auto()
+
+
+# Alias for backwards compatibility
+ConditionOperator = ComparisonOp
 
 
 @dataclass
@@ -297,6 +357,7 @@ class StateTransition:
     priority: int = 0  # Higher priority transitions are checked first
     can_interrupt_self: bool = False  # Can this transition interrupt an active transition
     can_be_interrupted: bool = True  # Can this transition be interrupted
+    interrupt_mode: InterruptMode = InterruptMode.HIGHER_PRIORITY  # Interruption behavior
 
     def can_transition(self, current_state: AnimationState,
                        context: GraphContext) -> bool:
@@ -755,6 +816,7 @@ class StateMachineBuilder:
         duration: float = 0.2,
         curve: BlendCurve = BlendCurve.SMOOTH_STEP,
         priority: int = 0,
+        interrupt_mode: InterruptMode = InterruptMode.HIGHER_PRIORITY,
     ) -> "StateMachineBuilder":
         """Add a transition between states."""
         transition = StateTransition(
@@ -764,6 +826,7 @@ class StateMachineBuilder:
             duration=duration,
             blend_curve=curve,
             priority=priority,
+            interrupt_mode=interrupt_mode,
         )
         self._transitions.append(transition)
         return self
@@ -811,6 +874,8 @@ __all__ = [
     # Blend curves
     "BlendCurve",
     "evaluate_blend_curve",
+    # Motion mode
+    "MotionMode",
     # Conditions
     "ComparisonOp",
     "TransitionCondition",

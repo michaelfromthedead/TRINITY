@@ -48,6 +48,7 @@ class FramePhase(Enum):
     PRESENT = "present"
     IDLE = "idle"
     OTHER = "other"
+    CUSTOM = "custom"
 
 
 @dataclass(slots=True)
@@ -266,7 +267,9 @@ class SpikeDetector:
         if self.adaptive and len(self._history) >= 5:
             avg = sum(self._history) / len(self._history)
             adaptive_threshold = avg * self.sensitivity
-            threshold = max(self.threshold_ms, adaptive_threshold)
+            # When adaptive mode is enabled, use the adaptive threshold
+            # (not the max with the fixed threshold)
+            threshold = adaptive_threshold
         else:
             threshold = self.threshold_ms
 

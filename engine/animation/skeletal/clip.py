@@ -1100,3 +1100,14 @@ def create_simple_clip(
         duration=duration,
         bone_tracks={bone_index: track},
     )
+
+
+# =============================================================================
+# Backward compatibility aliases
+# =============================================================================
+
+# AnimationTrack is the legacy name for BoneTrack
+AnimationTrack = BoneTrack
+
+# AnimationKeyframe is the legacy name for Keyframe
+AnimationKeyframe = Keyframe

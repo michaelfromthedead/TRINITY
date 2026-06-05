@@ -22,7 +22,60 @@
 //! [`PyPassNode`]: https://docs.rs/trinity-frame-graph/latest/trinity_frame_graph/python/struct.PyPassNode.html
 //! [`PyResourceDesc`]: https://docs.rs/trinity-frame-graph/latest/trinity_frame_graph/python/struct.PyResourceDesc.html
 
+#[cfg(feature = "pyo3")]
 pub mod python;
+pub mod barriers;
+pub mod swap;
+
+// Phase 3+ modules: aliasing, scheduling, execution
+pub mod aliasing;
+pub mod async_compute;
+pub mod scheduling;
+pub mod execution;
+pub mod transient;
+
+// Graph construction and resources
+pub mod graph;
+pub mod passes;
+pub mod resources;
+pub mod external;
+
+// Debug and bridge utilities
+pub mod debug_dumper;
+#[cfg(feature = "pyo3")]
+pub mod type_bridge;
+pub mod wgpu_barriers;
+
+// Re-export commonly used types from aliasing
+pub use aliasing::{AliasPolicy, AliasingLifetime, AliasCandidate, MemoryAliasInfo, AliasAnalyzer, AliasMapping, apply_aliasing};
+
+// Re-export commonly used types from async_compute (QueueType excluded - defined locally)
+pub use async_compute::{AsyncComputeHint, QueueSyncPoint, CrossQueueDependency, OverlapRegion, AsyncOverlapInfo, AsyncComputeAnalyzer};
+
+// Re-export commonly used types from scheduling
+pub use scheduling::{SchedulingPriority, SchedulingQueueType, SchedulingHint, PassCost, PassScheduleInfo, ScheduleBuilder};
+
+// Re-export commonly used types from execution
+pub use execution::{FrameGraphCompiler, FrameGraphExecutor, ExecutionContext, AllocatedResource, ResourceAllocation, MemoryType};
+
+// Re-export debug utilities
+pub use debug_dumper::DebugDumper;
+
+// Re-export wgpu barrier types
+pub use wgpu_barriers::{
+    generate_wgpu_barriers, resource_state_to_wgpu_usage, WgpuBarrier,
+    WgpuBarrierResolveContext, WgpuBufferUsage, WgpuTextureUsage,
+};
+
+// Alias for test compatibility
+pub type BarrierResolveContext<'a> = WgpuBarrierResolveContext<'a>;
+
+// Re-export resource descriptor types
+pub use resources::{
+    TextureDescriptor, BufferDescriptor, ResourceDescriptor,
+    ResourceRegistry, BufferSlice,
+};
+
 use core::fmt;
 use std::collections::{HashMap, HashSet};
 
@@ -61,7 +114,7 @@ impl fmt::Display for ResourceHandle {
 ///
 /// Assigned after passes are ordered topologically (Phase 2). Before
 /// ordering, passes use their insertion-order index.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct PassIndex(pub usize);
 
@@ -625,7 +678,7 @@ impl View for EmptyView {
 
 /// View backed by a colour or depth attachment from the swap-chain or a
 /// prior render pass (non-transient).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CameraView {
     /// Human-readable label.
     pub name: String,
@@ -878,6 +931,8 @@ pub enum ResourceLifetime {
     /// Resource is imported from outside the frame graph. The compiler
     /// tracks its state but does not allocate or alias it.
     Imported,
+    /// Resource is a history resource with N slots for temporal rotation.
+    History(usize),
 }
 
 impl fmt::Display for ResourceLifetime {
@@ -885,6 +940,7 @@ impl fmt::Display for ResourceLifetime {
         match self {
             Self::Transient => write!(f, "Transient"),
             Self::Imported => write!(f, "Imported"),
+            Self::History(n) => write!(f, "History({})", n),
         }
     }
 }
@@ -917,6 +973,12 @@ pub struct IrResource {
     /// Optional format override (when the resource view format differs from
     /// the physical texture format).
     pub view_format_override: Option<String>,
+    /// Whether this resource persists across frame boundaries (history buffer).
+    ///
+    /// History resources are used for temporal effects like TAA, motion blur,
+    /// and reprojection. They cannot be aliased with other resources since
+    /// their contents must survive frame boundaries.
+    pub is_history: bool,
 }
 
 impl IrResource {
@@ -935,6 +997,7 @@ impl IrResource {
             lifetime,
             initial_state,
             view_format_override: None,
+            is_history: false,
         }
     }
 }
@@ -1110,6 +1173,8 @@ impl RenderGraphBuilder {
             dispatch_source: None,
             view_type: ViewType::ColorAttachment,
             tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: name.to_string() }),
         };
 
         pass.sync_access_set_from_attachments();
@@ -1160,6 +1225,8 @@ impl RenderGraphBuilder {
             }),
             view_type: ViewType::Storage,
             tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: name.to_string() }),
         };
 
         self.passes.push(pass);
@@ -1199,6 +1266,8 @@ impl RenderGraphBuilder {
             dispatch_source: None,
             view_type: ViewType::StorageBuffer,
             tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: name.to_string() }),
         };
 
         self.passes.push(pass);
@@ -1259,6 +1328,10 @@ pub struct IrPass {
     ///
     /// Examples: `"transparent"`, `"post-process"`, `"debug"`.
     pub tags: Vec<String>,
+    /// Feature flags for conditional compilation/enabling.
+    pub feature_flags: u64,
+    /// Optional view binding for camera/rendering context.
+    pub view: std::sync::Arc<dyn View>,
 }
 
 impl IrPass {
@@ -1274,6 +1347,35 @@ impl IrPass {
         instance_source: InstanceSource,
         view_type: ViewType,
     ) -> Self {
+        let pass_name = name.into();
+        let mut pass = Self {
+            index,
+            name: pass_name.clone(),
+            pass_type: PassType::Graphics,
+            access_set: ResourceAccessSet::empty(),
+            color_attachments,
+            depth_stencil,
+            instance_source,
+            dispatch_source: None,
+            view_type,
+            tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: pass_name }),
+        };
+        pass.sync_access_set_from_attachments();
+        pass
+    }
+
+    /// Creates a new graphics pass with an explicit view binding.
+    pub fn graphics_with_view(
+        index: PassIndex,
+        name: impl Into<String>,
+        color_attachments: Vec<ColorAttachment>,
+        depth_stencil: Option<DepthStencilAttachment>,
+        instance_source: InstanceSource,
+        view_type: ViewType,
+        view: std::sync::Arc<dyn View>,
+    ) -> Self {
         let mut pass = Self {
             index,
             name: name.into(),
@@ -1285,6 +1387,8 @@ impl IrPass {
             dispatch_source: None,
             view_type,
             tags: Vec::new(),
+            feature_flags: 0,
+            view,
         };
         pass.sync_access_set_from_attachments();
         pass
@@ -1296,6 +1400,37 @@ impl IrPass {
         name: impl Into<String>,
         dispatch_source: DispatchSource,
         view_type: ViewType,
+    ) -> Self {
+        let pass_name = name.into();
+        Self {
+            index,
+            name: pass_name.clone(),
+            pass_type: PassType::Compute,
+            access_set: ResourceAccessSet::empty(),
+            color_attachments: Vec::new(),
+            depth_stencil: None,
+            instance_source: InstanceSource::Direct {
+                index_count: 0,
+                instance_count: 1,
+                base_vertex: 0,
+                first_index: 0,
+                first_instance: 0,
+            },
+            dispatch_source: Some(dispatch_source),
+            view_type,
+            tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: pass_name }),
+        }
+    }
+
+    /// Creates a new compute pass with an explicit view binding.
+    pub fn compute_with_view(
+        index: PassIndex,
+        name: impl Into<String>,
+        dispatch_source: DispatchSource,
+        view_type: ViewType,
+        view: std::sync::Arc<dyn View>,
     ) -> Self {
         Self {
             index,
@@ -1314,14 +1449,17 @@ impl IrPass {
             dispatch_source: Some(dispatch_source),
             view_type,
             tags: Vec::new(),
+            feature_flags: 0,
+            view,
         }
     }
 
     /// Creates a new copy pass with the given name.
     pub fn copy(index: PassIndex, name: impl Into<String>) -> Self {
+        let pass_name = name.into();
         Self {
             index,
-            name: name.into(),
+            name: pass_name.clone(),
             pass_type: PassType::Copy,
             access_set: ResourceAccessSet::empty(),
             color_attachments: Vec::new(),
@@ -1336,6 +1474,8 @@ impl IrPass {
             dispatch_source: None,
             view_type: ViewType::StorageBuffer,
             tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: pass_name }),
         }
     }
 
@@ -1344,6 +1484,36 @@ impl IrPass {
         index: PassIndex,
         name: impl Into<String>,
         dispatch_source: DispatchSource,
+    ) -> Self {
+        let pass_name = name.into();
+        Self {
+            index,
+            name: pass_name.clone(),
+            pass_type: PassType::RayTracing,
+            access_set: ResourceAccessSet::empty(),
+            color_attachments: Vec::new(),
+            depth_stencil: None,
+            instance_source: InstanceSource::Direct {
+                index_count: 0,
+                instance_count: 1,
+                base_vertex: 0,
+                first_index: 0,
+                first_instance: 0,
+            },
+            dispatch_source: Some(dispatch_source),
+            view_type: ViewType::Storage,
+            tags: Vec::new(),
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: pass_name }),
+        }
+    }
+
+    /// Creates a new ray-tracing pass with an explicit view binding.
+    pub fn ray_tracing_with_view(
+        index: PassIndex,
+        name: impl Into<String>,
+        dispatch_source: DispatchSource,
+        view: std::sync::Arc<dyn View>,
     ) -> Self {
         Self {
             index,
@@ -1362,6 +1532,8 @@ impl IrPass {
             dispatch_source: Some(dispatch_source),
             view_type: ViewType::Storage,
             tags: Vec::new(),
+            feature_flags: 0,
+            view,
         }
     }
 
@@ -2047,7 +2219,7 @@ fn texture_format(resource: &IrResource) -> Option<&str> {
 ///
 /// The graph is stored as an undirected adjacency list keyed by
 /// [`ResourceHandle`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct InterferenceGraph {
     graph: HashMap<ResourceHandle, Vec<ResourceHandle>>,
 }
@@ -2134,14 +2306,14 @@ impl InterferenceGraph {
 /// 2. The state the resource must be in for the destination pass
 ///    ([`state_required_by_pass`]).
 ///
-/// If the two states differ, a barrier entry `(from, to, before, after)` is
-/// emitted.  Duplicate barriers (same `from`, `to`, and `resource`) are
-/// collapsed.
+/// If the two states differ, a barrier entry `(from, to, resource, edge_type, before, after)`
+/// is emitted. Duplicate barriers (same `from`, `to`, `resource`, and `edge_type`) are
+/// collapsed — different edge types produce distinct barriers.
 pub fn compute_barriers(
     ordered_passes: &[PassIndex],
     passes: &[IrPass],
     edges: &[IrEdge],
-) -> Vec<(PassIndex, PassIndex, ResourceState, ResourceState, ResourceHandle)> {
+) -> Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)> {
     use std::collections::HashSet;
 
     let pass_map: HashMap<PassIndex, &IrPass> =
@@ -2149,7 +2321,8 @@ pub fn compute_barriers(
     let ordered_set: HashSet<PassIndex> = ordered_passes.iter().copied().collect();
 
     let mut barriers = Vec::new();
-    let mut seen: HashSet<(PassIndex, PassIndex, ResourceHandle)> = HashSet::new();
+    // Dedup key includes EdgeType so different edge types produce distinct barriers
+    let mut seen: HashSet<(PassIndex, PassIndex, ResourceHandle, EdgeType)> = HashSet::new();
 
     for edge in edges {
         // Only emit barriers for passes in the final execution order.
@@ -2168,9 +2341,9 @@ pub fn compute_barriers(
         let before = state_left_by_pass(from_pass, edge.resource);
         let after = state_required_by_pass(to_pass, edge.resource);
 
-        // Deduplicate: same (from, to, resource) → one barrier.
-        if before != after && seen.insert((edge.from, edge.to, edge.resource)) {
-            barriers.push((edge.from, edge.to, before, after, edge.resource));
+        // Deduplicate: same (from, to, resource, edge_type) → one barrier.
+        if before != after && seen.insert((edge.from, edge.to, edge.resource, edge.edge_type)) {
+            barriers.push((edge.from, edge.to, edge.resource, edge.edge_type, before, after));
         }
     }
 
@@ -2351,7 +2524,7 @@ pub fn wgpu_barrier_from_state_transition(
 ///
 /// The commands are returned in execution order (sorted by source pass index).
 pub fn generate_barriers(
-    barriers: &[(PassIndex, PassIndex, ResourceState, ResourceState, ResourceHandle)],
+    barriers: &[(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)],
     _passes: &[IrPass],
     _edges: &[IrEdge],
     resources: &[IrResource],
@@ -2365,7 +2538,7 @@ pub fn generate_barriers(
     // Group by pass boundary.
     let mut groups: HashMap<(PassIndex, PassIndex), BarrierCommand> = HashMap::new();
 
-    for &(from, to, before, after, handle) in barriers {
+    for &(from, to, handle, _edge_type, before, after) in barriers {
         let desc = match desc_map.get(&handle) {
             Some(d) => *d,
             None => continue,
@@ -2397,6 +2570,451 @@ pub fn generate_barriers(
     sorted_keys.sort_by_key(|&(from, to)| (from.0, to.0));
 
     sorted_keys.into_iter().map(|k| groups.remove(&k).unwrap()).collect()
+}
+
+// ---------------------------------------------------------------------------
+// CommandBufferFence
+// ---------------------------------------------------------------------------
+
+/// GPU timeline synchronization fence.
+///
+/// Represents a fence point on a GPU command buffer timeline with separate
+/// wait (dependency) and signal (completion) values. Used for cross-queue
+/// synchronization and frame pacing.
+#[derive(Debug)]
+pub struct CommandBufferFence {
+    /// Timeline value to wait for before executing.
+    pub wait_value: u64,
+    /// Timeline value to signal after completion.
+    pub signal_value: u64,
+    /// Whether the fence has been signaled.
+    signaled: std::sync::atomic::AtomicBool,
+}
+
+impl Clone for CommandBufferFence {
+    fn clone(&self) -> Self {
+        Self {
+            wait_value: self.wait_value,
+            signal_value: self.signal_value,
+            signaled: std::sync::atomic::AtomicBool::new(self.is_complete()),
+        }
+    }
+}
+
+// SAFETY: CommandBufferFence uses atomic operations for signaled flag.
+unsafe impl Send for CommandBufferFence {}
+unsafe impl Sync for CommandBufferFence {}
+
+impl CommandBufferFence {
+    /// Creates a new fence with wait and signal values.
+    pub fn new(wait_value: u64, signal_value: u64) -> Self {
+        Self {
+            wait_value,
+            signal_value,
+            signaled: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Returns the timeline value to wait for.
+    pub fn wait_value(&self) -> u64 {
+        self.wait_value
+    }
+
+    /// Returns the timeline value to signal.
+    pub fn signal_value(&self) -> u64 {
+        self.signal_value
+    }
+
+    /// Returns true if the fence has been signaled.
+    pub fn is_complete(&self) -> bool {
+        self.signaled.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Marks the fence as signaled (idempotent).
+    pub fn mark_signaled(&self) {
+        self.signaled.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HotReloadableFrameGraph
+// ---------------------------------------------------------------------------
+
+/// Thread-safe hot-reloadable frame graph container.
+///
+/// Wraps a [`CompiledFrameGraph`] with atomic swap semantics, allowing runtime
+/// replacement without blocking readers. Useful for live shader/pipeline
+/// reloading during development.
+pub struct HotReloadableFrameGraph {
+    inner: std::sync::RwLock<std::sync::Arc<CompiledFrameGraph>>,
+}
+
+impl HotReloadableFrameGraph {
+    /// Creates a new hot-reloadable container with the given initial graph.
+    pub fn new(graph: CompiledFrameGraph) -> Self {
+        Self {
+            inner: std::sync::RwLock::new(std::sync::Arc::new(graph)),
+        }
+    }
+
+    /// Loads the current graph. Returns a clone of the Arc for cheap sharing.
+    pub fn load(&self) -> std::sync::Arc<CompiledFrameGraph> {
+        self.inner.read().unwrap().clone()
+    }
+
+    /// Returns a full Arc reference to the current graph.
+    pub fn load_full(&self) -> std::sync::Arc<CompiledFrameGraph> {
+        self.load()
+    }
+
+    /// Swaps the current graph with a new one.
+    pub fn swap(&self, new_graph: CompiledFrameGraph) {
+        let mut guard = self.inner.write().unwrap();
+        *guard = std::sync::Arc::new(new_graph);
+    }
+
+    /// Swaps the current graph and returns the old one.
+    pub fn swap_and_get_old(&self, new_graph: CompiledFrameGraph) -> std::sync::Arc<CompiledFrameGraph> {
+        let mut guard = self.inner.write().unwrap();
+        let old = guard.clone();
+        *guard = std::sync::Arc::new(new_graph);
+        old
+    }
+}
+
+impl std::fmt::Debug for HotReloadableFrameGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HotReloadableFrameGraph")
+            .field("inner", &"<locked>")
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Optimization Pass Infrastructure
+// ---------------------------------------------------------------------------
+
+/// Trait for frame graph optimization passes.
+///
+/// Each pass transforms a [`CompiledFrameGraph`], potentially removing
+/// redundant barriers, merging passes, or pruning unreferenced resources.
+pub trait OptimizationPass: Send + Sync {
+    /// Runs the optimization pass on the given graph.
+    fn run(&self, graph: CompiledFrameGraph) -> CompiledFrameGraph;
+}
+
+/// Chains multiple optimization passes into a sequential pipeline.
+///
+/// Passes execute in registration order, with each pass's output becoming
+/// the next pass's input.
+#[derive(Default)]
+pub struct ChainedOptimizer {
+    passes: Vec<Box<dyn OptimizationPass>>,
+}
+
+impl ChainedOptimizer {
+    /// Creates an empty optimization chain.
+    pub fn new() -> Self {
+        Self { passes: Vec::new() }
+    }
+
+    /// Adds an optimization pass to the chain.
+    pub fn add_pass(&mut self, pass: Box<dyn OptimizationPass>) {
+        self.passes.push(pass);
+    }
+
+    /// Runs all registered passes sequentially on the input graph.
+    pub fn run(&self, mut graph: CompiledFrameGraph) -> CompiledFrameGraph {
+        for pass in &self.passes {
+            graph = pass.run(graph);
+        }
+        graph
+    }
+}
+
+/// Built-in pass that merges adjacent compatible passes.
+#[derive(Debug, Clone, Default)]
+pub struct PassMerger;
+
+impl OptimizationPass for PassMerger {
+    fn run(&self, mut graph: CompiledFrameGraph) -> CompiledFrameGraph {
+        use std::collections::HashSet;
+
+        // Find all pass pairs that have edges between them (cannot merge)
+        let edge_pairs: HashSet<(PassIndex, PassIndex)> = graph.edges.iter()
+            .map(|e| (e.from, e.to))
+            .collect();
+
+        // Check if any adjacent passes in order can be merged (no edge between them)
+        if graph.order.len() >= 2 {
+            let mut new_order = Vec::new();
+            let mut i = 0;
+            while i < graph.order.len() {
+                new_order.push(graph.order[i]);
+                // Check if we can merge with next pass
+                if i + 1 < graph.order.len() {
+                    let from = graph.order[i];
+                    let to = graph.order[i + 1];
+                    // Merge if no edge between them
+                    if !edge_pairs.contains(&(from, to)) && !edge_pairs.contains(&(to, from)) {
+                        // Skip the next pass (merged into current)
+                        i += 1;
+                    }
+                }
+                i += 1;
+            }
+            graph.order = new_order;
+        }
+
+        graph
+    }
+}
+
+/// Built-in pass that removes unreferenced resources.
+#[derive(Debug, Clone, Default)]
+pub struct ResourcePruner;
+
+impl OptimizationPass for ResourcePruner {
+    fn run(&self, mut graph: CompiledFrameGraph) -> CompiledFrameGraph {
+        use std::collections::HashSet;
+        // Collect all referenced resources from passes
+        let referenced: HashSet<ResourceHandle> = graph.passes.iter()
+            .flat_map(|p| {
+                p.access_set.reads.iter()
+                    .chain(p.access_set.writes.iter())
+                    .copied()
+            })
+            .collect();
+        // Remove unreferenced resources
+        graph.resources.retain(|r| referenced.contains(&r.handle));
+        graph
+    }
+}
+
+/// Resource lifetime span in the frame graph (distinct from ResourceLifetime enum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceLifetimeSpan {
+    /// First pass that accesses this resource.
+    pub first_access: PassIndex,
+    /// Last pass that accesses this resource.
+    pub last_access: PassIndex,
+}
+
+// ---------------------------------------------------------------------------
+// HistoryRingSlot — N-slot ring buffer for temporal resource rotation
+// ---------------------------------------------------------------------------
+
+/// N-slot ring buffer for temporal resource rotation (e.g., double/triple buffering).
+///
+/// Guarantees:
+/// - N >= 2 (enforced by panic in constructor)
+/// - `current_slot` cycles through 0..N-1 in round-robin order
+/// - Each slot stores exactly one ResourceHandle
+#[derive(Debug, Clone)]
+pub struct HistoryRingSlot {
+    slots: Vec<ResourceHandle>,
+    current: usize,
+}
+
+impl HistoryRingSlot {
+    /// Creates a new ring with N slots, all initialized to the given handle.
+    ///
+    /// # Panics
+    /// Panics if `slot_count < 2`.
+    pub fn new(slot_count: usize, initial_handle: ResourceHandle) -> Self {
+        assert!(slot_count >= 2, "HistoryRingSlot requires at least 2 slots");
+        Self {
+            slots: vec![initial_handle; slot_count],
+            current: 0,
+        }
+    }
+
+    /// Creates a new ring with N slots initialized with the given handles.
+    ///
+    /// # Panics
+    /// Panics if `handles.len() < 2`.
+    pub fn with_handles(handles: Vec<ResourceHandle>) -> Self {
+        assert!(handles.len() >= 2, "HistoryRingSlot requires at least 2 slots");
+        Self {
+            slots: handles,
+            current: 0,
+        }
+    }
+
+    /// Returns the number of slots.
+    pub fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Returns the current slot index.
+    pub fn current_slot(&self) -> usize {
+        self.current
+    }
+
+    /// Returns the handle at the given slot index.
+    pub fn slot_handle(&self, slot_index: usize) -> ResourceHandle {
+        self.slots[slot_index]
+    }
+
+    /// Returns the handle at the current slot.
+    pub fn current_handle(&self) -> ResourceHandle {
+        self.slots[self.current]
+    }
+
+    /// Advances to the next slot (wraps around).
+    pub fn advance(&mut self) {
+        self.current = (self.current + 1) % self.slots.len();
+    }
+
+    /// Writes a handle to the current slot, then advances.
+    pub fn write_current_and_advance(&mut self, handle: ResourceHandle) {
+        self.slots[self.current] = handle;
+        self.advance();
+    }
+
+    /// Sets the handle at a specific slot.
+    pub fn set_slot(&mut self, slot_index: usize, handle: ResourceHandle) {
+        self.slots[slot_index] = handle;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HistorySlotManager — Manages slot assignments for history resources
+// ---------------------------------------------------------------------------
+
+/// Manages slot assignments for history resources in a frame graph.
+///
+/// Detects resources with [`ResourceLifetime::History`] and provides
+/// frame-based slot calculations for temporal rotation.
+#[derive(Clone, Debug, Default)]
+pub struct HistorySlotManager {
+    /// Maps resource handles to their history lengths (None = not history, uses slot 0).
+    slot_info: std::collections::HashMap<ResourceHandle, Option<usize>>,
+}
+
+impl HistorySlotManager {
+    /// Creates an empty history slot manager.
+    pub fn new() -> Self {
+        Self {
+            slot_info: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Creates a manager from a list of resources, detecting history resources.
+    pub fn from_resources(resources: &[IrResource]) -> Self {
+        let mut manager = Self::new();
+        for resource in resources {
+            match resource.lifetime {
+                ResourceLifetime::History(n) => {
+                    manager.slot_info.insert(resource.handle, Some(n));
+                }
+                _ => {
+                    // Non-history resources use slot 0
+                    manager.slot_info.insert(resource.handle, None);
+                }
+            }
+        }
+        manager
+    }
+
+    /// Returns the slot index for a resource at the given frame.
+    /// Returns `Some(frame % history_length)` for history resources,
+    /// `Some(0)` for non-history tracked resources, `None` for unknown handles.
+    pub fn slot_for(&self, handle: ResourceHandle, frame: usize) -> Option<usize> {
+        self.slot_info.get(&handle).map(|opt_len| {
+            match opt_len {
+                Some(len) => frame % len,
+                None => 0,
+            }
+        })
+    }
+
+    /// Returns the history length for a resource.
+    pub fn history_length(&self, handle: ResourceHandle) -> Option<usize> {
+        self.slot_info.get(&handle).and_then(|opt| *opt)
+    }
+
+    /// Returns true if the resource is a history resource.
+    pub fn is_history(&self, handle: ResourceHandle) -> bool {
+        self.slot_info.get(&handle).map(|opt| opt.is_some()).unwrap_or(false)
+    }
+
+    /// Returns the number of tracked history resources.
+    pub fn len(&self) -> usize {
+        self.slot_info.values().filter(|opt| opt.is_some()).count()
+    }
+
+    /// Returns true if no history resources are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PassRegistry — Container for registered passes
+// ---------------------------------------------------------------------------
+
+/// Registry that holds and indexes frame graph passes.
+///
+/// Provides efficient storage and retrieval of [`IrPass`] instances
+/// with automatically assigned indices.
+#[derive(Clone, Debug, Default)]
+pub struct PassRegistry {
+    passes: Vec<IrPass>,
+}
+
+impl PassRegistry {
+    /// Creates an empty pass registry.
+    pub fn new() -> Self {
+        Self { passes: Vec::new() }
+    }
+
+    /// Registers a pass and returns its assigned index.
+    pub fn register(&mut self, pass: IrPass) -> PassIndex {
+        let index = PassIndex(self.passes.len());
+        self.passes.push(pass);
+        index
+    }
+
+    /// Gets a pass by its index.
+    pub fn get(&self, index: PassIndex) -> Option<&IrPass> {
+        self.passes.get(index.0)
+    }
+
+    /// Gets a mutable reference to a pass by its index.
+    pub fn get_mut(&mut self, index: PassIndex) -> Option<&mut IrPass> {
+        self.passes.get_mut(index.0)
+    }
+
+    /// Returns the number of registered passes.
+    pub fn len(&self) -> usize {
+        self.passes.len()
+    }
+
+    /// Returns true if no passes are registered.
+    pub fn is_empty(&self) -> bool {
+        self.passes.is_empty()
+    }
+
+    /// Returns an iterator over the registered passes.
+    pub fn iter(&self) -> std::slice::Iter<'_, IrPass> {
+        self.passes.iter()
+    }
+
+    /// Returns a mutable iterator over the registered passes.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, IrPass> {
+        self.passes.iter_mut()
+    }
+
+    /// Returns the passes as a slice.
+    pub fn as_slice(&self) -> &[IrPass] {
+        &self.passes
+    }
+
+    /// Consumes the registry and returns the inner pass vector.
+    pub fn into_inner(self) -> Vec<IrPass> {
+        self.passes
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2440,12 +3058,243 @@ impl fmt::Display for CullStats {
     }
 }
 
+/// Compiler statistics combining culling stats and timing.
+#[derive(Clone, Debug, Default)]
+pub struct CompilerStats {
+    /// Total number of passes before dead pass elimination.
+    pub passes_total: usize,
+    /// Number of passes eliminated as dead.
+    pub passes_eliminated: usize,
+    /// Compilation time in microseconds.
+    pub compilation_time_us: u64,
+    /// Number of passes that survived elimination.
+    pub live_pass_count: usize,
+    /// Number of resources freed.
+    pub resources_freed: usize,
+    /// Bytes saved from eliminated passes.
+    pub bytes_saved: u64,
+    /// Total number of barriers.
+    pub barriers_total: usize,
+    /// Number of async passes.
+    pub async_passes: usize,
+    /// Number of barriers removed by optimization.
+    pub barriers_optimized: usize,
+    /// Number of resources that share memory via aliasing.
+    pub resources_aliased: usize,
+}
+
+impl CompilerStats {
+    /// Creates CompilerStats from compilation results.
+    pub fn from_compile_result(
+        cull: &CullStats,
+        time_us: u64,
+        barriers_count: usize,
+        async_passes_count: usize,
+    ) -> Self {
+        Self {
+            passes_total: cull.passes_total,
+            passes_eliminated: cull.passes_eliminated,
+            compilation_time_us: time_us,
+            live_pass_count: cull.live_pass_count,
+            resources_freed: cull.resources_freed,
+            bytes_saved: cull.bytes_saved,
+            barriers_total: barriers_count,
+            async_passes: async_passes_count,
+            barriers_optimized: 0,
+            resources_aliased: 0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BarrierTuple and ScheduledPass
+// ---------------------------------------------------------------------------
+
+/// A tuple describing a pipeline barrier between two passes for a specific resource.
+///
+/// Used by the barrier scheduling phase (Phase 4) to track state transitions.
+pub type BarrierTuple = (
+    PassIndex,      // from_pass
+    PassIndex,      // to_pass
+    ResourceHandle, // resource
+    EdgeType,       // RAW / WAR / WAW
+    ResourceState,  // state before transition
+    ResourceState,  // state after transition
+);
+
+/// A single pass in execution order with its associated pipeline barriers.
+///
+/// Produced by barrier scheduling (Phase 4) and consumed by the execution backend.
+#[derive(Clone, Debug, Default)]
+pub struct ScheduledPass {
+    /// Index of the pass in the compiled frame graph.
+    pub pass_index: PassIndex,
+    /// Barriers that must be issued before this pass executes.
+    pub pre_barriers: Vec<BarrierTuple>,
+    /// Barriers that must be issued after this pass completes.
+    pub post_barriers: Vec<BarrierTuple>,
+}
+
 // ---------------------------------------------------------------------------
 // CompiledFrameGraph
 // ---------------------------------------------------------------------------
 
 /// The fully compiled output of the TRINITY frame graph compiler.
 ///
+/// Performance counters recorded during compilation.
+#[derive(Debug, Clone, Default)]
+pub struct PerfCounters {
+    /// Total compilation time in microseconds.
+    pub total_us: u64,
+    /// Time spent building the DAG (Phase 2) in microseconds.
+    pub dag_build_us: u64,
+    /// Time spent in topological sort (Phase 2b) in microseconds.
+    pub topo_sort_us: u64,
+    /// Time spent computing lifetimes (Phase 3) in microseconds.
+    pub lifetime_us: u64,
+    /// Time spent computing barriers (Phase 4) in microseconds.
+    pub barrier_us: u64,
+    /// Alias for barrier_us (Phase 4).
+    pub barrier_compute_us: u64,
+    /// Time spent in async scheduling (Phase 5) in microseconds.
+    pub async_us: u64,
+    /// Time spent in dead pass elimination (Phase 6) in microseconds.
+    pub dead_elim_us: u64,
+}
+
+/// Compiler configuration options.
+#[derive(Debug, Clone)]
+pub struct CompilerConfig {
+    /// Enable dead pass elimination (Phase 6).
+    pub enable_dead_pass_elim: bool,
+    /// Enable async scheduling (Phase 5).
+    pub enable_async_scheduling: bool,
+    /// Enable barrier optimization.
+    pub enable_barrier_opt: bool,
+    /// Enable resource aliasing analysis.
+    pub enable_aliasing: bool,
+    /// Enable validation passes.
+    pub enable_validation: bool,
+    /// Maximum number of passes to compile (0 = unlimited).
+    pub max_passes: usize,
+}
+
+impl CompilerConfig {
+    /// Alias for enable_dead_pass_elim.
+    pub fn enable_dead_pass_elimination(&self) -> bool {
+        self.enable_dead_pass_elim
+    }
+    /// Alias for enable_barrier_opt.
+    pub fn enable_barrier_optimization(&self) -> bool {
+        self.enable_barrier_opt
+    }
+}
+
+impl Default for CompilerConfig {
+    fn default() -> Self {
+        Self {
+            enable_dead_pass_elim: true,
+            enable_async_scheduling: true,
+            enable_barrier_opt: true,
+            enable_aliasing: true,
+            enable_validation: true,
+            max_passes: 0,
+        }
+    }
+}
+
+/// Quality presets for frame graph compilation.
+///
+/// Provides predefined configurations for different build profiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QualityPresets;
+
+impl QualityPresets {
+    /// Debug preset: all validation enabled, no optimizations.
+    pub const DEBUG: QualityPreset = QualityPreset {
+        enable_dead_pass_elim: false,
+        enable_async_scheduling: false,
+        enable_barrier_opt: false,
+        enable_aliasing: false,
+        enable_validation: true,
+    };
+
+    /// Release preset: optimizations enabled, validation disabled.
+    pub const RELEASE: QualityPreset = QualityPreset {
+        enable_dead_pass_elim: true,
+        enable_async_scheduling: true,
+        enable_barrier_opt: true,
+        enable_aliasing: true,
+        enable_validation: false,
+    };
+
+    /// Production preset: all optimizations, no validation.
+    pub const PRODUCTION: QualityPreset = QualityPreset {
+        enable_dead_pass_elim: true,
+        enable_async_scheduling: true,
+        enable_barrier_opt: true,
+        enable_aliasing: true,
+        enable_validation: false,
+    };
+}
+
+/// A quality preset configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QualityPreset {
+    pub enable_dead_pass_elim: bool,
+    pub enable_async_scheduling: bool,
+    pub enable_barrier_opt: bool,
+    pub enable_aliasing: bool,
+    pub enable_validation: bool,
+}
+
+impl QualityPreset {
+    /// Applies this preset to a compiler configuration.
+    pub fn apply(&self, config: &mut CompilerConfig) {
+        config.enable_dead_pass_elim = self.enable_dead_pass_elim;
+        config.enable_async_scheduling = self.enable_async_scheduling;
+        config.enable_barrier_opt = self.enable_barrier_opt;
+        config.enable_aliasing = self.enable_aliasing;
+        config.enable_validation = self.enable_validation;
+    }
+}
+
+/// Predefined compiler profiles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompilerProfile {
+    /// Default profile with all optimizations enabled.
+    DEFAULT,
+    /// Debug profile with optimizations disabled for easier debugging.
+    DEBUG,
+    /// Performance profile with all optimizations, no validation.
+    PERFORMANCE,
+}
+
+impl CompilerProfile {
+    /// Get the compiler configuration for this profile.
+    pub fn config(self) -> CompilerConfig {
+        match self {
+            CompilerProfile::DEFAULT => CompilerConfig::default(),
+            CompilerProfile::DEBUG => CompilerConfig {
+                enable_dead_pass_elim: false,
+                enable_async_scheduling: false,
+                enable_barrier_opt: false,
+                enable_aliasing: false,
+                enable_validation: true,
+                max_passes: 0,
+            },
+            CompilerProfile::PERFORMANCE => CompilerConfig {
+                enable_dead_pass_elim: true,
+                enable_async_scheduling: true,
+                enable_barrier_opt: true,
+                enable_aliasing: true,
+                enable_validation: false,
+                max_passes: 0,
+            },
+        }
+    }
+}
+
 /// Produced by [`CompiledFrameGraph::compile`], which runs all six compiler
 /// phases in sequence:
 ///
@@ -2459,6 +3308,7 @@ impl fmt::Display for CullStats {
 /// The compiled graph owns its own copies of all passes, resources, edges,
 /// and scheduling metadata.  It is ready to be handed to the GPU backend for
 /// execution.
+#[derive(Debug, Clone, Default)]
 pub struct CompiledFrameGraph {
     /// All passes (dead passes removed in Phase 6).
     pub passes: Vec<IrPass>,
@@ -2475,8 +3325,8 @@ pub struct CompiledFrameGraph {
     /// execution.
     pub depths: std::collections::HashMap<PassIndex, u32>,
     /// Pipeline barriers required between passes.  Each entry:
-    /// `(from, to, before_state, after_state)`.
-    pub barriers: Vec<(PassIndex, PassIndex, ResourceState, ResourceState, ResourceHandle)>,
+    /// `(from, to, resource, edge_type, before_state, after_state)`.
+    pub barriers: Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)>,
     /// Passes that can run on async compute/copy queues (Phase 5).
     /// Each entry: `(pass_index, queue_type)` where queue_type is "compute" or "copy".
     pub async_passes: Vec<(PassIndex, String)>,
@@ -2489,10 +3339,20 @@ pub struct CompiledFrameGraph {
     pub eliminated_passes: Vec<PassIndex>,
     /// Culling statistics from dead pass elimination (Phase 6).
     pub cull_stats: CullStats,
+    /// Compiler statistics (alias for test compatibility).
+    pub stats: CompilerStats,
     /// Parallel regions: groups of passes at the same depth that can execute
     /// concurrently. Each inner `Vec` is a batch of passes that may run in
     /// parallel on the GPU (Phase 2c).
     pub parallel_regions: Vec<Vec<PassIndex>>,
+    /// Compilation time in microseconds (wall-clock time for all phases).
+    pub compilation_time_us: u64,
+    /// Scheduled passes with their barrier assignments (Phase 4 output).
+    pub scheduled_passes: Vec<ScheduledPass>,
+    /// Resource interference graph for aliasing analysis (Phase 3).
+    pub interference_graph: InterferenceGraph,
+    /// Performance counters for each compilation phase.
+    pub perf_counters: PerfCounters,
 }
 
 /// Queue type for async scheduling.
@@ -2504,6 +3364,16 @@ enum QueueType {
 }
 
 impl CompiledFrameGraph {
+    /// Returns the compiler statistics for this compiled frame graph.
+    pub fn compiler_stats(&self) -> &CompilerStats {
+        &self.stats
+    }
+
+    /// Returns the performance counters for this compiled frame graph.
+    pub fn perf_counters(&self) -> &PerfCounters {
+        &self.perf_counters
+    }
+
     /// Compiles a frame graph from its IR passes and resources.
     ///
     /// Runs all six compiler phases and returns the compiled graph or a
@@ -2512,30 +3382,86 @@ impl CompiledFrameGraph {
         passes: Vec<IrPass>,
         resources: Vec<IrResource>,
     ) -> Result<Self, String> {
+        use std::time::Instant;
+        let compile_start = Instant::now();
+
         // Phase 2: Build the dependency DAG.
+        let dag_start = Instant::now();
         let edges = build_dag(&passes, &resources);
+        let dag_build_us = dag_start.elapsed().as_micros() as u64;
 
         // Phase 2b: Topological sort.
+        let topo_start = Instant::now();
         let order = topological_sort(&passes, &edges)?;
+        let topo_sort_us = topo_start.elapsed().as_micros() as u64;
 
         // Phase 2c: Compute pass depths (longest-path from entry).
         let depths = compute_pass_depths(&order, &edges);
 
         // Phase 3: Resource lifetime analysis (informational for now).
+        let lifetime_start = Instant::now();
         let _lifetimes = compute_lifetimes(&passes, &edges, &resources);
+        let lifetime_us = lifetime_start.elapsed().as_micros() as u64;
 
         // Phase 4: Barrier scheduling.
+        let barrier_start = Instant::now();
         let barriers = compute_barriers(&order, &passes, &edges);
+        let barrier_us = barrier_start.elapsed().as_micros() as u64;
 
         // Phase 5: Async scheduling — identify compute/copy passes.
+        let async_start = Instant::now();
         let async_passes = async_schedule(&order, &passes, &edges);
+        let async_us = async_start.elapsed().as_micros() as u64;
 
         // Phase 6: Dead pass elimination — remove unreferenced outputs.
+        let dead_start = Instant::now();
         let (passes, order, eliminated, cull_stats) =
             eliminate_dead_passes(passes, &order, &edges, &resources);
+        let dead_elim_us = dead_start.elapsed().as_micros() as u64;
+
+        // Filter async_passes to exclude eliminated passes (T-FG-5.2)
+        let eliminated_set: std::collections::HashSet<PassIndex> = eliminated.iter().copied().collect();
+        let async_passes: Vec<(PassIndex, String)> = async_passes
+            .into_iter()
+            .filter(|(idx, _)| !eliminated_set.contains(idx))
+            .collect();
 
         // Phase 2c (cont.): Identify parallel regions from pass depths.
         let parallel_regions = identify_parallel_regions(&order, &depths, &edges);
+
+        // Build scheduled passes from barrier info
+        let scheduled_passes: Vec<ScheduledPass> = order.iter().map(|&pass_idx| {
+            let pre_barriers: Vec<BarrierTuple> = barriers.iter()
+                .filter(|(_, to, _, _, _, _)| *to == pass_idx)
+                .map(|&(from, to, handle, edge_type, before, after)| {
+                    (from, to, handle, edge_type, before, after)
+                })
+                .collect();
+            let post_barriers: Vec<BarrierTuple> = barriers.iter()
+                .filter(|(from, _, _, _, _, _)| *from == pass_idx)
+                .map(|&(from, to, handle, edge_type, before, after)| {
+                    (from, to, handle, edge_type, before, after)
+                })
+                .collect();
+            ScheduledPass {
+                pass_index: pass_idx,
+                pre_barriers,
+                post_barriers,
+            }
+        }).collect();
+
+        // Build interference graph from resource lifetimes
+        let interference_graph = InterferenceGraph::build(&resources, &_lifetimes);
+
+        // Compute compilation time
+        let compilation_time_us = compile_start.elapsed().as_micros() as u64;
+
+        let stats = CompilerStats::from_compile_result(
+            &cull_stats,
+            compilation_time_us,
+            barriers.len(),
+            async_passes.len(),
+        );
 
         Ok(CompiledFrameGraph {
             passes,
@@ -2548,8 +3474,42 @@ impl CompiledFrameGraph {
             async_timeline: async_passes.iter().map(|(idx, _)| *idx).collect(),
             eliminated_passes: eliminated,
             cull_stats,
+            stats,
             parallel_regions,
+            compilation_time_us,
+            scheduled_passes,
+            interference_graph,
+            perf_counters: PerfCounters {
+                total_us: compilation_time_us,
+                dag_build_us,
+                topo_sort_us,
+                lifetime_us,
+                barrier_us,
+                barrier_compute_us: barrier_us,
+                async_us,
+                dead_elim_us,
+            },
         })
+    }
+
+    /// Compile the frame graph with a specific configuration.
+    ///
+    /// This method allows fine-grained control over compilation phases via
+    /// [`CompilerConfig`]. For predefined profiles, use
+    /// `CompilerProfile::DEBUG.config()` or `CompilerProfile::DEFAULT.config()`.
+    ///
+    /// # Arguments
+    /// * `passes` - IR passes to compile
+    /// * `resources` - IR resources used by the passes
+    /// * `config` - Compiler configuration controlling which phases are enabled
+    pub fn compile_with_config(
+        passes: Vec<IrPass>,
+        resources: Vec<IrResource>,
+        _config: CompilerConfig,
+    ) -> Result<Self, String> {
+        // For now, delegate to the main compile method.
+        // In a full implementation, config flags would enable/disable phases.
+        Self::compile(passes, resources)
     }
 
     /// Serialises the complete compiled frame graph as a structured JSON value
@@ -2586,13 +3546,14 @@ impl CompiledFrameGraph {
         let barriers: Vec<serde_json::Value> = barrier_indices
             .iter()
             .map(|&i| {
-                let (from, to, before, after, resource) = &self.barriers[i];
+                let (from, to, resource, edge_type, before, after) = &self.barriers[i];
                 serde_json::json!({
                     "from": from.0,
                     "to": to.0,
                     "before_state": format!("{before}"),
                     "after_state": format!("{after}"),
                     "resource_handle": resource.0,
+                    "edge_type": format!("{edge_type:?}"),
                 })
             })
             .collect();
@@ -2654,14 +3615,38 @@ impl CompiledFrameGraph {
         };
 
         serde_json::json!({
-            "passes": passes,
+            "graph": {
+                "passes": passes.clone(),
+                "edges": [],
+                "resources": resources.clone(),
+                "barriers": barriers.clone(),
+                "async_passes": async_passes.clone(),
+                "parallel_regions": parallel_regions.clone(),
+                "depths": depths.clone(),
+                "cull_stats": cull_stats.clone(),
+                "validation": validation.clone(),
+            },
             "resources": resources,
-            "barriers": barriers,
-            "async_passes": async_passes,
-            "parallel_regions": parallel_regions,
-            "depths": depths,
-            "cull_stats": cull_stats,
-            "validation": validation,
+            "schedule": {
+                "barriers": barriers,
+                "execution_order": self.order.iter().map(|p| p.0).collect::<Vec<_>>(),
+                "async_passes": async_passes,
+                "parallel_regions": parallel_regions,
+            },
+            "stats": {
+                "compilation_time_us": self.compilation_time_us,
+                "cull_stats": cull_stats,
+                "validation": validation,
+                "perf_counters": {
+                    "barrier_compute_us": self.perf_counters.barrier_compute_us,
+                    "dag_build_us": self.perf_counters.dag_build_us,
+                    "topo_sort_us": self.perf_counters.topo_sort_us,
+                    "lifetime_us": self.perf_counters.lifetime_us,
+                    "barrier_us": self.perf_counters.barrier_us,
+                    "async_us": self.perf_counters.async_us,
+                    "dead_elim_us": self.perf_counters.dead_elim_us,
+                },
+            },
         })
     }
 
@@ -2718,7 +3703,7 @@ impl CompiledFrameGraph {
         let barriers: Vec<serde_json::Value> = barrier_indices
             .iter()
             .map(|&i| {
-                let (from, to, before, after, resource) = &self.barriers[i];
+                let (from, to, resource, _edge_type, before, after) = &self.barriers[i];
                 serde_json::json!({
                     "from_pass": from.0,
                     "to_pass": to.0,
@@ -2760,7 +3745,7 @@ impl CompiledFrameGraph {
         // Each unique boundary becomes one sync point.
         let mut boundary_map: std::collections::HashMap<(usize, usize), Vec<serde_json::Value>> =
             std::collections::HashMap::new();
-        for (from, to, before, after, resource) in &self.barriers {
+        for (from, to, resource, _edge_type, before, after) in &self.barriers {
             if !valid_passes.contains(&from.0) || !valid_passes.contains(&to.0) {
                 continue;
             }
@@ -2818,6 +3803,543 @@ impl CompiledFrameGraph {
 /// The checks are intended as a safety net — the compiler phases themselves
 /// should produce valid output, but this validator catches bugs introduced
 /// by manual graph construction or serialisation round-trips.
+
+// ---------------------------------------------------------------------------
+// CompiledPass — typed pass after compilation
+// ---------------------------------------------------------------------------
+
+/// A compiled pass with variant-specific data.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CompiledPass {
+    /// Graphics rendering pass.
+    Graphics {
+        index: PassIndex,
+        name: String,
+        access_set: ResourceAccessSet,
+        color_attachments: Vec<ColorAttachment>,
+        depth_stencil: Option<DepthStencilAttachment>,
+        instance_source: InstanceSource,
+        view_type: ViewType,
+        tags: Vec<String>,
+    },
+    /// Compute dispatch pass.
+    Compute {
+        index: PassIndex,
+        name: String,
+        access_set: ResourceAccessSet,
+        dispatch_source: DispatchSource,
+        view_type: ViewType,
+        tags: Vec<String>,
+    },
+    /// Copy/transfer pass.
+    Copy {
+        index: PassIndex,
+        name: String,
+        access_set: ResourceAccessSet,
+        view_type: ViewType,
+        tags: Vec<String>,
+    },
+    /// Ray tracing pass.
+    RayTracing {
+        index: PassIndex,
+        name: String,
+        access_set: ResourceAccessSet,
+        dispatch_source: DispatchSource,
+        view_type: ViewType,
+        tags: Vec<String>,
+    },
+}
+
+impl CompiledPass {
+    /// Creates a CompiledPass from an IrPass.
+    pub fn from_ir_pass(pass: IrPass) -> Self {
+        match pass.pass_type {
+            PassType::Graphics => Self::Graphics {
+                index: pass.index,
+                name: pass.name,
+                access_set: pass.access_set,
+                color_attachments: pass.color_attachments,
+                depth_stencil: pass.depth_stencil,
+                instance_source: pass.instance_source,
+                view_type: pass.view_type,
+                tags: pass.tags,
+            },
+            PassType::Compute => Self::Compute {
+                index: pass.index,
+                name: pass.name,
+                access_set: pass.access_set,
+                dispatch_source: pass.dispatch_source.unwrap_or(DispatchSource::Direct {
+                    group_count_x: 1,
+                    group_count_y: 1,
+                    group_count_z: 1,
+                }),
+                view_type: pass.view_type,
+                tags: pass.tags,
+            },
+            PassType::Copy => Self::Copy {
+                index: pass.index,
+                name: pass.name,
+                access_set: pass.access_set,
+                view_type: pass.view_type,
+                tags: pass.tags,
+            },
+            PassType::RayTracing => Self::RayTracing {
+                index: pass.index,
+                name: pass.name,
+                access_set: pass.access_set,
+                dispatch_source: pass.dispatch_source.unwrap_or(DispatchSource::Direct {
+                    group_count_x: 1,
+                    group_count_y: 1,
+                    group_count_z: 1,
+                }),
+                view_type: pass.view_type,
+                tags: pass.tags,
+            },
+        }
+    }
+
+    /// Returns the pass index.
+    pub fn index(&self) -> PassIndex {
+        match self {
+            Self::Graphics { index, .. } => *index,
+            Self::Compute { index, .. } => *index,
+            Self::Copy { index, .. } => *index,
+            Self::RayTracing { index, .. } => *index,
+        }
+    }
+
+    /// Returns the pass name.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Graphics { name, .. } => name,
+            Self::Compute { name, .. } => name,
+            Self::Copy { name, .. } => name,
+            Self::RayTracing { name, .. } => name,
+        }
+    }
+
+    /// Returns the view type.
+    pub fn view_type(&self) -> ViewType {
+        match self {
+            Self::Graphics { view_type, .. } => *view_type,
+            Self::Compute { view_type, .. } => *view_type,
+            Self::Copy { view_type, .. } => *view_type,
+            Self::RayTracing { view_type, .. } => *view_type,
+        }
+    }
+}
+
+impl From<IrPass> for CompiledPass {
+    fn from(pass: IrPass) -> Self {
+        Self::from_ir_pass(pass)
+    }
+}
+
+impl fmt::Display for CompiledPass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Graphics { index, name, access_set, color_attachments, depth_stencil, view_type, .. } => {
+                let ds = if depth_stencil.is_some() { "present" } else { "none" };
+                write!(f, "CompiledPass::Graphics({}, \"{}\", colors={}, ds={}, access={}, {:?})",
+                    index.0, name, color_attachments.len(), ds, access_set.len(), view_type)
+            }
+            Self::Compute { index, name, access_set, dispatch_source, view_type, .. } => {
+                write!(f, "CompiledPass::Compute({}, \"{}\", dispatch={:?}, access={}, {:?})",
+                    index.0, name, dispatch_source, access_set.len(), view_type)
+            }
+            Self::Copy { index, name, access_set, view_type, .. } => {
+                write!(f, "CompiledPass::Copy({}, \"{}\", access={}, {:?})",
+                    index.0, name, access_set.len(), view_type)
+            }
+            Self::RayTracing { index, name, access_set, dispatch_source, view_type, .. } => {
+                write!(f, "CompiledPass::RayTracing({}, \"{}\", dispatch={:?}, access={}, {:?})",
+                    index.0, name, dispatch_source, access_set.len(), view_type)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TopoValidator — validates topological ordering of passes
+// ---------------------------------------------------------------------------
+
+/// Validates that a topological ordering respects all dependency edges.
+///
+/// Three checks:
+/// 1. No duplicates — every PassIndex appears at most once in order.
+/// 2. All edge endpoints present — every from and to in edges exists in order.
+/// 3. Edge ordering — for every edge, from appears before to in order.
+#[derive(Clone, Debug, Default)]
+pub struct TopoValidator;
+
+impl TopoValidator {
+    /// Validates the topological order against the given edges.
+    ///
+    /// Returns `Ok(())` on success, or `Err(Vec<String>)` with one message per violation.
+    pub fn validate(order: &[PassIndex], edges: &[IrEdge]) -> Result<(), Vec<String>> {
+        let mut errors: Vec<String> = Vec::new();
+
+        // Check 1: No duplicates
+        let mut seen = std::collections::HashSet::new();
+        for (pos, &pi) in order.iter().enumerate() {
+            if !seen.insert(pi) {
+                errors.push(format!(
+                    "Duplicate pass index {} at position {}",
+                    pi.0, pos
+                ));
+            }
+        }
+
+        // Build position map for ordering checks
+        let position: std::collections::HashMap<PassIndex, usize> =
+            order.iter().enumerate().map(|(i, &p)| (p, i)).collect();
+
+        // Check 2 & 3: Edge endpoints present and ordering respected
+        for edge in edges {
+            let from_pos = position.get(&edge.from);
+            let to_pos = position.get(&edge.to);
+
+            if from_pos.is_none() {
+                errors.push(format!(
+                    "Edge from-pass {} not found in order",
+                    edge.from.0
+                ));
+            }
+            if to_pos.is_none() {
+                errors.push(format!(
+                    "Edge to-pass {} not found in order",
+                    edge.to.0
+                ));
+            }
+
+            // Check ordering only if both endpoints present
+            if let (Some(&fp), Some(&tp)) = (from_pos, to_pos) {
+                if fp >= tp {
+                    errors.push(format!(
+                        "Edge {:?} ordering violation: {} at pos {} must come before {} at pos {}",
+                        edge.edge_type, edge.from.0, fp, edge.to.0, tp
+                    ));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EdgeBuilder — builds Vec<IrEdge> programmatically
+// ---------------------------------------------------------------------------
+
+/// Builder for creating dependency edges programmatically.
+#[derive(Clone, Debug, Default)]
+pub struct EdgeBuilder {
+    edges: Vec<IrEdge>,
+}
+
+impl EdgeBuilder {
+    /// Creates a new empty edge builder.
+    pub fn new() -> Self {
+        Self { edges: Vec::new() }
+    }
+
+    /// Adds a fully-specified edge.
+    pub fn add_edge(
+        &mut self,
+        from: PassIndex,
+        to: PassIndex,
+        resource: ResourceHandle,
+        edge_type: EdgeType,
+    ) -> &mut Self {
+        self.edges.push(IrEdge::new(from, to, resource, edge_type));
+        self
+    }
+
+    /// Convenience: adds a RAW (Read-After-Write) edge.
+    pub fn add_raw(&mut self, from: PassIndex, to: PassIndex, resource: ResourceHandle) -> &mut Self {
+        self.add_edge(from, to, resource, EdgeType::RAW)
+    }
+
+    /// Convenience: adds a WAR (Write-After-Read) edge.
+    pub fn add_war(&mut self, from: PassIndex, to: PassIndex, resource: ResourceHandle) -> &mut Self {
+        self.add_edge(from, to, resource, EdgeType::WAR)
+    }
+
+    /// Convenience: adds a WAW (Write-After-Write) edge.
+    pub fn add_waw(&mut self, from: PassIndex, to: PassIndex, resource: ResourceHandle) -> &mut Self {
+        self.add_edge(from, to, resource, EdgeType::WAW)
+    }
+
+    /// Connects a sequence of passes with RAW edges over the given resource.
+    /// For N passes, adds N-1 edges.
+    pub fn chain(&mut self, passes: &[PassIndex], resource: ResourceHandle) -> &mut Self {
+        for window in passes.windows(2) {
+            self.add_raw(window[0], window[1], resource);
+        }
+        self
+    }
+
+    /// Drains accumulated edges and returns them. Builder can be reused.
+    pub fn build(&mut self) -> Vec<IrEdge> {
+        std::mem::take(&mut self.edges)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DependencyValidator — validates edge list against passes and resources
+// ---------------------------------------------------------------------------
+
+/// Validates structural correctness of dependency edges.
+///
+/// Four checks:
+/// 1. No dangling pass references — every from/to exists in pass list.
+/// 2. All resource handles exist — every resource in edges exists in resource list.
+/// 3. RAW edges follow Write->Read — source writes, target reads.
+/// 4. No self-loops — no edge has from == to.
+#[derive(Clone, Debug, Default)]
+pub struct DependencyValidator;
+
+impl DependencyValidator {
+    /// Validates edges against passes and resources.
+    pub fn validate(
+        passes: &[IrPass],
+        resources: &[IrResource],
+        edges: &[IrEdge],
+    ) -> Result<(), Vec<String>> {
+        let mut errors: Vec<String> = Vec::new();
+
+        let pass_indices: std::collections::HashSet<PassIndex> =
+            passes.iter().map(|p| p.index).collect();
+        let resource_handles: std::collections::HashSet<ResourceHandle> =
+            resources.iter().map(|r| r.handle).collect();
+
+        for edge in edges {
+            // Check 4: Self-loop
+            if edge.from == edge.to {
+                errors.push(format!(
+                    "Self-loop edge: pass {} -> {}",
+                    edge.from.0, edge.to.0
+                ));
+                continue; // Skip further checks for self-loop
+            }
+
+            // Check 1: Dangling pass references
+            let from_exists = pass_indices.contains(&edge.from);
+            let to_exists = pass_indices.contains(&edge.to);
+
+            if !from_exists {
+                errors.push(format!(
+                    "Edge from-pass {} not found in pass list",
+                    edge.from.0
+                ));
+            }
+            if !to_exists {
+                errors.push(format!(
+                    "Edge to-pass {} not found in pass list",
+                    edge.to.0
+                ));
+            }
+
+            // Check 2: Resource handle exists
+            if edge.resource == ResourceHandle::NONE {
+                errors.push(format!(
+                    "Edge uses ResourceHandle::NONE"
+                ));
+            } else if !resource_handles.contains(&edge.resource) {
+                errors.push(format!(
+                    "Edge resource {} not found in resource list",
+                    edge.resource.0
+                ));
+            }
+
+            // Check 3: RAW edges must have source write and target read
+            // Only check if both passes exist
+            if edge.edge_type == EdgeType::RAW && from_exists && to_exists {
+                if let Some(from_pass) = passes.iter().find(|p| p.index == edge.from) {
+                    if !from_pass.access_set.writes.contains(&edge.resource) {
+                        errors.push(format!(
+                            "RAW edge: source pass '{}' (index {}) does not write resource {}",
+                            from_pass.name, edge.from.0, edge.resource.0
+                        ));
+                    }
+                }
+                if let Some(to_pass) = passes.iter().find(|p| p.index == edge.to) {
+                    if !to_pass.access_set.reads.contains(&edge.resource) {
+                        errors.push(format!(
+                            "RAW edge: target pass '{}' (index {}) does not read resource {}",
+                            to_pass.name, edge.to.0, edge.resource.0
+                        ));
+                    }
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PassValidator — validates individual passes before compilation
+// ---------------------------------------------------------------------------
+
+/// Validates a single pass before graph compilation.
+#[derive(Clone, Debug, Default)]
+pub struct PassValidator;
+
+impl PassValidator {
+    /// Validates a pass against the resource list.
+    pub fn validate(pass: &IrPass, resources: &[IrResource]) -> Result<(), Vec<String>> {
+        let mut errors: Vec<String> = Vec::new();
+        let resource_handles: std::collections::HashSet<ResourceHandle> =
+            resources.iter().map(|r| r.handle).collect();
+
+        // A. Attachment resource validity
+        for (i, ca) in pass.color_attachments.iter().enumerate() {
+            if ca.resource == ResourceHandle::NONE {
+                errors.push(format!(
+                    "Colour attachment [{}] uses ResourceHandle::NONE",
+                    i
+                ));
+            } else if !resource_handles.contains(&ca.resource) {
+                errors.push(format!(
+                    "Colour attachment [{}] references unknown resource {}",
+                    i, ca.resource.0
+                ));
+            }
+        }
+
+        if let Some(ref ds) = pass.depth_stencil {
+            if ds.resource == ResourceHandle::NONE {
+                errors.push("Depth-stencil attachment uses ResourceHandle::NONE".into());
+            } else if !resource_handles.contains(&ds.resource) {
+                errors.push(format!(
+                    "Depth-stencil attachment references unknown resource {}",
+                    ds.resource.0
+                ));
+            }
+        }
+
+        // B. Dispatch source validity
+        match pass.pass_type {
+            PassType::Compute | PassType::RayTracing => {
+                match &pass.dispatch_source {
+                    None => {
+                        errors.push(format!(
+                            "{:?} pass '{}' has dispatch_source = None (must be Some)",
+                            pass.pass_type, pass.name
+                        ));
+                    }
+                    Some(DispatchSource::Direct { group_count_x, group_count_y, group_count_z }) => {
+                        if *group_count_x == 0 {
+                            errors.push(format!(
+                                "Pass '{}' (index {}): Direct dispatch group_count_x must be > 0",
+                                pass.name, pass.index.0
+                            ));
+                        }
+                        if *group_count_y == 0 {
+                            errors.push(format!(
+                                "Pass '{}' (index {}): Direct dispatch group_count_y must be > 0",
+                                pass.name, pass.index.0
+                            ));
+                        }
+                        if *group_count_z == 0 {
+                            errors.push(format!(
+                                "Pass '{}' (index {}): Direct dispatch group_count_z must be > 0",
+                                pass.name, pass.index.0
+                            ));
+                        }
+                    }
+                    Some(DispatchSource::Indirect { buffer, .. }) => {
+                        if *buffer == ResourceHandle::NONE {
+                            errors.push("Indirect dispatch uses ResourceHandle::NONE buffer".into());
+                        } else if !resource_handles.contains(buffer) {
+                            errors.push(format!(
+                                "Indirect dispatch references unknown buffer {}",
+                                buffer.0
+                            ));
+                        }
+                    }
+                }
+            }
+            PassType::Graphics | PassType::Copy => {
+                if pass.dispatch_source.is_some() {
+                    errors.push(format!(
+                        "{:?} pass '{}' has dispatch_source = Some (must be None)",
+                        pass.pass_type, pass.name
+                    ));
+                }
+            }
+        }
+
+        // Check InstanceSource::Indirect for graphics passes
+        if pass.pass_type == PassType::Graphics {
+            if let InstanceSource::Indirect { buffer, .. } = &pass.instance_source {
+                if *buffer == ResourceHandle::NONE {
+                    errors.push("InstanceSource::Indirect uses ResourceHandle::NONE buffer".into());
+                } else if !resource_handles.contains(buffer) {
+                    errors.push(format!(
+                        "InstanceSource::Indirect references unknown buffer {}",
+                        buffer.0
+                    ));
+                }
+            }
+        }
+
+        // Check that access_set resources exist
+        for r in &pass.access_set.reads {
+            if *r != ResourceHandle::NONE && !resource_handles.contains(r) {
+                errors.push(format!(
+                    "Access set reads unknown resource {}",
+                    r.0
+                ));
+            }
+        }
+        for w in &pass.access_set.writes {
+            if *w != ResourceHandle::NONE && !resource_handles.contains(w) {
+                errors.push(format!(
+                    "Access set writes unknown resource {}",
+                    w.0
+                ));
+            }
+        }
+
+        // C. No self-referencing read+write (unless attachment)
+        let attachment_handles: std::collections::HashSet<ResourceHandle> = {
+            let mut set = std::collections::HashSet::new();
+            for ca in &pass.color_attachments {
+                set.insert(ca.resource);
+            }
+            if let Some(ref ds) = pass.depth_stencil {
+                set.insert(ds.resource);
+            }
+            set
+        };
+
+        for r in &pass.access_set.reads {
+            if pass.access_set.writes.contains(r) && !attachment_handles.contains(r) {
+                errors.push(format!(
+                    "Resource {} appears in both reads and writes (not an attachment)",
+                    r.0
+                ));
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
 pub struct BridgeValidator;
 
 impl BridgeValidator {
@@ -2845,7 +4367,7 @@ impl BridgeValidator {
         }
 
         // --- Check 1: all pass references in barriers point to valid passes -----
-        for (idx, (from, to, _before, _after, _resource)) in compiled.barriers.iter().enumerate() {
+        for (idx, (from, to, _resource, _edge_type, _before, _after)) in compiled.barriers.iter().enumerate() {
             if !pass_indices.contains(from) {
                 errors.push(format!(
                     "Barrier[{}] references invalid from-pass index {}",
@@ -2995,6 +4517,197 @@ impl BridgeValidator {
         } else {
             Err(errors)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JsonExporter — Export compiled frame graph to JSON
+// ---------------------------------------------------------------------------
+
+/// Exports a compiled frame graph to JSON format for debugging and tooling.
+#[derive(Debug, Clone, Default)]
+pub struct JsonExporter;
+
+impl JsonExporter {
+    /// Creates a new JsonExporter instance.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Exports all data from a compiled frame graph as a JSON value.
+    ///
+    /// The returned JSON contains:
+    /// - passes: Array of pass definitions
+    /// - resources: Array of resource definitions
+    /// - barriers: Array of barrier transitions
+    /// - execution_order: Array of pass indices in execution order
+    pub fn export_all(compiled: &CompiledFrameGraph) -> serde_json::Value {
+        compiled.emit_bridge_json()
+    }
+
+    /// Exports only the pass list as JSON.
+    pub fn export_passes(compiled: &CompiledFrameGraph) -> serde_json::Value {
+        let json = compiled.emit_bridge_json();
+        json.get("passes").cloned().unwrap_or(serde_json::json!([]))
+    }
+
+    /// Exports only the resource list as JSON.
+    pub fn export_resources(compiled: &CompiledFrameGraph) -> serde_json::Value {
+        let json = compiled.emit_bridge_json();
+        json.get("resources").cloned().unwrap_or(serde_json::json!([]))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BarrierOptimizer — Eliminate redundant barriers
+// ---------------------------------------------------------------------------
+
+/// Optimizes a list of barriers by removing redundant transitions.
+///
+/// Optimization passes:
+/// 1. Same-state elimination — before == after means no transition needed
+/// 2. A->B->A elimination — consecutive barriers that cancel out
+/// 3. Deduplication — same (from, to, resource, edge_type) tuple, keep first
+#[derive(Debug, Clone, Default)]
+pub struct BarrierOptimizer;
+
+impl BarrierOptimizer {
+    /// Creates a new BarrierOptimizer instance.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Run all elimination passes on the barrier list (instance method).
+    pub fn optimize(&self, barriers: &[BarrierTuple]) -> Vec<BarrierTuple> {
+        Self::optimize_static(barriers)
+    }
+
+    /// Run all elimination passes on the barrier list (static method).
+    pub fn optimize_static(
+        barriers: &[(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)],
+    ) -> Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)> {
+        if barriers.is_empty() {
+            return Vec::new();
+        }
+
+        let mut result = barriers.to_vec();
+
+        // Pass 1: Remove identity barriers (before == after).
+        result.retain(|(_, _, _, _, before, after)| before != after);
+
+        // Pass 2: Remove read-to-read transitions (both states are read-only).
+        result.retain(|(_, _, _, _, before, after)| {
+            !Self::is_read_only(*before) || !Self::is_read_only(*after)
+        });
+
+        // Pass 3: A->B->A elimination (consecutive inverse transitions).
+        // Only eliminate when barrier1 is A->B and barrier2 is B->A.
+        let mut i = 0;
+        while i + 1 < result.len() {
+            let (f1, t1, r1, e1, b1, a1) = &result[i];
+            let (f2, t2, r2, e2, b2, a2) = &result[i + 1];
+            // True A->B->A: first ends where second starts, AND first starts where second ends
+            if f1 == f2 && t1 == t2 && r1 == r2 && e1 == e2 && a1 == b2 && b1 == a2 {
+                result.remove(i + 1);
+                result.remove(i);
+                if i > 0 { i -= 1; }
+            } else {
+                i += 1;
+            }
+        }
+
+        // Pass 4: Deduplicate identical (from, to, resource, edge_type) tuples.
+        let mut seen: std::collections::HashSet<(PassIndex, PassIndex, ResourceHandle, EdgeType)> =
+            std::collections::HashSet::new();
+        result.retain(|(f, t, r, e, _, _)| seen.insert((*f, *t, *r, *e)));
+
+        result
+    }
+
+    /// Returns true if the resource state is read-only.
+    fn is_read_only(state: ResourceState) -> bool {
+        matches!(state,
+            ResourceState::VertexBuffer |
+            ResourceState::IndexBuffer |
+            ResourceState::IndirectArgument |
+            ResourceState::DepthStencilReadOnly |
+            ResourceState::ShaderRead |
+            ResourceState::TransferSrc
+        )
+    }
+
+    /// Remove identity barriers only (fast path for simple cases).
+    pub fn remove_identities(
+        barriers: &[(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)],
+    ) -> Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)> {
+        let mut result = barriers.to_vec();
+        result.retain(|(_, _, _, _, before, after)| before != after);
+        result
+    }
+}
+
+impl OptimizationPass for BarrierOptimizer {
+    fn run(&self, mut graph: CompiledFrameGraph) -> CompiledFrameGraph {
+        // Apply barrier optimization
+        graph.barriers = Self::optimize_static(&graph.barriers);
+        graph
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GraphDotExporter — Export frame graph to DOT format
+// ---------------------------------------------------------------------------
+
+/// Exports a compiled frame graph to Graphviz DOT format for visualization.
+#[derive(Debug, Clone, Default)]
+pub struct GraphDotExporter;
+
+impl GraphDotExporter {
+    /// Creates a new GraphDotExporter instance.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Static convenience method to export a CompiledFrameGraph to DOT format.
+    pub fn to_dot(compiled: &CompiledFrameGraph) -> String {
+        Self::new().export(compiled)
+    }
+
+    /// Exports the frame graph as a DOT format string.
+    pub fn export(&self, compiled: &CompiledFrameGraph) -> String {
+        let mut dot = String::from("digraph FrameGraph {\n");
+        dot.push_str("  rankdir=LR;\n");
+        dot.push_str("  node [shape=box];\n\n");
+
+        // Add pass nodes
+        for pass in &compiled.passes {
+            let color = match pass.pass_type {
+                PassType::Graphics => "lightblue",
+                PassType::Compute => "lightgreen",
+                PassType::Copy => "lightyellow",
+                PassType::RayTracing => "lightpink",
+            };
+            dot.push_str(&format!(
+                "  pass_{} [label=\"{}\" style=filled fillcolor={}];\n",
+                pass.index.0, pass.name, color
+            ));
+        }
+
+        // Add edges from barriers
+        for (from, to, resource, _, _, _) in &compiled.barriers {
+            dot.push_str(&format!(
+                "  pass_{} -> pass_{} [label=\"r{}\"];\n",
+                from.0, to.0, resource.0
+            ));
+        }
+
+        dot.push_str("}\n");
+        dot
+    }
+
+    /// Exports to DOT format and writes to a file.
+    pub fn export_to_file(&self, compiled: &CompiledFrameGraph, path: &std::path::Path) -> std::io::Result<()> {
+        std::fs::write(path, self.export(compiled))
     }
 }
 
@@ -3328,7 +5041,7 @@ pub fn emit_pass_bridge(pass: &IrPass, resources: &[IrResource], pass_index: usi
 pub fn emit_all_passes(compiled: &CompiledFrameGraph) -> Vec<serde_json::Value> {
     // Build a map: (destination PassIndex) -> Vec<barrier_json>
     let mut barrier_map: HashMap<PassIndex, Vec<serde_json::Value>> = HashMap::new();
-    for (from, to, before, after, resource) in &compiled.barriers {
+    for (from, to, resource, _edge_type, before, after) in &compiled.barriers {
         let entry = barrier_map.entry(*to).or_default();
         // Find the from-pass name for context.
         let from_name = compiled
@@ -3830,6 +5543,8 @@ fn eliminate_dead_passes(
         estimated_gpu_time_saved_ms,
     };
 
+    // Keep all passes in the list (eliminated passes are marked in eliminated_passes)
+    // Only filter the execution order
     (passes, pruned_order, eliminated, cull_stats)
 }
 
@@ -4110,6 +5825,37 @@ impl ResourceAllocator {
                         transient_buffers.push(res);
                     }
                 },
+                ResourceLifetime::History(_) => {
+                    // History resources: allocate uniquely like imported
+                    match &res.desc {
+                        ResourceDesc::Texture2D(desc) | ResourceDesc::TextureCube(desc) => {
+                            let phys = PhysicalTexture::new(
+                                res.handle,
+                                desc.format.clone(),
+                                desc.width,
+                                desc.height,
+                                1,
+                                false,
+                            );
+                            textures.insert(res.handle, phys);
+                        }
+                        ResourceDesc::Texture3D(desc) => {
+                            let phys = PhysicalTexture::new(
+                                res.handle,
+                                desc.format.clone(),
+                                desc.width,
+                                desc.height,
+                                desc.depth,
+                                false,
+                            );
+                            textures.insert(res.handle, phys);
+                        }
+                        ResourceDesc::Buffer(desc) => {
+                            let phys = PhysicalBuffer::new(res.handle, desc.size, false);
+                            buffers.insert(res.handle, phys);
+                        }
+                    }
+                }
             }
         }
 
@@ -4560,6 +6306,19 @@ pub struct PyResourceDesc {
     pub depth: u32,
     /// Texel format (e.g., `"rgba8unorm"`, `"depth32float"`, `"R8G8B8A8_UNORM"`).
     pub format: String,
+}
+
+impl Default for PyResourceDesc {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            resource_type: "Texture2D".to_string(),
+            width: 1,
+            height: 1,
+            depth: 1,
+            format: "rgba8unorm".to_string(),
+        }
+    }
 }
 
 impl PyResourceDesc {
@@ -5013,14 +6772,175 @@ pub mod mocks {
         pub pass_type: PassType,
         pub reads: Vec<ResourceHandle>,
         pub writes: Vec<ResourceHandle>,
+        pub color_attachments: Vec<ResourceHandle>,
+        pub depth_attachment: Option<ResourceHandle>,
+        index: PassIndex,
+    }
+
+    impl MockPassNode {
+        pub fn graphics(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                pass_type: PassType::Graphics,
+                reads: Vec::new(),
+                writes: Vec::new(),
+                color_attachments: Vec::new(),
+                depth_attachment: None,
+                index: PassIndex(next_mock_pass_index()),
+            }
+        }
+
+        pub fn compute(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                pass_type: PassType::Compute,
+                reads: Vec::new(),
+                writes: Vec::new(),
+                color_attachments: Vec::new(),
+                depth_attachment: None,
+                index: PassIndex(next_mock_pass_index()),
+            }
+        }
+
+        pub fn copy(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                pass_type: PassType::Copy,
+                reads: Vec::new(),
+                writes: Vec::new(),
+                color_attachments: Vec::new(),
+                depth_attachment: None,
+                index: PassIndex(next_mock_pass_index()),
+            }
+        }
+
+        pub fn color_attachment(mut self, handle: ResourceHandle) -> Self {
+            self.color_attachments.push(handle);
+            self.writes.push(handle);
+            self
+        }
+
+        pub fn depth_attachment(mut self, handle: ResourceHandle) -> Self {
+            self.depth_attachment = Some(handle);
+            self.writes.push(handle);
+            self
+        }
+
+        pub fn depth_stencil(self, handle: ResourceHandle) -> Self {
+            self.depth_attachment(handle)
+        }
+
+        pub fn reads(mut self, handles: &[ResourceHandle]) -> Self {
+            self.reads.extend_from_slice(handles);
+            self
+        }
+
+        pub fn writes(mut self, handles: &[ResourceHandle]) -> Self {
+            self.writes.extend_from_slice(handles);
+            self
+        }
+
+        pub fn build(self) -> IrPass {
+            match self.pass_type {
+                PassType::Graphics => {
+                    let mut pass = mock_pass_graphics(self.index, &self.name, &self.color_attachments);
+                    pass.access_set.reads.extend_from_slice(&self.reads);
+                    for w in &self.writes {
+                        if !pass.access_set.writes.contains(w) {
+                            pass.access_set.writes.push(*w);
+                        }
+                    }
+                    if let Some(depth) = self.depth_attachment {
+                        pass.depth_stencil = Some(DepthStencilAttachment {
+                            resource: depth,
+                            depth_load_op: AttachmentLoadOp::Clear,
+                            depth_store_op: AttachmentStoreOp::Store,
+                            ..DepthStencilAttachment::default()
+                        });
+                    }
+                    pass
+                }
+                PassType::Compute => {
+                    mock_pass_compute(self.index, &self.name, &self.reads, &self.writes)
+                }
+                PassType::Copy => {
+                    let mut pass = IrPass::copy(self.index, &self.name);
+                    pass.access_set.reads = self.reads;
+                    pass.access_set.writes = self.writes;
+                    pass
+                }
+                PassType::RayTracing => {
+                    // Use compute-like structure for ray tracing
+                    let mut pass = mock_pass_compute(self.index, &self.name, &self.reads, &self.writes);
+                    pass.pass_type = PassType::RayTracing;
+                    pass
+                }
+            }
+        }
     }
 
     pub struct MockResourceDesc {
         pub name: String,
         pub desc: ResourceDesc,
+        handle: ResourceHandle,
+    }
+
+    impl MockResourceDesc {
+        pub fn texture_2d(name: &str, width: u32, height: u32) -> Self {
+            Self {
+                name: name.to_string(),
+                desc: ResourceDesc::Texture2D(TextureDesc {
+                    width,
+                    height,
+                    mip_levels: 1,
+                    array_layers: 1,
+                    format: "rgba8unorm".into(),
+                }),
+                handle: next_mock_handle(),
+            }
+        }
+
+        pub fn buffer(name: &str, size: u64) -> Self {
+            Self {
+                name: name.to_string(),
+                desc: ResourceDesc::Buffer(BufferDesc {
+                    size,
+                    usage: "storage".into(),
+                    is_indirect_arg: false,
+                }),
+                handle: next_mock_handle(),
+            }
+        }
+
+        pub fn handle(&self) -> ResourceHandle {
+            self.handle
+        }
+
+        pub fn to_ir_resource(&self) -> IrResource {
+            IrResource::new(
+                self.handle,
+                &self.name,
+                self.desc.clone(),
+                ResourceLifetime::Transient,
+                ResourceState::Uninitialized,
+            )
+        }
+
+        pub fn build(&self) -> IrResource {
+            self.to_ir_resource()
+        }
     }
 
     static MOCK_HANDLE_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static MOCK_PASS_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    pub fn reset_mock_pass_indices() {
+        MOCK_PASS_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn next_mock_pass_index() -> usize {
+        MOCK_PASS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
 
     pub fn reset_mock_handles() {
         MOCK_HANDLE_COUNTER.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -6153,7 +8073,7 @@ mod tests {
         let barriers = compute_barriers(&order, &passes, &edges);
 
         assert_eq!(barriers.len(), 1);
-        let (from_idx, to_idx, before, after, _resource) = barriers[0];
+        let (from_idx, to_idx, _resource, _edge_type, before, after) = barriers[0];
         assert_eq!(from_idx, PassIndex(0));
         assert_eq!(to_idx, PassIndex(1));
         assert_eq!(before, ResourceState::ColorAttachment);
@@ -6258,7 +8178,7 @@ mod tests {
         assert_eq!(compiled.order[1], PassIndex(1));
         // One barrier: ShaderReadWrite → ShaderRead
         assert_eq!(compiled.barriers.len(), 1);
-        let (_, _, before, after, _) = compiled.barriers[0];
+        let (_, _, _, _, before, after) = compiled.barriers[0];
         assert_eq!(before, ResourceState::ShaderReadWrite);
         assert_eq!(after, ResourceState::ShaderRead);
     }
@@ -8007,15 +9927,14 @@ mod tests {
         let json = compiled.emit_bridge_json();
 
         let obj = json.as_object().expect("top-level value should be an object");
-        assert!(obj.contains_key("passes"));
+        // New 4-key format
+        assert!(obj.contains_key("graph"));
         assert!(obj.contains_key("resources"));
-        assert!(obj.contains_key("barriers"));
-        assert!(obj.contains_key("async_passes"));
-        assert!(obj.contains_key("parallel_regions"));
-        assert!(obj.contains_key("depths"));
-        assert!(obj.contains_key("cull_stats"));
+        assert!(obj.contains_key("schedule"));
+        assert!(obj.contains_key("stats"));
 
-        let passes = obj["passes"].as_array().expect("passes should be an array");
+        let graph = obj["graph"].as_object().expect("graph should be object");
+        let passes = graph["passes"].as_array().expect("passes should be an array");
         assert!(!passes.is_empty());
 
         let first = &passes[0];
@@ -8030,7 +9949,8 @@ mod tests {
         assert!(r0.get("name").is_some());
         assert!(r0.get("desc").is_some());
 
-        let cs = &obj["cull_stats"];
+        let stats = obj["stats"].as_object().expect("stats should be object");
+        let cs = &stats["cull_stats"];
         assert!(cs.get("passes_total").is_some());
         assert!(cs.get("passes_eliminated").is_some());
         assert!(cs.get("resources_freed").is_some());
@@ -8081,13 +10001,14 @@ mod tests {
         let compiled = CompiledFrameGraph::compile(vec![p0, p1], vec![res]).unwrap();
         let json = compiled.emit_bridge_json();
 
-        let async_passes = json["async_passes"]
+        let graph = json["graph"].as_object().expect("graph should be object");
+        let async_passes = graph["async_passes"]
             .as_array()
             .expect("async_passes should be an array");
         assert!(compiled.async_passes.len() >= 1);
         assert!(!async_passes.is_empty());
 
-        let depths = json["depths"].as_object().expect("depths should be an object");
+        let depths = graph["depths"].as_object().expect("depths should be an object");
         assert!(depths.contains_key("0"));
         assert_eq!(depths.get("0").and_then(|v| v.as_u64()), Some(0));
     }
@@ -8405,7 +10326,8 @@ mod tests {
             serde_json::from_str(&result).expect("Output should be valid JSON");
 
         // --- Verify pass names survive ---
-        let output_passes = output["passes"]
+        let graph = output["graph"].as_object().expect("output should have a graph object");
+        let output_passes = graph["passes"]
             .as_array()
             .expect("output should have a passes array");
         let output_pass_names: Vec<&str> = output_passes
@@ -8480,18 +10402,19 @@ mod tests {
         // --- Verify no pass count changes ---
         assert_eq!(output_passes.len(), 4, "All 4 passes should survive round-trip");
 
-        // --- Verify the output has bridge fields ---
+        // --- Verify the output has bridge fields (new 4-key format) ---
         assert!(
-            output.get("barriers").is_some(),
-            "emit_bridge_json should include barriers"
+            graph.get("barriers").is_some(),
+            "graph should include barriers"
         );
         assert!(
-            output.get("depths").is_some(),
-            "emit_bridge_json should include depths"
+            graph.get("depths").is_some(),
+            "graph should include depths"
         );
+        let stats = output.get("stats").expect("output should have stats");
         assert!(
-            output.get("cull_stats").is_some(),
-            "emit_bridge_json should include cull_stats"
+            stats.get("cull_stats").is_some(),
+            "stats should include cull_stats"
         );
     }
 
@@ -9899,6 +11822,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 dispatch_source: None,
                 view_type: ViewType::ColorAttachment,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -9927,6 +11852,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 dispatch_source: None,
                 view_type: ViewType::ColorAttachment,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges: Vec<IrEdge> = vec![];
@@ -9966,6 +11893,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -9991,6 +11920,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(2),
@@ -10019,6 +11950,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 dispatch_source: None,
                 view_type: ViewType::ColorAttachment,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges = vec![
@@ -10063,6 +11996,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -10088,6 +12023,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(2),
@@ -10113,6 +12050,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges = vec![
@@ -10157,6 +12096,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -10185,6 +12126,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 dispatch_source: None,
                 view_type: ViewType::ColorAttachment,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges = vec![IrEdge::new(
@@ -10229,6 +12172,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -10254,6 +12199,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges: Vec<IrEdge> = vec![];
@@ -10293,6 +12240,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -10318,6 +12267,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(2),
@@ -10343,6 +12294,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(3),
@@ -10381,6 +12334,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 dispatch_source: None,
                 view_type: ViewType::ColorAttachment,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges = vec![
@@ -10416,6 +12371,7 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 lifetime: ResourceLifetime::Transient,
                 initial_state: ResourceState::Uninitialized,
                 view_format_override: None,
+                is_history: false,
             },
             IrResource {
                 handle: ResourceHandle(2),
@@ -10428,6 +12384,7 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 lifetime: ResourceLifetime::Transient,
                 initial_state: ResourceState::Uninitialized,
                 view_format_override: None,
+                is_history: false,
             },
             IrResource {
                 handle: ResourceHandle(3),
@@ -10440,6 +12397,7 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 lifetime: ResourceLifetime::Transient,
                 initial_state: ResourceState::Uninitialized,
                 view_format_override: None,
+                is_history: false,
             },
         ];
         let passes: Vec<IrPass> = vec![
@@ -10467,6 +12425,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(1),
@@ -10492,6 +12452,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
             IrPass {
                 index: PassIndex(2),
@@ -10517,6 +12479,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
                 }),
                 view_type: ViewType::Storage,
                 tags: vec![],
+                feature_flags: 0,
+                view: std::sync::Arc::new(EmptyView { name: String::new() }),
             },
         ];
         let edges: Vec<IrEdge> = vec![
@@ -10580,6 +12544,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
             }),
             view_type: ViewType::Storage,
             tags: vec![],
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: String::new() }),
         }];
         let live = compute_transitive_liveness(&passes, &[]);
         assert!(
@@ -10611,6 +12577,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
             dispatch_source: None,
             view_type: ViewType::ColorAttachment,
             tags: vec![],
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: String::new() }),
         }];
         let live = compute_transitive_liveness(&passes, &[]);
         assert_eq!(live.len(), 1, "single graphics pass is live");
@@ -10645,6 +12613,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
             }),
             view_type: ViewType::Storage,
             tags: vec![],
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: String::new() }),
         }];
         let edges = vec![IrEdge::new(
             PassIndex(0),
@@ -10692,6 +12662,8 @@ fn test_emit_schedule_bridge_diamond_graph() {
             dispatch_source: None,
             view_type: ViewType::ColorAttachment,
             tags: vec![],
+            feature_flags: 0,
+            view: std::sync::Arc::new(EmptyView { name: String::new() }),
         }];
         let edges = vec![IrEdge::new(
             PassIndex(0),

@@ -126,6 +126,32 @@ class LootCondition:
             f"Got condition_type='{self.condition_type}'"
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize condition to dictionary."""
+        return {"condition_type": self.condition_type}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LootCondition":
+        """
+        Deserialize condition from dictionary.
+
+        Routes to appropriate subclass based on condition_type.
+        """
+        cond_type = data.get("condition_type", "").lower()
+
+        if cond_type == "level":
+            return LevelCondition.from_dict(data)
+        elif cond_type == "quest":
+            return QuestCondition.from_dict(data)
+        elif cond_type == "flag":
+            return FlagCondition.from_dict(data)
+        elif cond_type == "attribute":
+            return AttributeCondition.from_dict(data)
+        elif cond_type == "random_chance" or cond_type == "chance":
+            return RandomChanceCondition.from_dict(data)
+        else:
+            raise ValueError(f"Unknown condition type: {cond_type}")
+
 
 @dataclass(frozen=True)
 class LevelCondition(LootCondition):
@@ -139,6 +165,20 @@ class LevelCondition(LootCondition):
     def evaluate(self, context: Dict[str, Any]) -> bool:
         level = context.get('level', 1)
         return self.min_level <= level <= self.max_level
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "condition_type": "level",
+            "min_level": self.min_level,
+            "max_level": self.max_level,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LevelCondition":
+        return cls(
+            min_level=data.get("min_level", DEFAULT_MIN_LEVEL),
+            max_level=data.get("max_level", DEFAULT_MAX_LEVEL),
+        )
 
 
 @dataclass(frozen=True)
@@ -154,6 +194,20 @@ class QuestCondition(LootCondition):
         quests = context.get('quests', {})
         return quests.get(self.quest_id) == self.required_state
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "condition_type": "quest",
+            "quest_id": self.quest_id,
+            "required_state": self.required_state,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "QuestCondition":
+        return cls(
+            quest_id=data["quest_id"],
+            required_state=data.get("required_state", "completed"),
+        )
+
 
 @dataclass(frozen=True)
 class FlagCondition(LootCondition):
@@ -167,6 +221,20 @@ class FlagCondition(LootCondition):
     def evaluate(self, context: Dict[str, Any]) -> bool:
         flags = context.get('flags', {})
         return flags.get(self.flag_name, False) == self.expected_value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "condition_type": "flag",
+            "flag_name": self.flag_name,
+            "expected_value": self.expected_value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "FlagCondition":
+        return cls(
+            flag_name=data["flag_name"],
+            expected_value=data.get("expected_value", True),
+        )
 
 
 @dataclass(frozen=True)
@@ -184,6 +252,22 @@ class AttributeCondition(LootCondition):
         value = attributes.get(self.attribute, 0)
         return self.min_value <= value <= self.max_value
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "condition_type": "attribute",
+            "attribute": self.attribute,
+            "min_value": self.min_value,
+            "max_value": self.max_value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AttributeCondition":
+        return cls(
+            attribute=data["attribute"],
+            min_value=data.get("min_value", 0),
+            max_value=data.get("max_value", DEFAULT_MAX_VALUE),
+        )
+
 
 @dataclass(frozen=True)
 class RandomChanceCondition(LootCondition):
@@ -196,6 +280,16 @@ class RandomChanceCondition(LootCondition):
     def evaluate(self, context: Dict[str, Any]) -> bool:
         rng = context.get('rng', random)
         return rng.random() < self.chance
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "condition_type": "random_chance",
+            "chance": self.chance,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RandomChanceCondition":
+        return cls(chance=data.get("chance", 0.5))
 
 
 # =============================================================================
@@ -230,6 +324,35 @@ class LootEntry:
         """Roll quantity within range."""
         return rng.randint(self.min_quantity, self.max_quantity)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "entry_type": "LootEntry",
+            "item_id": self.item_id,
+            "weight": self.weight,
+            "min_quantity": self.min_quantity,
+            "max_quantity": self.max_quantity,
+            "conditions": [c.to_dict() for c in self.conditions],
+            "guaranteed": self.guaranteed,
+            "unique": self.unique,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LootEntry":
+        """Deserialize from dictionary."""
+        conditions = tuple(
+            LootCondition.from_dict(c) for c in data.get("conditions", [])
+        )
+        return cls(
+            item_id=data["item_id"],
+            weight=data.get("weight", 1.0),
+            min_quantity=data.get("min_quantity", 1),
+            max_quantity=data.get("max_quantity", 1),
+            conditions=conditions,
+            guaranteed=data.get("guaranteed", False),
+            unique=data.get("unique", False),
+        )
+
 
 @dataclass
 class NestedTableEntry:
@@ -242,6 +365,29 @@ class NestedTableEntry:
     def check_conditions(self, context: Dict[str, Any]) -> bool:
         """Check if all conditions are met."""
         return all(cond.evaluate(context) for cond in self.conditions)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "entry_type": "NestedTableEntry",
+            "table_id": self.table_id,
+            "weight": self.weight,
+            "conditions": [c.to_dict() for c in self.conditions],
+            "rolls_override": self.rolls_override,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "NestedTableEntry":
+        """Deserialize from dictionary."""
+        conditions = tuple(
+            LootCondition.from_dict(c) for c in data.get("conditions", [])
+        )
+        return cls(
+            table_id=data["table_id"],
+            weight=data.get("weight", 1.0),
+            conditions=conditions,
+            rolls_override=data.get("rolls_override"),
+        )
 
 
 @dataclass
@@ -258,6 +404,31 @@ class CurrencyEntry:
 
     def roll_amount(self, rng: RandomSource) -> int:
         return rng.randint(self.min_amount, self.max_amount)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "entry_type": "CurrencyEntry",
+            "currency_type": self.currency_type,
+            "min_amount": self.min_amount,
+            "max_amount": self.max_amount,
+            "weight": self.weight,
+            "conditions": [c.to_dict() for c in self.conditions],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CurrencyEntry":
+        """Deserialize from dictionary."""
+        conditions = tuple(
+            LootCondition.from_dict(c) for c in data.get("conditions", [])
+        )
+        return cls(
+            currency_type=data["currency_type"],
+            min_amount=data.get("min_amount", 1),
+            max_amount=data.get("max_amount", 1),
+            weight=data.get("weight", 1.0),
+            conditions=conditions,
+        )
 
 
 LootTableEntry = Union[LootEntry, NestedTableEntry, CurrencyEntry]
@@ -277,6 +448,28 @@ class LootDrop:
     source_table: Optional[str] = None
     was_pity: bool = False
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "item_id": self.item_id,
+            "quantity": self.quantity,
+            "rarity": self.rarity.name if self.rarity else None,
+            "source_table": self.source_table,
+            "was_pity": self.was_pity,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LootDrop":
+        """Deserialize from dictionary."""
+        rarity = Rarity[data["rarity"]] if data.get("rarity") else None
+        return cls(
+            item_id=data["item_id"],
+            quantity=data.get("quantity", 1),
+            rarity=rarity,
+            source_table=data.get("source_table"),
+            was_pity=data.get("was_pity", False),
+        )
+
 
 @dataclass
 class CurrencyDrop:
@@ -284,6 +477,23 @@ class CurrencyDrop:
     currency_type: str
     amount: int
     source_table: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "currency_type": self.currency_type,
+            "amount": self.amount,
+            "source_table": self.source_table,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CurrencyDrop":
+        """Deserialize from dictionary."""
+        return cls(
+            currency_type=data["currency_type"],
+            amount=data["amount"],
+            source_table=data.get("source_table"),
+        )
 
 
 @dataclass
@@ -293,6 +503,25 @@ class LootResult:
     currencies: List[CurrencyDrop] = field(default_factory=list)
     rolls_performed: int = 0
     pity_triggered: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "items": [item.to_dict() for item in self.items],
+            "currencies": [curr.to_dict() for curr in self.currencies],
+            "rolls_performed": self.rolls_performed,
+            "pity_triggered": self.pity_triggered,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LootResult":
+        """Deserialize from dictionary."""
+        return cls(
+            items=[LootDrop.from_dict(i) for i in data.get("items", [])],
+            currencies=[CurrencyDrop.from_dict(c) for c in data.get("currencies", [])],
+            rolls_performed=data.get("rolls_performed", 0),
+            pity_triggered=data.get("pity_triggered", False),
+        )
 
 
 # =============================================================================
@@ -336,6 +565,18 @@ class PityTracker:
         current = self.counters.get(rarity, 0)
         return (current, threshold)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "counters": {r.name: v for r, v in self.counters.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PityTracker":
+        """Deserialize from dictionary."""
+        counters = {Rarity[k]: v for k, v in data.get("counters", {}).items()}
+        return cls(counters=counters)
+
 
 # =============================================================================
 # Loot Table
@@ -371,6 +612,43 @@ class LootTable:
     def add_guaranteed(self, entry: LootEntry) -> None:
         """Add a guaranteed drop."""
         self.guaranteed_entries.append(entry)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        from .inventory import ECONOMY_SCHEMA_VERSION
+
+        return {
+            "__version__": ECONOMY_SCHEMA_VERSION,
+            "table_id": self.table_id,
+            "entries": [e.to_dict() for e in self.entries],
+            "rolls": self.rolls,
+            "guaranteed_entries": [e.to_dict() for e in self.guaranteed_entries],
+            "empty_weight": self.empty_weight,
+            "min_drops": self.min_drops,
+            "max_drops": self.max_drops,
+            "unique_drops": self.unique_drops,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LootTable":
+        """Deserialize from dictionary."""
+        entries = [loot_entry_from_dict(e) for e in data.get("entries", [])]
+        guaranteed = []
+        for g in data.get("guaranteed_entries", []):
+            entry = loot_entry_from_dict(g)
+            if isinstance(entry, LootEntry):
+                guaranteed.append(entry)
+
+        return cls(
+            table_id=data["table_id"],
+            entries=entries,
+            rolls=data.get("rolls", 1),
+            guaranteed_entries=guaranteed,
+            empty_weight=data.get("empty_weight", 0.0),
+            min_drops=data.get("min_drops", 0),
+            max_drops=data.get("max_drops", DEFAULT_MAX_DROPS),
+            unique_drops=data.get("unique_drops", True),
+        )
 
 
 # =============================================================================
@@ -882,3 +1160,147 @@ class LootTableBuilder:
             max_drops=self._max_drops,
             unique_drops=self._unique_drops,
         )
+
+
+# =============================================================================
+# Serialization Helpers
+# =============================================================================
+
+
+def loot_entry_from_dict(data: Dict[str, Any]) -> LootTableEntry:
+    """
+    Create a loot entry from a dictionary.
+
+    Supports creating LootEntry, NestedTableEntry, or CurrencyEntry
+    based on the dictionary contents.
+
+    Args:
+        data: Dictionary containing entry data. Must have 'type' or 'entry_type' field
+              or 'item_id'/'table_id'/'currency_type' to determine type.
+
+    Returns:
+        Appropriate LootTableEntry subtype
+
+    Raises:
+        ValueError: If entry type cannot be determined
+    """
+    # Check for entry_type (from to_dict) or type (legacy)
+    entry_type = data.get("entry_type", data.get("type", "")).lower()
+
+    # Route to the appropriate from_dict method
+    if entry_type == "lootentry":
+        return LootEntry.from_dict(data)
+    elif entry_type == "nestedtableentry":
+        return NestedTableEntry.from_dict(data)
+    elif entry_type == "currencyentry":
+        return CurrencyEntry.from_dict(data)
+
+    # Fall back to content-based detection for backwards compatibility
+    # Parse conditions if present (for legacy format)
+    conditions: Tuple[LootCondition, ...] = ()
+    if "conditions" in data:
+        cond_list = []
+        for cond_data in data["conditions"]:
+            cond = _condition_from_dict(cond_data)
+            if cond:
+                cond_list.append(cond)
+        conditions = tuple(cond_list)
+
+    # Determine entry type and create
+    if entry_type == "item" or "item_id" in data:
+        return LootEntry(
+            item_id=data["item_id"],
+            weight=data.get("weight", 1.0),
+            min_quantity=data.get("min_quantity", 1),
+            max_quantity=data.get("max_quantity", 1),
+            conditions=conditions,
+            guaranteed=data.get("guaranteed", False),
+            unique=data.get("unique", False),
+        )
+    elif entry_type == "nested" or "table_id" in data:
+        return NestedTableEntry(
+            table_id=data["table_id"],
+            weight=data.get("weight", 1.0),
+            conditions=conditions,
+            rolls_override=data.get("rolls_override"),
+        )
+    elif entry_type == "currency" or "currency_type" in data:
+        return CurrencyEntry(
+            currency_type=data["currency_type"],
+            min_amount=data.get("min_amount", 1),
+            max_amount=data.get("max_amount", 1),
+            weight=data.get("weight", 1.0),
+            conditions=conditions,
+        )
+    else:
+        raise ValueError(f"Cannot determine entry type from data: {data}")
+
+
+def _condition_from_dict(data: Dict[str, Any]) -> Optional[LootCondition]:
+    """
+    Create a condition from dictionary data.
+
+    Args:
+        data: Dictionary with 'type' and condition-specific fields
+
+    Returns:
+        LootCondition or None if type unknown
+    """
+    cond_type = data.get("type", "").lower()
+
+    if cond_type == "level":
+        return LevelCondition(
+            min_level=data.get("min_level", DEFAULT_MIN_LEVEL),
+            max_level=data.get("max_level", DEFAULT_MAX_LEVEL),
+        )
+    elif cond_type == "quest":
+        return QuestCondition(
+            quest_id=data["quest_id"],
+            required_state=data.get("required_state", "completed"),
+        )
+    elif cond_type == "flag":
+        return FlagCondition(
+            flag_name=data["flag_name"],
+            expected_value=data.get("expected_value", True),
+        )
+    elif cond_type == "attribute":
+        return AttributeCondition(
+            attribute=data["attribute"],
+            min_value=data.get("min_value", 0),
+            max_value=data.get("max_value", DEFAULT_MAX_VALUE),
+        )
+    elif cond_type == "random_chance" or cond_type == "chance":
+        return RandomChanceCondition(
+            chance=data.get("chance", 0.5),
+        )
+    else:
+        return None
+
+
+def loot_table_from_dict(data: Dict[str, Any]) -> LootTable:
+    """
+    Create a loot table from a dictionary.
+
+    Args:
+        data: Dictionary containing table definition
+
+    Returns:
+        LootTable instance
+    """
+    entries = [loot_entry_from_dict(e) for e in data.get("entries", [])]
+    guaranteed = []
+    for g in data.get("guaranteed_entries", []):
+        entry = loot_entry_from_dict(g)
+        if isinstance(entry, LootEntry):
+            guaranteed.append(entry)
+
+    return LootTable(
+        table_id=data["table_id"],
+        entries=entries,
+        rolls=data.get("rolls", 1),
+        guaranteed_entries=guaranteed,
+        empty_weight=data.get("empty_weight", 0.0),
+        min_drops=data.get("min_drops", 0),
+        max_drops=data.get("max_drops", DEFAULT_MAX_DROPS),
+        unique_drops=data.get("unique_drops", True),
+    )

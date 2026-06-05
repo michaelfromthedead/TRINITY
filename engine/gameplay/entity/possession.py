@@ -319,9 +319,9 @@ class Controller(metaclass=ControllerMeta):
         else:
             return False
 
-        # Record possession with timestamp
+        # Record possession with timestamp (use weak ref to avoid preventing GC)
         self._possessed_pawn = weakref.ref(pawn)
-        self._possession_history.append((time.monotonic(), pawn))
+        self._possession_history.append((time.monotonic(), weakref.ref(pawn)))
 
         # Trigger callbacks
         self._on_possess(pawn)
@@ -345,7 +345,7 @@ class Controller(metaclass=ControllerMeta):
 
         # Clear possession with timestamp
         self._possessed_pawn = None
-        self._possession_history.append((time.monotonic(), None))
+        self._possession_history.append((time.monotonic(), None))  # None for unpossess
 
         # Trigger callbacks
         self._on_unpossess(pawn)

@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, List, Dict, Callable, Tuple
+from typing import Optional, List, Dict, Callable, Tuple, Set
 
 from engine.core.math.vec import Vec3
 from engine.core.math.quat import Quat
@@ -33,6 +33,553 @@ from engine.animation.ik.ik_goal import (
 )
 from engine.animation.ik.fabrik import FABRIKChain
 from engine.animation.ik.two_bone import TwoBoneIK
+
+
+@dataclass
+class COMCalculator:
+    """Center of Mass calculator for skeleton.
+
+    Calculates the weighted center of mass from bone positions,
+    using configurable per-bone masses. Useful for balance checking
+    and physics-aware animation.
+
+    Attributes:
+        bone_masses: Dictionary mapping bone name to mass value.
+            Bones not in this dict default to mass 1.0.
+        default_mass: Default mass for bones not explicitly configured.
+    """
+
+    bone_masses: Dict[str, float] = field(default_factory=dict)
+    default_mass: float = 1.0
+
+    def set_bone_mass(self, bone_name: str, mass: float) -> None:
+        """Set mass for a bone.
+
+        Args:
+            bone_name: Name of the bone.
+            mass: Mass value (must be non-negative).
+
+        Raises:
+            ValueError: If mass is negative.
+        """
+        if mass < 0:
+            raise ValueError(f"Mass cannot be negative: {mass}")
+        self.bone_masses[bone_name] = mass
+
+    def set_bone_masses(self, masses: Dict[str, float]) -> None:
+        """Set masses for multiple bones at once.
+
+        Args:
+            masses: Dictionary mapping bone names to mass values.
+
+        Raises:
+            ValueError: If any mass is negative.
+        """
+        for bone_name, mass in masses.items():
+            self.set_bone_mass(bone_name, mass)
+
+    def get_bone_mass(self, bone_name: str) -> float:
+        """Get mass for a bone.
+
+        Args:
+            bone_name: Name of the bone.
+
+        Returns:
+            Mass value, or default_mass if not configured.
+        """
+        return self.bone_masses.get(bone_name, self.default_mass)
+
+    def calculate(self, bone_positions: Dict[str, Vec3]) -> Vec3:
+        """Calculate weighted center of mass from bone positions.
+
+        COM = sum(mass_i * pos_i) / sum(mass_i)
+
+        Args:
+            bone_positions: Dictionary mapping bone names to world positions.
+
+        Returns:
+            Center of mass position, or Vec3.zero() if total mass is zero.
+        """
+        total_mass = 0.0
+        weighted_sum = Vec3.zero()
+
+        for bone_name, pos in bone_positions.items():
+            mass = self.bone_masses.get(bone_name, self.default_mass)
+            total_mass += mass
+            weighted_sum = weighted_sum + pos * mass
+
+        if total_mass <= 0.0:
+            return Vec3.zero()
+
+        return weighted_sum / total_mass
+
+    def calculate_partial(
+        self,
+        bone_positions: Dict[str, Vec3],
+        bone_subset: Set[str]
+    ) -> Vec3:
+        """Calculate center of mass for a subset of bones.
+
+        Useful for calculating COM of specific body parts (e.g., upper body,
+        left arm chain) rather than the full skeleton.
+
+        Args:
+            bone_positions: Dictionary mapping bone names to world positions.
+            bone_subset: Set of bone names to include in calculation.
+
+        Returns:
+            Center of mass for the subset, or Vec3.zero() if total mass is zero.
+        """
+        total_mass = 0.0
+        weighted_sum = Vec3.zero()
+
+        for bone_name in bone_subset:
+            if bone_name not in bone_positions:
+                continue
+            pos = bone_positions[bone_name]
+            mass = self.bone_masses.get(bone_name, self.default_mass)
+            total_mass += mass
+            weighted_sum = weighted_sum + pos * mass
+
+        if total_mass <= 0.0:
+            return Vec3.zero()
+
+        return weighted_sum / total_mass
+
+    def calculate_from_transforms(
+        self,
+        transforms: List[Transform],
+        bone_names: List[str]
+    ) -> Vec3:
+        """Calculate COM from a list of transforms with corresponding bone names.
+
+        Convenience method when bone positions are stored as transforms
+        rather than a dictionary.
+
+        Args:
+            transforms: List of bone transforms (world space).
+            bone_names: List of bone names corresponding to each transform.
+
+        Returns:
+            Center of mass position.
+
+        Raises:
+            ValueError: If transforms and bone_names have different lengths.
+        """
+        if len(transforms) != len(bone_names):
+            raise ValueError(
+                f"transforms ({len(transforms)}) and bone_names ({len(bone_names)}) "
+                "must have the same length"
+            )
+
+        bone_positions = {
+            name: t.translation
+            for name, t in zip(bone_names, transforms)
+        }
+        return self.calculate(bone_positions)
+
+    def total_mass(self, bone_names: Optional[Set[str]] = None) -> float:
+        """Calculate total mass for given bones.
+
+        Args:
+            bone_names: Set of bone names to sum, or None to use all
+                configured bones (falling back to 0 if none configured).
+
+        Returns:
+            Total mass.
+        """
+        if bone_names is None:
+            return sum(self.bone_masses.values())
+
+        return sum(
+            self.bone_masses.get(name, self.default_mass)
+            for name in bone_names
+        )
+
+
+@dataclass
+class SupportPolygon:
+    """Support polygon for balance checking.
+
+    The support polygon is the convex hull of foot contact points,
+    projected onto the ground plane (XZ). Used to check if center
+    of mass is within stable support region.
+
+    Attributes:
+        vertices: XZ plane vertices defining the polygon boundary.
+    """
+
+    vertices: List[Vec3] = field(default_factory=list)
+
+    @classmethod
+    def from_foot_positions(cls, positions: List[Vec3]) -> 'SupportPolygon':
+        """Build support polygon from foot contact positions.
+
+        Projects positions to XZ plane (y=0). For basic case, uses
+        the positions directly without computing convex hull.
+
+        Args:
+            positions: List of foot contact positions in world space.
+
+        Returns:
+            SupportPolygon with vertices projected to ground plane.
+        """
+        projected = [Vec3(p.x, 0.0, p.z) for p in positions]
+        return cls(vertices=projected)
+
+    def contains_point(self, point: Vec3) -> bool:
+        """Check if point is inside polygon using ray casting.
+
+        Projects point to XZ plane and uses ray casting algorithm:
+        Cast ray from point, count edge crossings. Odd = inside.
+
+        Handles horizontal edges correctly by skipping them in the
+        crossing calculation (they don't contribute to the count).
+
+        Args:
+            point: Point to test (will be projected to XZ plane).
+
+        Returns:
+            True if point is inside the polygon, False otherwise.
+        """
+        if len(self.vertices) < 3:
+            return False
+
+        # Project to XZ (use x and z as 2D coordinates)
+        px, pz = point.x, point.z
+        n = len(self.vertices)
+        inside = False
+
+        j = n - 1
+        for i in range(n):
+            xi, zi = self.vertices[i].x, self.vertices[i].z
+            xj, zj = self.vertices[j].x, self.vertices[j].z
+
+            # Skip horizontal edges (both endpoints have same z)
+            dz = zj - zi
+            if abs(dz) < 1e-10:
+                j = i
+                continue
+
+            # Ray casting: count crossings of horizontal ray from point
+            if ((zi > pz) != (zj > pz)) and \
+               (px < (xj - xi) * (pz - zi) / dz + xi):
+                inside = not inside
+            j = i
+
+        return inside
+
+    def project_to_ground(self, point: Vec3) -> Vec3:
+        """Project a point onto the ground plane (y=0).
+
+        Args:
+            point: Point to project.
+
+        Returns:
+            Point with y coordinate set to 0.
+        """
+        return Vec3(point.x, 0.0, point.z)
+
+    @staticmethod
+    def closest_point_on_segment(point: Vec3, seg_start: Vec3, seg_end: Vec3) -> Vec3:
+        """Find closest point on line segment to a given point.
+
+        Projects point onto line defined by segment, clamped to segment bounds.
+        Works in XZ plane (ignores Y).
+
+        Args:
+            point: Query point
+            seg_start: Segment start point
+            seg_end: Segment end point
+
+        Returns:
+            Closest point on segment to query point
+        """
+        # Direction vector of segment
+        dx = seg_end.x - seg_start.x
+        dz = seg_end.z - seg_start.z
+
+        # Length squared
+        len_sq = dx * dx + dz * dz
+        if len_sq < 1e-10:
+            return seg_start  # Degenerate segment
+
+        # Parameter t for projection onto line (0 = start, 1 = end)
+        t = ((point.x - seg_start.x) * dx + (point.z - seg_start.z) * dz) / len_sq
+        t = max(0.0, min(1.0, t))  # Clamp to segment
+
+        return Vec3(
+            seg_start.x + t * dx,
+            0.0,  # Ground plane
+            seg_start.z + t * dz
+        )
+
+    def closest_point_on_boundary(self, point: Vec3) -> Vec3:
+        """Find the closest point on polygon boundary to given point.
+
+        Iterates through all edges and finds the closest point.
+        Works in XZ plane.
+
+        Args:
+            point: Query point (projected to XZ plane)
+
+        Returns:
+            Closest point on polygon boundary
+        """
+        if len(self.vertices) < 2:
+            return self.vertices[0] if self.vertices else Vec3.zero()
+
+        closest = None
+        min_dist_sq = float('inf')
+
+        # Iterate through all edges
+        n = len(self.vertices)
+        for i in range(n):
+            seg_start = self.vertices[i]
+            seg_end = self.vertices[(i + 1) % n]
+
+            candidate = self.closest_point_on_segment(point, seg_start, seg_end)
+
+            # Distance squared in XZ plane
+            dx = candidate.x - point.x
+            dz = candidate.z - point.z
+            dist_sq = dx * dx + dz * dz
+
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                closest = candidate
+
+        return closest if closest else Vec3.zero()
+
+    def correction_vector(self, point: Vec3) -> Vec3:
+        """Get vector to move point back onto polygon boundary.
+
+        If point is inside polygon, returns zero vector.
+        If outside, returns vector from point to closest boundary point.
+        Used for COM correction.
+
+        Args:
+            point: Query point (typically COM)
+
+        Returns:
+            Correction vector (zero if inside, direction to boundary if outside)
+        """
+        if self.contains_point(point):
+            return Vec3.zero()
+
+        closest = self.closest_point_on_boundary(point)
+        return Vec3(
+            closest.x - point.x,
+            0.0,
+            closest.z - point.z
+        )
+
+
+@dataclass
+class BalanceController:
+    """Controller for maintaining balance by adjusting pelvis/spine.
+
+    Uses center of mass and support polygon to detect instability
+    and apply corrective adjustments. The controller calculates
+    whether the character's COM is within the support polygon and
+    provides correction vectors when it falls outside.
+
+    Attributes:
+        com_calculator: Calculator for center of mass.
+        support_polygon: Current support polygon defining stable region.
+        correction_strength: How strongly to correct imbalance (0-1).
+            Higher values result in more aggressive corrections.
+        pelvis_weight: Weight of pelvis adjustment relative to spine.
+            The spine receives (1 - pelvis_weight) of the correction.
+    """
+
+    com_calculator: COMCalculator = field(default_factory=COMCalculator)
+    support_polygon: SupportPolygon = field(default_factory=SupportPolygon)
+    correction_strength: float = 0.5
+    pelvis_weight: float = 0.7
+
+    def is_balanced(self, bone_positions: Dict[str, Vec3]) -> bool:
+        """Check if current pose is balanced (COM in support polygon).
+
+        Args:
+            bone_positions: Dictionary mapping bone names to world positions.
+
+        Returns:
+            True if center of mass is within support polygon, False otherwise.
+        """
+        com = self.com_calculator.calculate(bone_positions)
+        return self.support_polygon.contains_point(com)
+
+    def get_correction(self, bone_positions: Dict[str, Vec3]) -> Vec3:
+        """Get correction vector to restore balance.
+
+        Calculates the vector needed to move the center of mass back
+        into the support polygon, scaled by correction_strength.
+
+        Args:
+            bone_positions: Dictionary mapping bone names to world positions.
+
+        Returns:
+            Correction vector scaled by strength. Returns zero vector
+            if already balanced.
+        """
+        com = self.com_calculator.calculate(bone_positions)
+        raw_correction = self.support_polygon.correction_vector(com)
+        return raw_correction * self.correction_strength
+
+    def apply_correction(
+        self,
+        bone_positions: Dict[str, Vec3],
+        pelvis_name: str = "pelvis",
+        spine_name: str = "spine"
+    ) -> Dict[str, Vec3]:
+        """Apply balance correction to bone positions.
+
+        Distributes the correction between pelvis and spine based on
+        pelvis_weight. Only adjusts X and Z coordinates to maintain
+        ground contact.
+
+        Args:
+            bone_positions: Current bone positions. A copy is made
+                and modified rather than mutating the original.
+            pelvis_name: Name of the pelvis bone to adjust.
+            spine_name: Name of the spine bone to adjust.
+
+        Returns:
+            New dictionary with corrected bone positions.
+        """
+        correction = self.get_correction(bone_positions)
+
+        # Skip if correction is negligible
+        if correction.length_squared() < 1e-10:
+            return bone_positions
+
+        # Distribute correction between pelvis and spine
+        pelvis_correction = correction * self.pelvis_weight
+        spine_correction = correction * (1.0 - self.pelvis_weight)
+
+        # Create result with corrections applied
+        result = dict(bone_positions)
+
+        if pelvis_name in result:
+            pos = result[pelvis_name]
+            result[pelvis_name] = Vec3(
+                pos.x + pelvis_correction.x,
+                pos.y,  # Keep Y unchanged to maintain ground contact
+                pos.z + pelvis_correction.z
+            )
+
+        if spine_name in result:
+            pos = result[spine_name]
+            result[spine_name] = Vec3(
+                pos.x + spine_correction.x,
+                pos.y,  # Keep Y unchanged
+                pos.z + spine_correction.z
+            )
+
+        return result
+
+    def set_correction_strength(self, strength: float) -> None:
+        """Set correction strength, clamped to valid range.
+
+        Args:
+            strength: Desired strength value. Will be clamped to [0, 1].
+        """
+        self.correction_strength = max(0.0, min(1.0, strength))
+
+    def update_support_polygon(self, foot_positions: List[Vec3]) -> None:
+        """Update support polygon from current foot positions.
+
+        Rebuilds the support polygon based on new foot contact points.
+        Call this when feet move to update the stable region.
+
+        Args:
+            foot_positions: List of foot contact positions in world space.
+        """
+        self.support_polygon = SupportPolygon.from_foot_positions(foot_positions)
+
+
+class IKSolverType(Enum):
+    """Types of IK solvers that can be used for a chain."""
+    TWO_BONE = auto()
+    FABRIK = auto()
+    CCD = auto()
+    JACOBIAN = auto()
+
+
+@dataclass
+class IKChain:
+    """Definition of an IK chain for full body solving.
+
+    An IK chain represents a series of bones from root to effector
+    that are solved together using a specific IK algorithm.
+
+    Attributes:
+        name: Unique identifier for this chain
+        root_bone: Name of the root bone (e.g., "shoulder")
+        joint_bones: Names of intermediate bones (e.g., ["upper_arm", "lower_arm"])
+        effector_bone: Name of the end effector bone (e.g., "hand")
+        solver_type: Which IK algorithm to use
+        weight: Influence of this chain (0-1)
+        priority: Solve order (higher = solved first)
+        enabled: Whether this chain is active
+    """
+
+    name: str
+    root_bone: str
+    joint_bones: List[str] = field(default_factory=list)
+    effector_bone: str = ""
+    solver_type: IKSolverType = IKSolverType.TWO_BONE
+    weight: float = 1.0
+    priority: int = 0
+    enabled: bool = True
+
+    def __post_init__(self):
+        self.weight = max(0.0, min(1.0, self.weight))
+
+    @property
+    def bone_count(self) -> int:
+        """Total number of bones in chain (root + joints + effector)."""
+        return 2 + len(self.joint_bones)  # root, joints, effector
+
+    @property
+    def all_bones(self) -> List[str]:
+        """Get all bone names in order from root to effector."""
+        return [self.root_bone] + self.joint_bones + [self.effector_bone]
+
+    def set_weight(self, weight: float) -> None:
+        """Set chain weight (clamped to 0-1)."""
+        self.weight = max(0.0, min(1.0, weight))
+
+    def set_enabled(self, enabled: bool) -> None:
+        """Enable or disable this chain."""
+        self.enabled = enabled
+
+    @classmethod
+    def arm_chain(cls, side: str = "left") -> 'IKChain':
+        """Create a standard arm chain."""
+        prefix = "l_" if side == "left" else "r_"
+        return cls(
+            name=f"{side}_arm",
+            root_bone=f"{prefix}shoulder",
+            joint_bones=[f"{prefix}upper_arm", f"{prefix}lower_arm"],
+            effector_bone=f"{prefix}hand",
+            solver_type=IKSolverType.TWO_BONE,
+            priority=10
+        )
+
+    @classmethod
+    def leg_chain(cls, side: str = "left") -> 'IKChain':
+        """Create a standard leg chain."""
+        prefix = "l_" if side == "left" else "r_"
+        return cls(
+            name=f"{side}_leg",
+            root_bone=f"{prefix}thigh",
+            joint_bones=[f"{prefix}shin"],
+            effector_bone=f"{prefix}foot",
+            solver_type=IKSolverType.TWO_BONE,
+            priority=20  # Legs solved before arms
+        )
 
 
 class BodyPart(Enum):
@@ -639,6 +1186,264 @@ class FullBodyIK:
                 closest = projected
 
         return closest
+
+
+@dataclass
+class PelvisAdjustmentConfig:
+    """Configuration for pelvis height adjustment.
+
+    Controls how aggressively and smoothly the pelvis adjusts
+    to allow legs to reach their targets.
+
+    Attributes:
+        safety_margin: Maximum reach safety factor (0-1).
+            At 0.95, legs will only extend to 95% of max reach.
+        max_drop: Maximum pelvis drop distance in world units.
+            Prevents extreme crouching.
+        smooth_speed: Smoothing speed in units/second.
+            Higher values = faster adjustment, less smooth.
+    """
+
+    safety_margin: float = 0.95
+    max_drop: float = 0.5
+    smooth_speed: float = 5.0
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not 0.0 < self.safety_margin <= 1.0:
+            raise ValueError(
+                f"safety_margin must be in (0, 1], got {self.safety_margin}"
+            )
+        if self.max_drop < 0.0:
+            raise ValueError(
+                f"max_drop must be non-negative, got {self.max_drop}"
+            )
+        if self.smooth_speed <= 0.0:
+            raise ValueError(
+                f"smooth_speed must be positive, got {self.smooth_speed}"
+            )
+
+
+class PelvisHeightAdjuster:
+    """Standalone pelvis height adjustment for IK.
+
+    Calculates and applies smooth pelvis height adjustments to ensure
+    legs can reach their target positions. Useful for foot placement
+    on uneven terrain.
+
+    The adjuster tracks internal state for smooth transitions and
+    provides configurable safety margins and limits.
+
+    Example:
+        adjuster = PelvisHeightAdjuster(PelvisAdjustmentConfig(
+            safety_margin=0.95,
+            max_drop=0.5,
+            smooth_speed=5.0
+        ))
+
+        # Each frame:
+        adjustment = adjuster.adjust(
+            transforms, pelvis_idx, leg_targets, max_leg_reach, dt
+        )
+    """
+
+    def __init__(self, config: Optional[PelvisAdjustmentConfig] = None) -> None:
+        """Initialize the pelvis height adjuster.
+
+        Args:
+            config: Configuration for adjustment behavior.
+                Uses defaults if None.
+        """
+        self._config = config if config is not None else PelvisAdjustmentConfig()
+        self._current_offset: float = 0.0
+
+    @property
+    def config(self) -> PelvisAdjustmentConfig:
+        """Get the current configuration."""
+        return self._config
+
+    @property
+    def current_offset(self) -> float:
+        """Get the current vertical offset being applied."""
+        return self._current_offset
+
+    def calculate_required_drop(
+        self,
+        pelvis_pos: Vec3,
+        leg_targets: List[Vec3],
+        max_leg_reach: float
+    ) -> float:
+        """Calculate raw drop needed for legs to reach targets.
+
+        Computes how much the pelvis needs to drop vertically so that
+        all leg targets are within reach, accounting for the safety margin.
+
+        Args:
+            pelvis_pos: Current pelvis world position.
+            leg_targets: List of target positions for legs.
+                Empty targets are skipped.
+            max_leg_reach: Maximum leg reach distance.
+                Same value used for all legs.
+
+        Returns:
+            Required drop distance (positive = down).
+            Returns 0 if all targets are reachable.
+        """
+        if not leg_targets or max_leg_reach <= 0.0:
+            return 0.0
+
+        safe_reach = max_leg_reach * self._config.safety_margin
+        max_required_drop = 0.0
+
+        for target in leg_targets:
+            if target is None:
+                continue
+
+            # Distance from pelvis to target
+            to_target = target - pelvis_pos
+            current_dist = to_target.length()
+
+            # If beyond safe reach, calculate required drop
+            if current_dist > safe_reach:
+                # The drop required to bring distance within safe reach
+                # Using vertical projection approximation
+                excess = current_dist - safe_reach
+
+                # Calculate the vertical component of adjustment
+                # If target is below pelvis, dropping helps directly
+                # If target is at same height, horizontal distance dominates
+                if current_dist > MATH_EPSILON:
+                    # Use geometry: after dropping by d, new distance
+                    # sqrt((dist_xz)^2 + (dist_y - d)^2) <= safe_reach
+                    # Solve for minimum d
+                    dist_xz_sq = to_target.x ** 2 + to_target.z ** 2
+                    dist_y = to_target.y
+
+                    # Quadratic to find minimum drop
+                    # We want: dist_xz_sq + (dist_y - d)^2 <= safe_reach^2
+                    # (dist_y - d)^2 <= safe_reach^2 - dist_xz_sq
+                    target_y_sq = safe_reach ** 2 - dist_xz_sq
+
+                    if target_y_sq < 0:
+                        # Target is too far horizontally, drop won't help
+                        # Use excess as approximation
+                        required_drop = excess
+                    else:
+                        # Required vertical distance after adjustment
+                        required_y_dist = math.sqrt(target_y_sq)
+                        # If target is below pelvis, dist_y is negative
+                        # required_drop = -dist_y - required_y_dist (for below)
+                        # or = dist_y - required_y_dist (for above, but usually negative)
+                        if dist_y < 0:
+                            # Target below pelvis - typical case
+                            required_drop = -dist_y - required_y_dist
+                        else:
+                            # Target at or above pelvis - unusual case
+                            required_drop = dist_y - required_y_dist
+
+                        required_drop = max(0.0, required_drop)
+                else:
+                    required_drop = 0.0
+
+                max_required_drop = max(max_required_drop, required_drop)
+
+        return max_required_drop
+
+    def adjust(
+        self,
+        transforms: List[Transform],
+        pelvis_idx: int,
+        leg_targets: List[Vec3],
+        max_leg_reach: float,
+        dt: float
+    ) -> Vec3:
+        """Calculate and apply smoothed pelvis adjustment.
+
+        Main method: calculates required drop, smooths it over time,
+        and applies the adjustment to the pelvis transform.
+
+        Args:
+            transforms: List of transforms to modify.
+                The pelvis transform at pelvis_idx will be adjusted.
+            pelvis_idx: Index of pelvis in transforms list.
+            leg_targets: List of world positions for leg targets.
+                None entries are skipped.
+            max_leg_reach: Maximum leg reach distance.
+            dt: Delta time in seconds for smoothing.
+
+        Returns:
+            The adjustment vector applied (vertical only).
+            Returns zero vector if no adjustment needed.
+        """
+        if pelvis_idx < 0 or pelvis_idx >= len(transforms):
+            return Vec3.zero()
+
+        pelvis_transform = transforms[pelvis_idx]
+        pelvis_pos = pelvis_transform.translation
+
+        # Calculate target drop
+        target_drop = self.calculate_required_drop(
+            pelvis_pos, leg_targets, max_leg_reach
+        )
+
+        # Clamp to max drop
+        target_drop = min(target_drop, self._config.max_drop)
+
+        # Smooth adjustment using lerp
+        # current += (target - current) * min(1.0, smooth_speed * dt)
+        alpha = min(1.0, self._config.smooth_speed * dt)
+        self._current_offset += (target_drop - self._current_offset) * alpha
+
+        # Create adjustment vector (negative Y = downward)
+        adjustment = Vec3(0.0, -self._current_offset, 0.0)
+
+        # Apply to pelvis - we need delta from last frame
+        # Since transforms may reset each frame, we apply full offset
+        # The caller typically provides fresh transforms each frame
+        pelvis_transform.translation = pelvis_pos + Vec3(
+            0.0, -self._current_offset, 0.0
+        )
+
+        return adjustment
+
+    def reset(self) -> None:
+        """Reset internal state.
+
+        Call this when the character teleports or on animation reset
+        to prevent jarring smooth transitions from old positions.
+        """
+        self._current_offset = 0.0
+
+    def set_config(self, config: PelvisAdjustmentConfig) -> None:
+        """Update the configuration.
+
+        Args:
+            config: New configuration to use.
+        """
+        self._config = config
+
+    def get_target_offset(
+        self,
+        pelvis_pos: Vec3,
+        leg_targets: List[Vec3],
+        max_leg_reach: float
+    ) -> float:
+        """Get the target offset without applying smoothing.
+
+        Useful for debugging or preview purposes.
+
+        Args:
+            pelvis_pos: Current pelvis world position.
+            leg_targets: List of target positions for legs.
+            max_leg_reach: Maximum leg reach distance.
+
+        Returns:
+            Target offset (clamped to max_drop).
+        """
+        target_drop = self.calculate_required_drop(
+            pelvis_pos, leg_targets, max_leg_reach
+        )
+        return min(target_drop, self._config.max_drop)
 
 
 class LookAtSolver:

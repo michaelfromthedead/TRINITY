@@ -250,7 +250,8 @@ class Pathfinder:
                 result.success = True
                 result.path = self._reconstruct_path(current, request.end)
                 result.polygon_path = self._reconstruct_polygon_path(current)
-                result.total_cost = current.g_cost
+                # Add final leg to the actual endpoint
+                result.total_cost = current.g_cost + current.position.distance_to(request.end)
                 result.nodes_explored = len(closed_set)
                 result.iterations = iterations
                 return result
@@ -414,7 +415,8 @@ class Pathfinder:
                 result.success = True
                 result.path = self._reconstruct_path(current, request.end)
                 result.polygon_path = self._reconstruct_polygon_path(current)
-                result.total_cost = current.g_cost
+                # Add final leg to the actual endpoint
+                result.total_cost = current.g_cost + current.position.distance_to(request.end)
                 result.nodes_explored = len(closed_set)
                 result.iterations = iterations
                 return result
@@ -555,7 +557,8 @@ class Pathfinder:
                 result.success = True
                 result.path = self._reconstruct_theta_path(current, request.end)
                 result.polygon_path = self._reconstruct_polygon_path(current)
-                result.total_cost = current.g_cost
+                # Add final leg to the actual endpoint
+                result.total_cost = current.g_cost + current.position.distance_to(request.end)
                 result.nodes_explored = len(closed_set)
                 result.iterations = iterations
                 return result
@@ -954,5 +957,7 @@ def interpolate_path(path: List[Vector3], spacing: float = 1.0) -> List[Vector3]
 
         accumulated -= segment_length
 
-    result.append(path[-1])
+    # Only append endpoint if it's not already at the last point
+    if result[-1].distance_to(path[-1]) > FLOAT_EPSILON:
+        result.append(path[-1])
     return result

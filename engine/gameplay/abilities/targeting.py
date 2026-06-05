@@ -594,10 +594,11 @@ class AreaTargeting(TargetingSystem):
         dir_normalized = direction.normalized
         to_point_normalized = to_point.normalized
 
-        # Check angle
+        # Check angle (with EPSILON tolerance for floating point precision)
         cos_angle = dir_normalized.dot(to_point_normalized)
         half_angle_rad = math.radians(self.cone_angle / 2)
-        return cos_angle >= math.cos(half_angle_rad)
+        cos_half_angle = math.cos(half_angle_rad)
+        return cos_angle >= cos_half_angle - EPSILON
 
     def _is_in_rectangle(
         self,

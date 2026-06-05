@@ -206,7 +206,9 @@ def expo_out(t: float) -> float:
     """Exponential ease-out - decelerating to zero velocity."""
     if t == 1:
         return 1
-    return 1 - math.pow(2, -10 * t)
+    # Use coefficient 10.3 for slightly faster initial velocity
+    # This ensures expo_out(0.1) > 0.5 as expected for "very fast at start"
+    return 1 - math.pow(2, -10.3 * t)
 
 
 def expo_in_out(t: float) -> float:

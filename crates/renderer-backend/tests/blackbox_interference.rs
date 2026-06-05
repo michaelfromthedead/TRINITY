@@ -34,10 +34,11 @@
 //   7.  Non-overlapping resources have no interference edges
 
 use renderer_backend::frame_graph::{
-    BufferDesc, CompiledFrameGraph, DispatchSource, InstanceSource, IrPass, IrResource, PassIndex,
-    PassType, ResourceAccessSet, ResourceDesc, ResourceHandle, ResourceLifetime, ResourceState,
-    TextureDesc, ViewType,
+    BufferDesc, CompiledFrameGraph, DispatchSource, EmptyView, InstanceSource, IrPass, IrResource,
+    PassIndex, PassType, ResourceAccessSet, ResourceDesc, ResourceHandle, ResourceLifetime,
+    ResourceState, TextureDesc, ViewType,
 };
+use std::sync::Arc;
 
 // =============================================================================
 // Helpers
@@ -106,6 +107,8 @@ fn compute_pass(
         }),
         view_type: ViewType::Storage,
         tags: Vec::new(),
+        feature_flags: 0,
+        view: Arc::new(EmptyView { name: name.to_string() }),
     }
 }
 

@@ -51,8 +51,11 @@ class DuckState(Enum):
     """Current state of a duck envelope."""
     IDLE = "idle"          # Not ducking
     ATTACKING = "attacking"  # Ramping down
+    ATTACK = "attacking"   # Alias for ATTACKING
     HOLDING = "holding"    # At maximum duck
+    HOLD = "holding"       # Alias for HOLDING
     RELEASING = "releasing"  # Ramping up
+    RELEASE = "releasing"  # Alias for RELEASING
 
 
 @dataclass
@@ -71,13 +74,21 @@ class DuckEnvelope:
     state_start_time: float = 0.0
     hold_end_time: float = 0.0
 
-    def trigger(self, amount: float = 1.0) -> None:
+    @property
+    def value(self) -> float:
+        """Current envelope value (1.0 = no duck, moving toward 0)."""
+        return 1.0 - self.current_amount
+
+    def trigger(self, amount: float = 1.0, target: float = None) -> None:
         """
         Trigger the duck envelope.
 
         Args:
             amount: Duck amount (0.0 to 1.0).
+            target: Alias for amount (for API compatibility).
         """
+        if target is not None:
+            amount = target
         self.target_amount = clamp(amount, 0.0, 1.0)
         if self.state in (DuckState.IDLE, DuckState.RELEASING):
             self.state = DuckState.ATTACKING
@@ -196,21 +207,64 @@ class DuckingInstance:
     Tracks one ducking relationship between a source and targets.
     """
 
-    def __init__(self, config: DuckConfig) -> None:
+    def __init__(
+        self,
+        config: DuckConfig = None,
+        *,
+        id: str = None,
+        source: str = None,
+        target: str = None,
+    ) -> None:
         """
         Initialize ducking instance.
 
         Args:
-            config: Ducking configuration.
+            config: Ducking configuration (preferred, positional).
+            id: Optional ID override (keyword-only).
+            source: Source bus name (keyword-only convenience).
+            target: Target bus name (keyword-only convenience).
         """
+        if config is None:
+            config = DuckConfig(
+                id=id or str(uuid4()),
+                name=f"{source or 'unknown'}_to_{target or 'unknown'}",
+            )
         self._config = config.copy()
+        # Don't override ID if config already has one, unless explicitly passed
+        if id and id != self._config.id:
+            self._config.id = id
+        # Use source/target from config if available
+        self._source_name = source if source else (config.source_bus.name if config.source_bus else None)
+        self._target_name = target if target else None
         self._envelope = DuckEnvelope(
             attack_ms=config.attack_ms,
             hold_ms=config.hold_ms,
             release_ms=config.release_ms,
         )
         self._triggered = False
+        self._released = False  # Marked for removal after release completes
         self._source_level_db = -80.0
+        self._state = DuckState.IDLE
+
+    @property
+    def id(self) -> str:
+        """Get the ducking instance ID."""
+        return self._config.id
+
+    @property
+    def source(self) -> str:
+        """Get source bus name."""
+        return self._source_name or (self._config.source_bus.name if self._config.source_bus else "")
+
+    @property
+    def target(self) -> str:
+        """Get target bus name."""
+        return self._target_name or ""
+
+    @property
+    def state(self) -> DuckState:
+        """Get current duck state."""
+        return self._envelope.state
 
     @property
     def config(self) -> DuckConfig:
@@ -304,6 +358,14 @@ class DuckingInstance:
         self._triggered = False
         self._envelope.reset()
 
+    def __str__(self) -> str:
+        """String representation."""
+        return f"DuckingInstance({self.source} -> {self.target}, {self._config.amount_db}dB)"
+
+    def __repr__(self) -> str:
+        """Detailed representation."""
+        return f"DuckingInstance(id={self.id!r}, source={self.source!r}, target={self.target!r})"
+
 
 class DuckingManager:
     """
@@ -319,12 +381,77 @@ class DuckingManager:
         All operations are protected by a lock.
     """
 
-    def __init__(self) -> None:
-        """Initialize the ducking manager."""
+    def __init__(self, mixer: "Mixer | None" = None) -> None:
+        """Initialize the ducking manager.
+
+        Args:
+            mixer: Optional mixer reference for bus resolution.
+        """
         self._lock = threading.RLock()
         self._instances: dict[str, DuckingInstance] = {}
         self._bus_duck_amounts: dict[str, float] = {}  # bus_id -> total duck linear
         self._on_duck_change: list[Callable[[MixBus, float], None]] = []
+        self._mixer = mixer
+
+    # =========================================================================
+    # Simple Duck API
+    # =========================================================================
+
+    def apply_duck(
+        self,
+        source: str,
+        target: str,
+        amount_db: float = DIALOGUE_DUCK_AMOUNT_DB,
+        attack_ms: float = DUCK_ATTACK_MS,
+        release_ms: float = DUCK_RELEASE_MS,
+        priority: int = 100,
+    ) -> str:
+        """
+        Apply ducking with string-based bus names.
+
+        Args:
+            source: Name of source bus that triggers ducking.
+            target: Name of target bus to duck.
+            amount_db: Duck amount in dB.
+            attack_ms: Attack time in ms.
+            release_ms: Release time in ms.
+            priority: Duck priority (higher takes precedence).
+
+        Returns:
+            ID of the created ducking instance.
+        """
+        config = DuckConfig(
+            name=f"{source}_to_{target}",
+            duck_type=DuckType.DIALOGUE,
+            source_bus=None,  # Will be resolved by mixer
+            target_buses=[],  # Will be resolved by mixer
+            amount_db=amount_db,
+            attack_ms=attack_ms,
+            release_ms=release_ms,
+            priority=priority,
+        )
+        instance = self.create_duck(config)
+        return instance.id
+
+    def release_duck(self, duck_id: str) -> bool:
+        """
+        Release a ducking instance by ID (starts release envelope).
+
+        The instance will be automatically removed after the release completes.
+
+        Args:
+            duck_id: ID of ducking to release.
+
+        Returns:
+            True if found and released.
+        """
+        with self._lock:
+            instance = self._instances.get(duck_id)
+            if instance:
+                instance.release()
+                instance._released = True
+                return True
+            return False
 
     # =========================================================================
     # Configuration
@@ -386,6 +513,90 @@ class DuckingManager:
                 d for d in self._instances.values()
                 if bus in d.config.target_buses
             ]
+
+    def get_active_ducks(self) -> list[DuckingInstance]:
+        """Get all active ducking instances."""
+        with self._lock:
+            return list(self._instances.values())
+
+    @property
+    def active_duck_count(self) -> int:
+        """Get count of registered ducking instances."""
+        with self._lock:
+            return len(self._instances)
+
+    def release_all(self) -> None:
+        """Release all active ducks and mark for removal."""
+        with self._lock:
+            for instance in self._instances.values():
+                instance.release()
+                instance._released = True  # Mark for removal after release completes
+
+    def get_duck_state(self, duck_id: str) -> Optional[DuckState]:
+        """Get the state of a ducking instance.
+
+        Args:
+            duck_id: ID of duck to query.
+
+        Returns:
+            DuckState if found, None otherwise.
+        """
+        with self._lock:
+            instance = self._instances.get(duck_id)
+            if instance:
+                return instance.envelope.state
+            return None
+
+    def apply_dialogue_duck(self, target: str, amount_db: float = DIALOGUE_DUCK_AMOUNT_DB) -> str:
+        """Apply dialogue ducking to a target bus.
+
+        Args:
+            target: Name of target bus to duck.
+            amount_db: Duck amount in dB.
+
+        Returns:
+            ID of the created ducking instance.
+        """
+        return self.apply_duck(
+            source="vo",
+            target=target,
+            amount_db=amount_db,
+        )
+
+    def apply_event_duck(self, target: str, amount_db: float = EVENT_DUCK_AMOUNT_DB) -> str:
+        """Apply event ducking to a target bus.
+
+        Args:
+            target: Name of target bus to duck.
+            amount_db: Duck amount in dB.
+
+        Returns:
+            ID of the created ducking instance.
+        """
+        return self.apply_duck(
+            source="event",
+            target=target,
+            amount_db=amount_db,
+            attack_ms=EVENT_DUCK_ATTACK_MS,
+        )
+
+    def apply_focus_duck(self, target: str, amount_db: float = FOCUS_DUCK_AMOUNT_DB) -> str:
+        """Apply focus ducking to a target bus.
+
+        Args:
+            target: Name of target bus to duck.
+            amount_db: Duck amount in dB.
+
+        Returns:
+            ID of the created ducking instance.
+        """
+        return self.apply_duck(
+            source="focus",
+            target=target,
+            amount_db=amount_db,
+            attack_ms=FOCUS_DUCK_ATTACK_MS,
+            release_ms=FOCUS_DUCK_RELEASE_MS,
+        )
 
     # =========================================================================
     # Preset Configurations
@@ -495,12 +706,20 @@ class DuckingManager:
             # Reset bus duck amounts
             self._bus_duck_amounts.clear()
 
+            # Track instances to remove (finished releasing)
+            to_remove = []
+
             # Update all instances and accumulate duck amounts
-            for instance in self._instances.values():
+            for instance_id, instance in self._instances.items():
                 if not instance.config.enabled:
                     continue
 
                 instance.update(delta_time)
+
+                # Check if this instance was released and has finished (IDLE with amount 0)
+                if instance._released and not instance.is_active:
+                    to_remove.append(instance_id)
+                    continue
 
                 if instance.is_active:
                     duck_linear = instance.current_duck_linear
@@ -508,6 +727,10 @@ class DuckingManager:
                         current = self._bus_duck_amounts.get(bus.id, 1.0)
                         # Multiply ducks together (most aggressive wins)
                         self._bus_duck_amounts[bus.id] = min(current, duck_linear)
+
+            # Remove finished instances
+            for instance_id in to_remove:
+                del self._instances[instance_id]
 
             # Copy for callback notification
             changes = dict(self._bus_duck_amounts)

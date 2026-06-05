@@ -943,7 +943,7 @@ class NavMesh:
     # Runtime Operations
     # =========================================================================
 
-    def add_polygon(self, vertices: List[Vector3], area_type: int = 1) -> int:
+    def add_polygon(self, vertices: List[Vector3], area_type: int = 0) -> int:
         """Add a polygon manually (for dynamic NavMesh)."""
         polygon = NavMeshPolygon(
             id=self._next_polygon_id,
@@ -952,6 +952,18 @@ class NavMesh:
         )
         self._polygons[polygon.id] = polygon
         self._next_polygon_id += 1
+
+        # Incrementally build adjacency with existing polygons
+        threshold = self.params.cell_size * 0.5
+        for other_id, other_poly in self._polygons.items():
+            if other_id == polygon.id:
+                continue
+            if self._polygons_share_edge(polygon, other_poly, threshold):
+                if other_id not in polygon.neighbors:
+                    polygon.neighbors.append(other_id)
+                if polygon.id not in other_poly.neighbors:
+                    other_poly.neighbors.append(polygon.id)
+
         return polygon.id
 
     def remove_polygon(self, polygon_id: int) -> bool:

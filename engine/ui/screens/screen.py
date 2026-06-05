@@ -484,9 +484,8 @@ class Screen(ABC):
         self._on_resume_callbacks.clear()
         self._on_state_change_callbacks.clear()
 
-        # Clear params and result
+        # Clear params (but preserve result for callers to read after pop)
         self._params.clear()
-        self._result = None
 
     # =========================================================================
     # LIFECYCLE METHODS (OVERRIDE THESE)

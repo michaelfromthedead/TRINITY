@@ -117,6 +117,13 @@ from engine.rendering.lighting.gi_ddgi import (
     RayResult,
     DDGIUpdatePass,
     DDGILookup,
+    # Quality presets and camera-relative grid (T-GIR-P2.1)
+    DDGIQualityPreset,
+    DDGIConfig,
+    DDGICameraRelativeGrid,
+    get_preset_params,
+    estimate_gpu_memory,
+    _QUALITY_PARAMS,
 )
 
 __all__ = [
@@ -202,4 +209,11 @@ __all__ = [
     "RayResult",
     "DDGIUpdatePass",
     "DDGILookup",
+    # Quality presets and camera-relative grid (T-GIR-P2.1)
+    "DDGIQualityPreset",
+    "DDGIConfig",
+    "DDGICameraRelativeGrid",
+    "get_preset_params",
+    "estimate_gpu_memory",
+    "_QUALITY_PARAMS",
 ]

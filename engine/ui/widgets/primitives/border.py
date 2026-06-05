@@ -7,9 +7,10 @@ Supports customizable border width, color, corner radius, and fill.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class BorderSide(Enum):
@@ -21,7 +22,59 @@ class BorderSide(Enum):
     ALL = auto()
 
 
-@dataclass(slots=True)
+def _validate_color(value: Any) -> Tuple[float, float, float, float]:
+    """Validate and normalize color value."""
+    if isinstance(value, str):
+        return _parse_hex_color(value)
+    elif isinstance(value, (tuple, list)):
+        if len(value) == 3:
+            r, g, b = value
+            a = 1.0
+        elif len(value) == 4:
+            r, g, b, a = value
+        else:
+            raise ValueError(f"Color must have 3 or 4 components, got {len(value)}")
+
+        return (float(r), float(g), float(b), float(a))
+    else:
+        raise ValueError(f"Invalid color type: {type(value)}")
+
+
+def _parse_hex_color(hex_str: str) -> Tuple[float, float, float, float]:
+    """Parse hex color string to RGBA tuple."""
+    if not hex_str.startswith("#"):
+        raise ValueError("Hex color must start with #")
+
+    hex_str = hex_str[1:]
+    length = len(hex_str)
+
+    if length == 3:  # #RGB
+        r = int(hex_str[0] * 2, 16) / 255.0
+        g = int(hex_str[1] * 2, 16) / 255.0
+        b = int(hex_str[2] * 2, 16) / 255.0
+        a = 1.0
+    elif length == 4:  # #RGBA
+        r = int(hex_str[0] * 2, 16) / 255.0
+        g = int(hex_str[1] * 2, 16) / 255.0
+        b = int(hex_str[2] * 2, 16) / 255.0
+        a = int(hex_str[3] * 2, 16) / 255.0
+    elif length == 6:  # #RRGGBB
+        r = int(hex_str[0:2], 16) / 255.0
+        g = int(hex_str[2:4], 16) / 255.0
+        b = int(hex_str[4:6], 16) / 255.0
+        a = 1.0
+    elif length == 8:  # #RRGGBBAA
+        r = int(hex_str[0:2], 16) / 255.0
+        g = int(hex_str[2:4], 16) / 255.0
+        b = int(hex_str[4:6], 16) / 255.0
+        a = int(hex_str[6:8], 16) / 255.0
+    else:
+        raise ValueError(f"Invalid hex color length: {length}")
+
+    return (r, g, b, a)
+
+
+@dataclass
 class CornerRadius:
     """Corner radius configuration for rounded borders.
 
@@ -35,6 +88,17 @@ class CornerRadius:
     top_right: float = 0.0
     bottom_right: float = 0.0
     bottom_left: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Validate corner radius values."""
+        if self.top_left < 0:
+            raise ValueError(f"top_left must be >= 0, got {self.top_left}")
+        if self.top_right < 0:
+            raise ValueError(f"top_right must be >= 0, got {self.top_right}")
+        if self.bottom_right < 0:
+            raise ValueError(f"bottom_right must be >= 0, got {self.bottom_right}")
+        if self.bottom_left < 0:
+            raise ValueError(f"bottom_left must be >= 0, got {self.bottom_left}")
 
     @classmethod
     def uniform(cls, radius: float) -> "CornerRadius":
@@ -59,30 +123,122 @@ class CornerRadius:
             self.bottom_right == self.bottom_left
         )
 
+    @property
+    def is_zero(self) -> bool:
+        """Check if all corners have zero radius."""
+        return (
+            self.top_left == 0.0 and
+            self.top_right == 0.0 and
+            self.bottom_right == 0.0 and
+            self.bottom_left == 0.0
+        )
 
-@dataclass(slots=True)
+    @property
+    def max_radius(self) -> float:
+        """Get the maximum radius value."""
+        return max(
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        )
+
+    def to_dict(self) -> Dict[str, float]:
+        """Serialize to dictionary."""
+        return {
+            "top_left": self.top_left,
+            "top_right": self.top_right,
+            "bottom_right": self.bottom_right,
+            "bottom_left": self.bottom_left,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CornerRadius":
+        """Deserialize from dictionary."""
+        return cls(
+            top_left=data.get("top_left", 0.0),
+            top_right=data.get("top_right", 0.0),
+            bottom_right=data.get("bottom_right", 0.0),
+            bottom_left=data.get("bottom_left", 0.0),
+        )
+
+
+# Valid border style types
+VALID_BORDER_STYLES = {
+    "none", "solid", "dashed", "dotted", "double",
+    "groove", "ridge", "inset", "outset",
+}
+
+
+@dataclass
 class BorderStyle:
     """Style configuration for border appearance.
 
     Attributes:
-        color: Border color (hex string)
+        style: Border style type (solid, dashed, dotted, etc.)
         width: Border width in pixels
-        corner_radius: Corner radius configuration
+        color: Border color (RGBA tuple or hex string)
         fill_color: Optional fill color for interior
         opacity: Border opacity (0.0-1.0)
-        dash_pattern: Optional dash pattern (e.g., [5, 3] for dashed)
+        dash_length: Length of dash for dashed style
+        gap_length: Length of gap for dashed style
     """
-    color: str = "#000000"
+    style: str = "solid"
     width: float = 1.0
-    corner_radius: CornerRadius = None
-    fill_color: Optional[str] = None
+    color: Union[Tuple[float, float, float, float], str] = field(
+        default=(0.0, 0.0, 0.0, 1.0)
+    )
+    fill_color: Optional[Union[Tuple[float, float, float, float], str]] = None
     opacity: float = 1.0
-    dash_pattern: Optional[list[float]] = None
+    dash_length: float = 5.0
+    gap_length: float = 3.0
 
     def __post_init__(self) -> None:
-        """Initialize defaults."""
-        if self.corner_radius is None:
-            self.corner_radius = CornerRadius()
+        """Validate border style."""
+        if self.style not in VALID_BORDER_STYLES:
+            raise ValueError(
+                f"Invalid border style '{self.style}'. "
+                f"Must be one of: {VALID_BORDER_STYLES}"
+            )
+        if self.width < 0:
+            raise ValueError(f"width must be >= 0, got {self.width}")
+
+        # Convert color to tuple if hex string
+        if isinstance(self.color, str):
+            object.__setattr__(self, 'color', _validate_color(self.color))
+
+    @property
+    def is_visible(self) -> bool:
+        """Check if border is visible."""
+        return self.style != "none" and self.width > 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        data = {
+            "style": self.style,
+            "width": self.width,
+            "color": self.color,
+            "opacity": self.opacity,
+        }
+        if self.fill_color is not None:
+            data["fill_color"] = self.fill_color
+        if self.style == "dashed":
+            data["dash_length"] = self.dash_length
+            data["gap_length"] = self.gap_length
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BorderStyle":
+        """Deserialize from dictionary."""
+        return cls(
+            style=data.get("style", "solid"),
+            width=data.get("width", 1.0),
+            color=data.get("color", (0.0, 0.0, 0.0, 1.0)),
+            fill_color=data.get("fill_color"),
+            opacity=data.get("opacity", 1.0),
+            dash_length=data.get("dash_length", 5.0),
+            gap_length=data.get("gap_length", 3.0),
+        )
 
 
 class Border:
@@ -97,38 +253,42 @@ class Border:
     Attributes:
         x: X position
         y: Y position
-        width: Border width
-        height: Border height
+        width: Border widget width
+        height: Border widget height
         style: Border style configuration
+        corner_radius: Corner radius configuration
     """
 
     __slots__ = (
         '_x', '_y', '_width', '_height',
-        '_style', '_is_visible', '_dirty',
+        '_style', '_corner_radius', '_is_visible', '_dirty',
     )
 
     def __init__(
         self,
         x: float = 0.0,
         y: float = 0.0,
-        width: float = 100.0,
-        height: float = 100.0,
+        width: float = 0.0,
+        height: float = 0.0,
         style: Optional[BorderStyle] = None,
+        corner_radius: Optional[CornerRadius] = None,
     ) -> None:
         """Initialize the border widget.
 
         Args:
             x: X position
             y: Y position
-            width: Border width
-            height: Border height
+            width: Border widget width
+            height: Border widget height
             style: Border style configuration
+            corner_radius: Corner radius configuration
         """
         self._x = x
         self._y = y
         self._width = max(0.0, width)
         self._height = max(0.0, height)
         self._style = style or BorderStyle()
+        self._corner_radius = corner_radius or CornerRadius()
         self._is_visible = True
         self._dirty = True
 
@@ -194,6 +354,17 @@ class Border:
         self._dirty = True
 
     @property
+    def corner_radius(self) -> CornerRadius:
+        """Get corner radius."""
+        return self._corner_radius
+
+    @corner_radius.setter
+    def corner_radius(self, value: CornerRadius) -> None:
+        """Set corner radius."""
+        self._corner_radius = value
+        self._dirty = True
+
+    @property
     def is_visible(self) -> bool:
         """Check if border is visible."""
         return self._is_visible
@@ -241,6 +412,109 @@ class Border:
         return (
             self._x <= px <= self._x + self._width and
             self._y <= py <= self._y + self._height
+        )
+
+    def get_path_points(self, segments_per_corner: int = 8) -> List[Tuple[float, float]]:
+        """Get path points for rendering the border.
+
+        Args:
+            segments_per_corner: Number of segments per rounded corner
+
+        Returns:
+            List of (x, y) points forming the border path
+        """
+        points: List[Tuple[float, float]] = []
+        x, y = self._x, self._y
+        w, h = self._width, self._height
+        r = self._corner_radius
+
+        # Start at top-left after corner
+        if r.top_left > 0:
+            # Add top-left corner arc
+            cx, cy = x + r.top_left, y + r.top_left
+            for i in range(segments_per_corner + 1):
+                angle = math.pi + (math.pi / 2) * (i / segments_per_corner)
+                px = cx + r.top_left * math.cos(angle)
+                py = cy + r.top_left * math.sin(angle)
+                points.append((px, py))
+        else:
+            points.append((x, y))
+
+        # Top edge to top-right
+        if r.top_right > 0:
+            # Add top-right corner arc
+            cx, cy = x + w - r.top_right, y + r.top_right
+            for i in range(segments_per_corner + 1):
+                angle = -math.pi / 2 + (math.pi / 2) * (i / segments_per_corner)
+                px = cx + r.top_right * math.cos(angle)
+                py = cy + r.top_right * math.sin(angle)
+                points.append((px, py))
+        else:
+            points.append((x + w, y))
+
+        # Right edge to bottom-right
+        if r.bottom_right > 0:
+            # Add bottom-right corner arc
+            cx, cy = x + w - r.bottom_right, y + h - r.bottom_right
+            for i in range(segments_per_corner + 1):
+                angle = 0 + (math.pi / 2) * (i / segments_per_corner)
+                px = cx + r.bottom_right * math.cos(angle)
+                py = cy + r.bottom_right * math.sin(angle)
+                points.append((px, py))
+        else:
+            points.append((x + w, y + h))
+
+        # Bottom edge to bottom-left
+        if r.bottom_left > 0:
+            # Add bottom-left corner arc
+            cx, cy = x + r.bottom_left, y + h - r.bottom_left
+            for i in range(segments_per_corner + 1):
+                angle = math.pi / 2 + (math.pi / 2) * (i / segments_per_corner)
+                px = cx + r.bottom_left * math.cos(angle)
+                py = cy + r.bottom_left * math.sin(angle)
+                points.append((px, py))
+        else:
+            points.append((x, y + h))
+
+        return points
+
+    def get_vertices(self) -> List[Tuple[float, float]]:
+        """Get vertices for mesh rendering.
+
+        Returns:
+            List of (x, y) vertices for rendering
+        """
+        return self.get_path_points()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize border to dictionary."""
+        return {
+            "x": self._x,
+            "y": self._y,
+            "width": self._width,
+            "height": self._height,
+            "style": self._style.to_dict(),
+            "corner_radius": self._corner_radius.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Border":
+        """Deserialize border from dictionary."""
+        style = None
+        if "style" in data:
+            style = BorderStyle.from_dict(data["style"])
+
+        corner_radius = None
+        if "corner_radius" in data:
+            corner_radius = CornerRadius.from_dict(data["corner_radius"])
+
+        return cls(
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            width=data.get("width", 0.0),
+            height=data.get("height", 0.0),
+            style=style,
+            corner_radius=corner_radius,
         )
 
     def __repr__(self) -> str:

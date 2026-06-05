@@ -553,10 +553,16 @@ class MetadataEditor:
         tag_name = tag.name if isinstance(tag, MetadataTag) else tag
         result = []
 
-        for path in self._iterate_metadata_files():
-            metadata = self.get_metadata(path, create=False)
-            if metadata and metadata.has_tag(tag_name):
-                result.append(metadata.asset_path)
+        for metadata_path in self._iterate_metadata_files():
+            # Load metadata directly from the file since we're iterating metadata files
+            try:
+                with open(metadata_path, "r") as f:
+                    data = json.load(f)
+                metadata = AssetMetadata.from_dict(data)
+                if metadata.has_tag(tag_name):
+                    result.append(metadata.asset_path)
+            except Exception:
+                continue
 
         return result
 

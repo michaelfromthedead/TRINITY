@@ -133,9 +133,28 @@ class TrackedDescriptor(BaseDescriptor[T]):
 
 
 def is_dirty(obj: Any, field_name: str) -> bool:
-    """Check if a field is marked as dirty."""
+    """Check if a field is marked as dirty.
+
+    Supports both set-based tracking (_dirty_fields) and bitmask tracking
+    (_dirty_mask). For bitmask tracking, the field's descriptor must have
+    a field_offset attribute.
+    """
+    # Check set-based tracking first
     dirty_fields = getattr(obj, "_dirty_fields", set())
-    return field_name in dirty_fields
+    if field_name in dirty_fields:
+        return True
+
+    # Check bitmask tracking
+    dirty_mask = getattr(obj, "_dirty_mask", 0)
+    if dirty_mask:
+        # Get the descriptor from the class to find field_offset
+        descriptor = getattr(type(obj), field_name, None)
+        if descriptor is not None:
+            field_offset = getattr(descriptor, "_field_offset", None)
+            if field_offset is not None:
+                return bool(dirty_mask & (1 << field_offset))
+
+    return False
 
 
 def get_dirty_fields(obj: Any) -> set[str]:

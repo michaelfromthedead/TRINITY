@@ -56,6 +56,23 @@ class BusType(Enum):
     AUX = "aux"
 
 
+class BusStatus(Enum):
+    """Runtime status of a bus."""
+    ACTIVE = "active"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    SUSPENDED = "suspended"
+    STOPPING = "stopping"
+
+
+class FilterStateEnum(Enum):
+    """Filter state enumeration for MixBus filter_state property."""
+    DISABLED = "disabled"
+    LOW_PASS = "low_pass"
+    HIGH_PASS = "high_pass"
+    BOTH = "both"
+
+
 @dataclass
 class FilterState:
     """State of bus filters (low-pass and high-pass)."""
@@ -89,12 +106,23 @@ class FilterState:
 
 @dataclass
 class BusState:
-    """Complete state of a mix bus for snapshots."""
+    """Complete state of a mix bus for snapshots.
+
+    Also provides enum-like class attributes for runtime status compatibility.
+    Use BusState.ACTIVE, BusState.PAUSED, etc. for status comparisons.
+    """
     volume_linear: float = DEFAULT_BUS_VOLUME
     pitch: float = DEFAULT_PITCH
     muted: bool = False
     soloed: bool = False
     filters: FilterState = field(default_factory=FilterState)
+
+    # Class-level enum-like values for runtime status (for backward compatibility)
+    ACTIVE: BusStatus = None  # Will be set after BusStatus is defined
+    PAUSED: BusStatus = None
+    STOPPED: BusStatus = None
+    SUSPENDED: BusStatus = None
+    STOPPING: BusStatus = None
 
     def copy(self) -> BusState:
         """Create a copy of this bus state."""
@@ -105,6 +133,14 @@ class BusState:
             soloed=self.soloed,
             filters=self.filters.copy(),
         )
+
+
+# Set the class-level enum values after both classes are defined
+BusState.ACTIVE = BusStatus.ACTIVE
+BusState.PAUSED = BusStatus.PAUSED
+BusState.STOPPED = BusStatus.STOPPED
+BusState.SUSPENDED = BusStatus.SUSPENDED
+BusState.STOPPING = BusStatus.STOPPING
 
 
 class MixBus:
@@ -142,11 +178,14 @@ class MixBus:
         self._bus_type = bus_type
         self._lock = threading.RLock()
 
-        # State
-        self._state = BusState(
+        # State (snapshot data)
+        self._snapshot = BusState(
             volume_linear=clamp(volume, 0.0, db_to_linear(MAX_VOLUME_DB)),
             pitch=clamp(pitch, MIN_PITCH, MAX_PITCH),
         )
+
+        # Runtime status
+        self._status = BusStatus.ACTIVE
 
         # DSP chain for bus effects
         self._effect_chain = DSPChain()
@@ -191,6 +230,11 @@ class MixBus:
         with self._lock:
             return self._parent
 
+    @parent.setter
+    def parent(self, value: Optional[MixBus]) -> None:
+        """Set parent bus."""
+        self.set_parent(value)
+
     @property
     def children(self) -> list[MixBus]:
         """Child buses (read-only copy)."""
@@ -205,27 +249,27 @@ class MixBus:
     def volume(self) -> float:
         """Volume in linear scale (0.0 to ~4.0)."""
         with self._lock:
-            return self._state.volume_linear
+            return self._snapshot.volume_linear
 
     @volume.setter
     def volume(self, value: float) -> None:
         """Set volume in linear scale."""
         with self._lock:
-            self._state.volume_linear = clamp(value, 0.0, db_to_linear(MAX_VOLUME_DB))
+            self._snapshot.volume_linear = clamp(value, 0.0, db_to_linear(MAX_VOLUME_DB))
             self._notify_change()
 
     @property
     def volume_db(self) -> float:
         """Volume in decibels (-80 to +12 dB)."""
         with self._lock:
-            return linear_to_db(self._state.volume_linear)
+            return linear_to_db(self._snapshot.volume_linear)
 
     @volume_db.setter
     def volume_db(self, value: float) -> None:
         """Set volume in decibels."""
         value = clamp(value, MIN_VOLUME_DB, MAX_VOLUME_DB)
         with self._lock:
-            self._state.volume_linear = db_to_linear(value)
+            self._snapshot.volume_linear = db_to_linear(value)
             self._notify_change()
 
     def get_effective_volume(self) -> float:
@@ -236,18 +280,18 @@ class MixBus:
             Combined volume from this bus and all parents (linear).
         """
         with self._lock:
-            if self._state.muted:
+            if self._snapshot.muted:
                 return 0.0
 
-            volume = self._state.volume_linear
+            volume = self._snapshot.volume_linear
             parent = self._parent
 
         # Walk up the hierarchy (outside lock to avoid deadlock)
         while parent is not None:
             with parent._lock:
-                if parent._state.muted:
+                if parent._snapshot.muted:
                     return 0.0
-                volume *= parent._state.volume_linear
+                volume *= parent._snapshot.volume_linear
                 parent = parent._parent
 
         return volume
@@ -278,13 +322,13 @@ class MixBus:
     def pitch(self) -> float:
         """Pitch multiplier (0.1 to 4.0)."""
         with self._lock:
-            return self._state.pitch
+            return self._snapshot.pitch
 
     @pitch.setter
     def pitch(self, value: float) -> None:
         """Set pitch multiplier."""
         with self._lock:
-            self._state.pitch = clamp(value, MIN_PITCH, MAX_PITCH)
+            self._snapshot.pitch = clamp(value, MIN_PITCH, MAX_PITCH)
             self._notify_change()
 
     def get_effective_pitch(self) -> float:
@@ -295,12 +339,12 @@ class MixBus:
             Combined pitch from this bus and all parents.
         """
         with self._lock:
-            pitch = self._state.pitch
+            pitch = self._snapshot.pitch
             parent = self._parent
 
         while parent is not None:
             with parent._lock:
-                pitch *= parent._state.pitch
+                pitch *= parent._snapshot.pitch
                 parent = parent._parent
 
         return clamp(pitch, MIN_PITCH, MAX_PITCH)
@@ -313,41 +357,41 @@ class MixBus:
     def muted(self) -> bool:
         """Whether this bus is muted."""
         with self._lock:
-            return self._state.muted
+            return self._snapshot.muted
 
     @muted.setter
     def muted(self, value: bool) -> None:
         """Set mute state."""
         with self._lock:
-            self._state.muted = value
+            self._snapshot.muted = value
             self._notify_change()
 
     @property
     def soloed(self) -> bool:
         """Whether this bus is soloed."""
         with self._lock:
-            return self._state.soloed
+            return self._snapshot.soloed
 
     @soloed.setter
     def soloed(self, value: bool) -> None:
         """Set solo state."""
         with self._lock:
-            self._state.soloed = value
+            self._snapshot.soloed = value
             self._notify_change()
 
     def toggle_mute(self) -> bool:
         """Toggle mute state. Returns new state."""
         with self._lock:
-            self._state.muted = not self._state.muted
+            self._snapshot.muted = not self._snapshot.muted
             self._notify_change()
-            return self._state.muted
+            return self._snapshot.muted
 
     def toggle_solo(self) -> bool:
         """Toggle solo state. Returns new state."""
         with self._lock:
-            self._state.soloed = not self._state.soloed
+            self._snapshot.soloed = not self._snapshot.soloed
             self._notify_change()
-            return self._state.soloed
+            return self._snapshot.soloed
 
     # =========================================================================
     # Filters
@@ -357,7 +401,7 @@ class MixBus:
     def filters(self) -> FilterState:
         """Get a copy of the filter state."""
         with self._lock:
-            return self._state.filters.copy()
+            return self._snapshot.filters.copy()
 
     def set_low_pass(
         self,
@@ -374,11 +418,11 @@ class MixBus:
             enabled: Whether filter is active
         """
         with self._lock:
-            self._state.filters.low_pass_freq = clamp(
+            self._snapshot.filters.low_pass_freq = clamp(
                 frequency, MIN_FILTER_FREQ, MAX_FILTER_FREQ
             )
-            self._state.filters.low_pass_q = max(0.1, q)
-            self._state.filters.low_pass_enabled = enabled
+            self._snapshot.filters.low_pass_q = max(0.1, q)
+            self._snapshot.filters.low_pass_enabled = enabled
             self._notify_change()
 
     def set_high_pass(
@@ -396,18 +440,111 @@ class MixBus:
             enabled: Whether filter is active
         """
         with self._lock:
-            self._state.filters.high_pass_freq = clamp(
+            self._snapshot.filters.high_pass_freq = clamp(
                 frequency, MIN_FILTER_FREQ, MAX_FILTER_FREQ
             )
-            self._state.filters.high_pass_q = max(0.1, q)
-            self._state.filters.high_pass_enabled = enabled
+            self._snapshot.filters.high_pass_q = max(0.1, q)
+            self._snapshot.filters.high_pass_enabled = enabled
             self._notify_change()
 
     def reset_filters(self) -> None:
         """Reset all filters to default state."""
         with self._lock:
-            self._state.filters.reset()
+            self._snapshot.filters.reset()
             self._notify_change()
+
+    def enable_low_pass(self, frequency: float, q: float = FILTER_Q) -> None:
+        """
+        Enable low-pass filter with given cutoff frequency.
+
+        Args:
+            frequency: Cutoff frequency in Hz (20 to 20000)
+            q: Filter Q factor (resonance)
+        """
+        self.set_low_pass(frequency, q, enabled=True)
+
+    def enable_high_pass(self, frequency: float, q: float = FILTER_Q) -> None:
+        """
+        Enable high-pass filter with given cutoff frequency.
+
+        Args:
+            frequency: Cutoff frequency in Hz (20 to 20000)
+            q: Filter Q factor (resonance)
+        """
+        self.set_high_pass(frequency, q, enabled=True)
+
+    def disable_filters(self) -> None:
+        """Disable all filters (low-pass and high-pass)."""
+        with self._lock:
+            self._snapshot.filters.low_pass_enabled = False
+            self._snapshot.filters.high_pass_enabled = False
+            self._notify_change()
+
+    @property
+    def low_pass_freq(self) -> float:
+        """Get the low-pass filter cutoff frequency."""
+        with self._lock:
+            return self._snapshot.filters.low_pass_freq
+
+    @property
+    def high_pass_freq(self) -> float:
+        """Get the high-pass filter cutoff frequency."""
+        with self._lock:
+            return self._snapshot.filters.high_pass_freq
+
+    @low_pass_freq.setter
+    def low_pass_freq(self, value: float) -> None:
+        """Set the low-pass filter cutoff frequency."""
+        with self._lock:
+            self._snapshot.filters.low_pass_freq = clamp(
+                value, MIN_FILTER_FREQ, MAX_FILTER_FREQ
+            )
+            self._notify_change()
+
+    @high_pass_freq.setter
+    def high_pass_freq(self, value: float) -> None:
+        """Set the high-pass filter cutoff frequency."""
+        with self._lock:
+            self._snapshot.filters.high_pass_freq = clamp(
+                value, MIN_FILTER_FREQ, MAX_FILTER_FREQ
+            )
+            self._notify_change()
+
+    @property
+    def filter_state(self) -> "FilterStateEnum":
+        """Get the current filter state as an enum."""
+        with self._lock:
+            lp = self._snapshot.filters.low_pass_enabled
+            hp = self._snapshot.filters.high_pass_enabled
+            if lp and hp:
+                return FilterStateEnum.BOTH
+            elif lp:
+                return FilterStateEnum.LOW_PASS
+            elif hp:
+                return FilterStateEnum.HIGH_PASS
+            else:
+                return FilterStateEnum.DISABLED
+
+    @property
+    def effective_volume(self) -> float:
+        """Get effective volume considering hierarchy and mute state (property alias)."""
+        return self.get_effective_volume()
+
+    def fade_to_volume(self, target: float, duration: float) -> None:
+        """
+        Start fading to a target volume over duration.
+
+        Args:
+            target: Target volume (linear).
+            duration: Fade duration in seconds.
+        """
+        # Simple implementation - store fade parameters
+        # Actual fading would be handled by update loop
+        with self._lock:
+            self._fade_target = target
+            self._fade_duration = duration
+            self._fade_start_volume = self._snapshot.volume_linear
+            self._fade_elapsed = 0.0
 
     # =========================================================================
     # DSP Chain
@@ -517,15 +654,15 @@ class MixBus:
             Processed audio (MIXER_NUM_CHANNELS, num_samples) float32, clipped to [-1, 1].
         """
         with self._lock:
-            if self._state.muted:
+            if self._snapshot.muted:
                 return np.zeros((MIXER_NUM_CHANNELS, num_samples), dtype=np.float32)
-            volume = self._state.volume_linear
-            lp_enabled = self._state.filters.low_pass_enabled
-            lp_freq = self._state.filters.low_pass_freq
-            lp_q = self._state.filters.low_pass_q
-            hp_enabled = self._state.filters.high_pass_enabled
-            hp_freq = self._state.filters.high_pass_freq
-            hp_q = self._state.filters.high_pass_q
+            volume = self._snapshot.volume_linear
+            lp_enabled = self._snapshot.filters.low_pass_enabled
+            lp_freq = self._snapshot.filters.low_pass_freq
+            lp_q = self._snapshot.filters.low_pass_q
+            hp_enabled = self._snapshot.filters.high_pass_enabled
+            hp_freq = self._snapshot.filters.high_pass_freq
+            hp_q = self._snapshot.filters.high_pass_q
 
         raw = self.read_acc_buffer(num_samples)
 
@@ -671,26 +808,56 @@ class MixBus:
     # State Management
     # =========================================================================
 
-    def get_state(self) -> BusState:
-        """Get a copy of the current bus state."""
+    @property
+    def state(self) -> BusStatus:
+        """Get the current runtime status (active/paused/stopped)."""
         with self._lock:
-            return self._state.copy()
+            return self._status
+
+    @state.setter
+    def state(self, value: BusStatus) -> None:
+        """Set the runtime status."""
+        with self._lock:
+            self._status = value
+            self._notify_change()
+
+    def get_state(self) -> BusState:
+        """Get a copy of the current bus state (for snapshots)."""
+        with self._lock:
+            return self._snapshot.copy()
 
     def set_state(self, state: BusState) -> None:
         """
-        Set the bus state.
+        Set the bus state (for snapshots).
 
         Args:
             state: New state to apply.
         """
         with self._lock:
-            self._state = state.copy()
+            self._snapshot = state.copy()
+            self._notify_change()
+
+    def get_snapshot(self) -> BusState:
+        """Get a copy of the current bus state snapshot."""
+        with self._lock:
+            return self._snapshot.copy()
+
+    def set_snapshot(self, snapshot: BusState) -> None:
+        """
+        Set the bus state from a snapshot.
+
+        Args:
+            snapshot: New state to apply.
+        """
+        with self._lock:
+            self._snapshot = snapshot.copy()
             self._notify_change()
 
     def reset(self) -> None:
         """Reset bus to default state."""
         with self._lock:
-            self._state = BusState()
+            self._snapshot = BusState()
+            self._status = BusStatus.ACTIVE
             self._notify_change()
 
     # =========================================================================
@@ -734,6 +901,92 @@ class MixBus:
                 callback(self)
             except Exception:
                 pass  # Silently ignore callback errors
+
+    # =========================================================================
+    # Aux Sends
+    # =========================================================================
+
+    def add_send(
+        self,
+        target: MixBus,
+        level: float = 1.0,
+        pre_fader: bool = False,
+    ) -> None:
+        """
+        Add an aux send to a target bus.
+
+        Args:
+            target: Target bus for the send.
+            level: Send level (linear, 0.0 to 1.0+).
+            pre_fader: If True, send before fader.
+        """
+        from .bus_routing import AuxSend, RoutingMode
+
+        with self._lock:
+            if not hasattr(self, '_aux_sends'):
+                self._aux_sends: list = []
+
+            send = AuxSend(
+                source_bus=self,
+                target_bus=target,
+                send_level_db=linear_to_db(level) if level > 0 else -80.0,
+                mode=RoutingMode.PRE_FADER if pre_fader else RoutingMode.POST_FADER,
+                enabled=True,
+            )
+            self._aux_sends.append(send)
+
+    def get_sends(self) -> list:
+        """
+        Get all aux sends from this bus.
+
+        Returns:
+            List of AuxSend objects.
+        """
+        with self._lock:
+            if not hasattr(self, '_aux_sends'):
+                self._aux_sends = []
+            return list(self._aux_sends)
+
+    def set_send_level(self, target: MixBus, level: float) -> bool:
+        """
+        Set the send level to a target bus.
+
+        Args:
+            target: Target bus.
+            level: New send level (linear).
+
+        Returns:
+            True if send was found and updated.
+        """
+        with self._lock:
+            if not hasattr(self, '_aux_sends'):
+                return False
+
+            for send in self._aux_sends:
+                if send.target_bus is target or getattr(send, 'target', None) is target:
+                    send.send_level_db = linear_to_db(level) if level > 0 else -80.0
+                    return True
+            return False
+
+    def remove_send(self, target: MixBus) -> bool:
+        """
+        Remove an aux send to a target bus.
+
+        Args:
+            target: Target bus to remove send for.
+
+        Returns:
+            True if send was found and removed.
+        """
+        with self._lock:
+            if not hasattr(self, '_aux_sends'):
+                return False
+
+            for send in self._aux_sends:
+                if send.target_bus is target or getattr(send, 'target', None) is target:
+                    self._aux_sends.remove(send)
+                    return True
+            return False
 
     # =========================================================================
     # String Representation

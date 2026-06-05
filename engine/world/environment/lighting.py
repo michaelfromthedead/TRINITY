@@ -11,6 +11,19 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from engine.world.environment.constants import (
+    DEFAULT_LIGHT_INTENSITY,
+    DEFAULT_LIGHT_COLOR,
+    DEFAULT_SHADOW_CASCADE_COUNT,
+    DEFAULT_SHADOW_DISTANCE,
+    DEFAULT_SHADOW_BIAS,
+    DEFAULT_SHADOW_SOFTNESS,
+    DEFAULT_SUN_COLOR,
+    DEFAULT_MOON_COLOR,
+    DEFAULT_MOON_INTENSITY,
+    DEFAULT_AMBIENT_COLOR,
+    DEFAULT_AMBIENT_INTENSITY,
+)
 from engine.world.environment.time_of_day import (
     TimeOfDayController,
     TODLighting,

@@ -12,6 +12,8 @@ from enum import Enum, auto
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
+from foundation import registry
+
 if TYPE_CHECKING:
     from .quest_rewards import Reward
 
@@ -22,6 +24,16 @@ __all__ = [
     "QuestDefinition",
     "quest",
     "QuestRegistry",
+    # Foundation event types
+    "QuestStateChanged",
+    "ObjectiveProgress",
+    "ObjectiveCompleted",
+    "QuestRewardGranted",
+    # Event helpers
+    "fire_quest_event",
+    "get_quest_events",
+    "clear_quest_events",
+    "get_registered_quests",
 ]
 
 
@@ -171,67 +183,95 @@ class Quest:
             return False
         return True
 
-    def make_available(self) -> bool:
+    def _fire_state_changed(
+        self, old_state: QuestState, new_state: QuestState, timestamp: float
+    ) -> None:
+        """Fire a QuestStateChanged event."""
+        # Import here to avoid circular imports at module level
+        event = QuestStateChanged(
+            quest_id=self.id,
+            entity_id=self.player_id,
+            old_state=old_state,
+            new_state=new_state,
+            timestamp=timestamp,
+        )
+        fire_quest_event(event)
+
+    def make_available(self, timestamp: float = 0.0) -> bool:
         """Transition to AVAILABLE state."""
         if self.state != QuestState.UNAVAILABLE:
             return False
+        old_state = self.state
         self.state = QuestState.AVAILABLE
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
     def accept(self, timestamp: float) -> bool:
         """Accept the quest."""
         if self.state != QuestState.AVAILABLE:
             return False
+        old_state = self.state
         self.state = QuestState.ACTIVE
         self.accepted_at = timestamp
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
     def complete(self, timestamp: float) -> bool:
         """Mark quest as complete (objectives done)."""
         if self.state != QuestState.ACTIVE:
             return False
+        old_state = self.state
         self.state = QuestState.COMPLETE
         self.completed_at = timestamp
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
     def turn_in(self, timestamp: float) -> bool:
         """Turn in the quest and claim rewards."""
         if self.state != QuestState.COMPLETE:
             return False
+        old_state = self.state
         self.state = QuestState.TURNED_IN
         self.turned_in_at = timestamp
         self.times_completed += 1
         self.last_completed_at = timestamp
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
     def fail(self, timestamp: float) -> bool:
         """Mark quest as failed."""
         if self.state != QuestState.ACTIVE:
             return False
+        old_state = self.state
         self.state = QuestState.FAILED
         self.failed_at = timestamp
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
-    def reset(self) -> bool:
+    def reset(self, timestamp: float = 0.0) -> bool:
         """Reset quest for repeat."""
         if not self.can_repeat:
             return False
+        old_state = self.state
         self.state = QuestState.AVAILABLE
         self.accepted_at = None
         self.completed_at = None
         self.turned_in_at = None
         self.failed_at = None
         self.objective_progress.clear()
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
-    def abandon(self) -> bool:
+    def abandon(self, timestamp: float = 0.0) -> bool:
         """Abandon the quest."""
         if self.state not in (QuestState.ACTIVE, QuestState.COMPLETE):
             return False
+        old_state = self.state
         self.state = QuestState.AVAILABLE
         self.accepted_at = None
         self.completed_at = None
         self.objective_progress.clear()
+        self._fire_state_changed(old_state, self.state, timestamp)
         return True
 
 
@@ -423,9 +463,186 @@ def quest(
             cls._applied_decorators = set()  # type: ignore[attr-defined]
         cls._applied_decorators.add("quest")  # type: ignore[attr-defined]
 
-        # Register the quest
+        # Register the quest with QuestRegistry
         QuestRegistry.instance().register(quest_def)
+
+        # Register with Foundation Registry
+        registry.register(cls, name=f"quest.{id}")
+        registry.set_metadata(cls, "quest", True)
+        registry.set_metadata(cls, "quest_id", id)
+        registry.set_metadata(cls, "quest_type", quest_type.name)
 
         return cls
 
     return decorator
+
+
+# =============================================================================
+# Foundation Event Types
+# =============================================================================
+
+
+@dataclass
+class QuestStateChanged:
+    """Event fired when a quest's state changes."""
+
+    quest_id: str
+    entity_id: str
+    old_state: QuestState
+    new_state: QuestState
+    timestamp: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize event to dictionary."""
+        return {
+            "type": "QuestStateChanged",
+            "quest_id": self.quest_id,
+            "entity_id": self.entity_id,
+            "old_state": self.old_state.name,
+            "new_state": self.new_state.name,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class ObjectiveProgress:
+    """Event fired when objective progress is updated."""
+
+    quest_id: str
+    objective_id: str
+    current: int
+    target: int
+    timestamp: float
+
+    @property
+    def progress(self) -> float:
+        """Get progress as a value between 0.0 and 1.0."""
+        if self.target <= 0:
+            return 1.0
+        return min(self.current / self.target, 1.0)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize event to dictionary."""
+        return {
+            "type": "ObjectiveProgress",
+            "quest_id": self.quest_id,
+            "objective_id": self.objective_id,
+            "current": self.current,
+            "target": self.target,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class ObjectiveCompleted:
+    """Event fired when an objective is completed."""
+
+    quest_id: str
+    objective_id: str
+    timestamp: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize event to dictionary."""
+        return {
+            "type": "ObjectiveCompleted",
+            "quest_id": self.quest_id,
+            "objective_id": self.objective_id,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class QuestRewardGranted:
+    """Event fired when a quest reward is granted."""
+
+    quest_id: str
+    entity_id: str
+    reward_type: str
+    amount: int | float
+    timestamp: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize event to dictionary."""
+        return {
+            "type": "QuestRewardGranted",
+            "quest_id": self.quest_id,
+            "entity_id": self.entity_id,
+            "reward_type": self.reward_type,
+            "amount": self.amount,
+            "timestamp": self.timestamp,
+        }
+
+
+# =============================================================================
+# Event Management
+# =============================================================================
+
+# Thread-local storage for quest events
+_quest_events: list[QuestStateChanged | ObjectiveProgress | ObjectiveCompleted | QuestRewardGranted] = []
+
+
+def fire_quest_event(
+    event: QuestStateChanged | ObjectiveProgress | ObjectiveCompleted | QuestRewardGranted,
+) -> None:
+    """Fire a quest event and store it for later retrieval."""
+    _quest_events.append(event)
+
+
+# Map event type names to classes
+_EVENT_TYPE_MAP: dict[str, type] = {
+    "QuestStateChanged": QuestStateChanged,
+    "ObjectiveProgress": ObjectiveProgress,
+    "ObjectiveCompleted": ObjectiveCompleted,
+    "QuestRewardGranted": QuestRewardGranted,
+}
+
+
+def get_quest_events(
+    quest_id: str | None = None,
+    entity_id: str | None = None,
+    event_type: type | str | None = None,
+) -> list[QuestStateChanged | ObjectiveProgress | ObjectiveCompleted | QuestRewardGranted]:
+    """
+    Get stored quest events, optionally filtered.
+
+    Args:
+        quest_id: Filter by quest ID
+        entity_id: Filter by entity ID (for events that have entity_id)
+        event_type: Filter by event type class or class name string
+
+    Returns:
+        List of matching events
+    """
+    result = _quest_events.copy()
+
+    if quest_id is not None:
+        result = [e for e in result if e.quest_id == quest_id]
+
+    if entity_id is not None:
+        result = [e for e in result if getattr(e, "entity_id", None) == entity_id]
+
+    if event_type is not None:
+        # Support both class and string filtering
+        if isinstance(event_type, str):
+            event_cls = _EVENT_TYPE_MAP.get(event_type)
+            if event_cls is not None:
+                result = [e for e in result if isinstance(e, event_cls)]
+        else:
+            result = [e for e in result if isinstance(e, event_type)]
+
+    return result
+
+
+def clear_quest_events() -> None:
+    """Clear all stored quest events."""
+    _quest_events.clear()
+
+
+def get_registered_quests() -> list[type]:
+    """
+    Get all registered quest classes from the Foundation Registry.
+
+    Returns classes decorated with @quest, which have metadata like
+    'quest', 'quest_id', 'quest_type'.
+    """
+    return registry.types_with_decorator("quest")

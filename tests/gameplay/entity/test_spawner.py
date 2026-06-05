@@ -65,7 +65,8 @@ class CooldownCondition(SpawnCondition):
 
     def __init__(self, cooldown_seconds: float):
         self.cooldown_seconds = cooldown_seconds
-        self.last_spawn_time = 0.0
+        # Initialize to negative infinity so cooldown is initially satisfied
+        self.last_spawn_time = float('-inf')
 
     def is_satisfied(self, spawner: "Spawner", context: Dict[str, Any]) -> bool:
         current_time = context.get("current_time", time.time())

@@ -191,9 +191,9 @@ fn free_list_lifo_ordering() {
     }
     assert_eq!(table.free_count(), 5);
 
-    // LIFO: first pop returns 8 (last removed even index), then 6, 4, 2, 0.
-    // freed was pushed in reverse order: [8, 6, 4, 2, 0]
-    for &expected_idx in &freed {
+    // LIFO: last removed (0) is popped first, then 2, 4, 6, 8.
+    // freed = [8, 6, 4, 2, 0], reversed for LIFO pop order: [0, 2, 4, 6, 8]
+    for &expected_idx in freed.iter().rev() {
         let new_idx = table.add(tex(1, 1, 1)).unwrap();
         assert_eq!(
             new_idx, expected_idx,
@@ -1291,7 +1291,7 @@ fn staging_after_complex_mutations() {
     // Mutate: remove index 0, remove index 3, update index 1, insert_at 5.
     table.remove(0);
     table.remove(3);
-    table.update(1, tex(999, 888, 7)).unwrap();
+    assert!(table.update(1, tex(999, 888, 7)));
     table.insert_at(5, tex(42, 84, 3));
 
     let (slot_idx, byte_size) = table.stage(&mut registry).expect("Staging must succeed");
@@ -1348,7 +1348,7 @@ fn staging_after_update_shows_new_data() {
     let idx = table.add(tex(100, 200, 3)).unwrap();
 
     // Update index 0 with new dimensions.
-    table.update(idx, tex(1920, 1080, 11)).unwrap();
+    assert!(table.update(idx, tex(1920, 1080, 11)));
 
     // Stage through BufferRegistry.
     let (slot_index, written) = table.stage(&mut registry).expect("Must acquire slot");

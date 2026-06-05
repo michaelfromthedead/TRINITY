@@ -2,8 +2,7 @@
 T-1.2: Test inertia tensors for all collision shape types.
 
 Verifies analytical inertia formulas for Sphere, Box, Capsule, Cylinder,
-and Compound shapes.  Cone inertia is skipped because ConeShape is not
-yet implemented in collision_shapes.py.
+Cone, and Compound shapes.
 """
 
 import math
@@ -14,6 +13,7 @@ from engine.simulation.physics.collision_shapes import (
     BoxShape,
     CapsuleShape,
     CylinderShape,
+    ConeShape,
     ConvexHullShape,
     MeshShape,
     CompoundShape,
@@ -129,11 +129,41 @@ class TestCollisionShapesInertia(PhysicsTestCase):
         assert abs(izz - expected_radial) < 1e-9, f"Izz: {izz} != {expected_radial}"
 
     # ------------------------------------------------------------------
-    # Cone  -- NOT YET IMPLEMENTED
+    # Cone
     # ------------------------------------------------------------------
-    def test_cone_inertia_skipped(self):
-        """ConeShape is not implemented in collision_shapes.py -- skipping."""
-        pytest.skip("ConeShape not implemented -- no cone inertia test")
+    def test_cone_inertia(self):
+        """cone inertia: Iyy = (3/10)*m*r^2, Ixx=Izz = (3/80)*m*(4*r^2+h^2)."""
+        r, h = 1.0, 3.0
+        shape = ConeShape(radius=r, height=h)
+        props = shape.compute_mass_properties(density=1.0)
+        m = props.mass
+
+        # Cone inertia formulas (about center of mass)
+        expected_axial = (3.0 / 10.0) * m * r * r
+        expected_radial = (3.0 / 80.0) * m * (4 * r * r + h * h)
+        ixx, iyy, izz = _diag(props.inertia_tensor)
+
+        # Cone axis is Y: Ixx = Izz = radial, Iyy = axial
+        assert abs(ixx - expected_radial) < 1e-9, f"Ixx: {ixx} != {expected_radial}"
+        assert abs(iyy - expected_axial) < 1e-9, f"Iyy: {iyy} != {expected_axial}"
+        assert abs(izz - expected_radial) < 1e-9, f"Izz: {izz} != {expected_radial}"
+
+    def test_cone_inertia_symmetry(self):
+        """cone inertia is symmetric about Y (Ixx == Izz for Y-up cone)."""
+        shape = ConeShape(radius=0.5, height=2.0)
+        props = shape.compute_mass_properties(density=1.0)
+        ixx, iyy, izz = _diag(props.inertia_tensor)
+        assert abs(ixx - izz) < 1e-9, f"Cone Ixx ({ixx}) != Izz ({izz})"
+
+    def test_cone_center_of_mass(self):
+        """cone center of mass is at 1/4 height from base."""
+        shape = ConeShape(radius=1.0, height=4.0)
+        props = shape.compute_mass_properties(density=1.0)
+        # Cone is centered at origin (half_height = 2), base at -2, apex at +2
+        # COM should be at 1/4 height from base = -2 + 1 = -1
+        expected_com_y = -1.0
+        assert abs(props.center_of_mass[1] - expected_com_y) < 1e-9, \
+            f"Cone COM y: {props.center_of_mass[1]} != {expected_com_y}"
 
     # ------------------------------------------------------------------
     # Compound shape
@@ -171,6 +201,7 @@ class TestCollisionShapesInertia(PhysicsTestCase):
             ("box",    BoxShape(half_extents=(1.0, 1.0, 1.0))),
             ("capsule",CapsuleShape(radius=0.5, half_height=1.0)),
             ("cylinder", CylinderShape(radius=0.5, height=2.0)),
+            ("cone", ConeShape(radius=0.5, height=2.0)),
         ]
         for name, shape in shapes:
             props = shape.compute_mass_properties(density=1.0)

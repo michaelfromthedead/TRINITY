@@ -49,24 +49,25 @@ class ReverbType(Enum):
 @dataclass
 class ReverbPreset:
     """Reverb preset configuration."""
-    name: str
     room_size: float
-    decay_time: float
     damping: float
-    predelay_ms: float
     wet: float
     dry: float
+    width: float = 1.0
+    name: str = ""
+    decay_time: float = 1.0
+    predelay_ms: float = 0.0
 
 
 # Built-in presets
 REVERB_PRESETS = {
-    'small_room': ReverbPreset('Small Room', 0.2, 0.5, 0.7, 5.0, 0.2, 0.8),
-    'medium_room': ReverbPreset('Medium Room', 0.4, 1.0, 0.5, 10.0, 0.3, 0.7),
-    'large_hall': ReverbPreset('Large Hall', 0.8, 3.0, 0.3, 25.0, 0.4, 0.6),
-    'cathedral': ReverbPreset('Cathedral', 0.95, 6.0, 0.2, 40.0, 0.5, 0.5),
-    'plate': ReverbPreset('Plate', 0.5, 2.0, 0.6, 0.0, 0.4, 0.6),
-    'spring': ReverbPreset('Spring', 0.3, 1.5, 0.8, 2.0, 0.3, 0.7),
-    'ambient': ReverbPreset('Ambient', 0.9, 8.0, 0.1, 50.0, 0.6, 0.4),
+    'small_room': ReverbPreset(room_size=0.2, damping=0.7, wet=0.2, dry=0.8, width=1.0, name='Small Room', decay_time=0.5, predelay_ms=5.0),
+    'medium_room': ReverbPreset(room_size=0.4, damping=0.5, wet=0.3, dry=0.7, width=1.0, name='Medium Room', decay_time=1.0, predelay_ms=10.0),
+    'large_hall': ReverbPreset(room_size=0.8, damping=0.3, wet=0.4, dry=0.6, width=1.0, name='Large Hall', decay_time=3.0, predelay_ms=25.0),
+    'cathedral': ReverbPreset(room_size=0.95, damping=0.2, wet=0.5, dry=0.5, width=1.0, name='Cathedral', decay_time=6.0, predelay_ms=40.0),
+    'plate': ReverbPreset(room_size=0.5, damping=0.6, wet=0.4, dry=0.6, width=1.0, name='Plate', decay_time=2.0, predelay_ms=0.0),
+    'spring': ReverbPreset(room_size=0.3, damping=0.8, wet=0.3, dry=0.7, width=1.0, name='Spring', decay_time=1.5, predelay_ms=2.0),
+    'ambient': ReverbPreset(room_size=0.9, damping=0.1, wet=0.6, dry=0.4, width=1.0, name='Ambient', decay_time=8.0, predelay_ms=50.0),
 }
 
 
@@ -130,6 +131,13 @@ class CombFilter:
         self._filter_state = 0.0
         self._buffer_index = 0
 
+    def process_block(self, input_buffer: np.ndarray) -> np.ndarray:
+        """Process a block of samples."""
+        output = np.zeros_like(input_buffer, dtype=np.float64)
+        for i in range(len(input_buffer)):
+            output[i] = self.process(float(input_buffer[i]))
+        return output.astype(input_buffer.dtype)
+
 
 class AllPassFilterReverb:
     """
@@ -154,10 +162,19 @@ class AllPassFilterReverb:
         self._feedback = value
 
     def process(self, input_sample: float) -> float:
-        """Process a single sample."""
+        """Process a single sample.
+
+        Implements the Schroeder allpass with unity gain:
+        y[n] = s[n-M] - g*x[n]
+        s[n] = (1-g^2)*x[n] + g*s[n-M]
+
+        This preserves energy (magnitude) while altering phase.
+        """
+        g = self._feedback
+        g_squared = g * g
         delayed = self._buffer[self._buffer_index]
-        output = delayed - self._feedback * input_sample
-        self._buffer[self._buffer_index] = input_sample + self._feedback * delayed
+        output = delayed - g * input_sample
+        self._buffer[self._buffer_index] = (1.0 - g_squared) * input_sample + g * delayed
         self._buffer_index = (self._buffer_index + 1) % self._delay_samples
         return output
 
@@ -165,6 +182,13 @@ class AllPassFilterReverb:
         """Clear the buffer."""
         self._buffer.fill(0.0)
         self._buffer_index = 0
+
+    def process_block(self, input_buffer: np.ndarray) -> np.ndarray:
+        """Process a block of samples."""
+        output = np.zeros_like(input_buffer, dtype=np.float64)
+        for i in range(len(input_buffer)):
+            output[i] = self.process(float(input_buffer[i]))
+        return output.astype(input_buffer.dtype)
 
 
 class Freeverb(DSPNode):
@@ -182,12 +206,16 @@ class Freeverb(DSPNode):
         wet: float = REVERB_DEFAULT_WET,
         dry: float = REVERB_DEFAULT_DRY,
         width: float = 1.0,
+        predelay_ms: float = 0.0,
+        modulation_depth: float = 0.0,
+        modulation_rate: float = 0.5,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
         # Initialize state BEFORE calling super().__init__ which calls reset()
         # Scale delays for sample rate
+        self._sample_rate_init = sample_rate
         scale = sample_rate / 44100.0
 
         # Create comb filters (8 per channel)
@@ -208,6 +236,20 @@ class Freeverb(DSPNode):
             self._allpass_l.append(AllPassFilterReverb(scaled_delay, 0.5))
             self._allpass_r.append(AllPassFilterReverb(scaled_delay + REVERB_STEREO_SPREAD, 0.5))
 
+        # Predelay buffer
+        max_predelay_samples = ms_to_samples(REVERB_MAX_PREDELAY_MS, sample_rate)
+        self._predelay_buffer = np.zeros(max(max_predelay_samples, 1), dtype=np.float64)
+        self._predelay_index = 0
+        self._predelay_ms = predelay_ms
+
+        # Modulation state
+        self._modulation_depth = modulation_depth
+        self._modulation_rate = modulation_rate
+        self._modulation_phase = 0.0
+
+        # Bypass state
+        self._bypass = False
+
         # Now call parent init (which calls reset())
         super().__init__(sample_rate, block_size, num_channels)
 
@@ -218,6 +260,19 @@ class Freeverb(DSPNode):
         self._width = self.add_parameter('width', width)
 
         self._update_parameters()
+
+    @classmethod
+    def from_preset(cls, preset: ReverbPreset, sample_rate: int = DEFAULT_SAMPLE_RATE) -> 'Freeverb':
+        """Create a Freeverb from a preset."""
+        return cls(
+            room_size=preset.room_size,
+            damping=preset.damping,
+            wet=preset.wet,
+            dry=preset.dry,
+            width=preset.width,
+            predelay_ms=preset.predelay_ms,
+            sample_rate=sample_rate,
+        )
 
     @property
     def room_size(self) -> float:
@@ -261,6 +316,30 @@ class Freeverb(DSPNode):
     def width(self, value: float) -> None:
         self._width.set_value(max(0.0, min(1.0, value)))
 
+    def set_room_size(self, value: float) -> None:
+        """Set room size parameter."""
+        self.room_size = value
+
+    def set_damping(self, value: float) -> None:
+        """Set damping parameter."""
+        self.damping = value
+
+    def set_wet(self, value: float) -> None:
+        """Set wet level parameter."""
+        self.wet = value
+
+    def set_dry(self, value: float) -> None:
+        """Set dry level parameter."""
+        self.dry = value
+
+    def set_width(self, value: float) -> None:
+        """Set stereo width parameter."""
+        self.width = value
+
+    def set_bypass(self, bypass: bool) -> None:
+        """Set bypass mode."""
+        self._bypass = bypass
+
     def _update_parameters(self) -> None:
         """Update comb filter parameters based on room size and damping."""
         room = self._room_size.target
@@ -273,10 +352,43 @@ class Freeverb(DSPNode):
             comb.feedback = feedback
             comb.damping = damp
 
+    def _get_predelay_samples(self) -> int:
+        """Get predelay in samples."""
+        return ms_to_samples(self._predelay_ms, self._sample_rate_init)
+
+    def _process_predelay(self, sample: float) -> float:
+        """Process sample through predelay."""
+        predelay_samples = self._get_predelay_samples()
+        if predelay_samples <= 0:
+            return sample
+
+        # Write to buffer
+        self._predelay_buffer[self._predelay_index] = sample
+
+        # Read from delayed position
+        read_index = (self._predelay_index - predelay_samples) % len(self._predelay_buffer)
+        output = self._predelay_buffer[read_index]
+
+        # Advance index
+        self._predelay_index = (self._predelay_index + 1) % len(self._predelay_buffer)
+
+        return output
+
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample."""
-        # Mono input
-        input_sample = sample
+        if self._bypass:
+            return sample
+
+        # Apply predelay to input
+        input_sample = self._process_predelay(sample)
+
+        # Apply modulation (slight pitch variation for chorus-like effect)
+        if self._modulation_depth > 0:
+            mod = math.sin(self._modulation_phase * 2 * math.pi) * self._modulation_depth * 0.01
+            input_sample *= (1.0 + mod)
+            self._modulation_phase += self._modulation_rate / self._sample_rate_init
+            if self._modulation_phase >= 1.0:
+                self._modulation_phase -= 1.0
 
         # Process through comb filters (parallel)
         comb_out_l = 0.0
@@ -308,9 +420,64 @@ class Freeverb(DSPNode):
         else:
             return sample * dry + wet_r * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block of samples."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> np.ndarray:
+        """Process a block of samples.
+
+        Supports both 1D (mono) and 2D (multi-channel) input.
+        If output_buffer is None, creates and returns output array.
+        """
+        # Handle 1D input (tests use this format)
+        if input_buffer.ndim == 1:
+            if self._bypass:
+                return input_buffer.copy()
+
+            output = np.zeros_like(input_buffer, dtype=np.float64)
+            for i in range(len(input_buffer)):
+                # Apply predelay
+                predelayed = self._process_predelay(float(input_buffer[i]))
+
+                # Apply modulation
+                if self._modulation_depth > 0:
+                    mod = math.sin(self._modulation_phase * 2 * math.pi) * self._modulation_depth * 0.01
+                    predelayed *= (1.0 + mod)
+                    self._modulation_phase += self._modulation_rate / self._sample_rate_init
+                    if self._modulation_phase >= 1.0:
+                        self._modulation_phase -= 1.0
+
+                # Process through comb filters
+                comb_out_l = 0.0
+                comb_out_r = 0.0
+
+                for comb_l, comb_r in zip(self._combs_l, self._combs_r):
+                    comb_out_l += comb_l.process(predelayed)
+                    comb_out_r += comb_r.process(predelayed)
+
+                # Process through all-pass filters
+                out_l = comb_out_l
+                out_r = comb_out_r
+
+                for ap_l, ap_r in zip(self._allpass_l, self._allpass_r):
+                    out_l = ap_l.process(out_l)
+                    out_r = ap_r.process(out_r)
+
+                # Apply width and mix (use mono output)
+                width = self._width.advance()
+                wet = self._wet.advance()
+                dry = self._dry.advance()
+
+                wet_out = out_l * (0.5 + 0.5 * width) + out_r * (0.5 - 0.5 * width)
+                output[i] = input_buffer[i] * dry + wet_out * wet
+
+            return output.astype(input_buffer.dtype)
+
+        # 2D input (original behavior)
         num_channels, num_samples = input_buffer.shape
+        if output_buffer is None:
+            output_buffer = np.zeros_like(input_buffer)
+
+        if self._bypass:
+            np.copyto(output_buffer, input_buffer)
+            return output_buffer
 
         for i in range(num_samples):
             # Get mono input
@@ -318,6 +485,17 @@ class Freeverb(DSPNode):
                 input_sample = (input_buffer[0, i] + input_buffer[1, i]) * 0.5
             else:
                 input_sample = input_buffer[0, i]
+
+            # Apply predelay
+            input_sample = self._process_predelay(float(input_sample))
+
+            # Apply modulation
+            if self._modulation_depth > 0:
+                mod = math.sin(self._modulation_phase * 2 * math.pi) * self._modulation_depth * 0.01
+                input_sample *= (1.0 + mod)
+                self._modulation_phase += self._modulation_rate / self._sample_rate_init
+                if self._modulation_phase >= 1.0:
+                    self._modulation_phase -= 1.0
 
             # Process through comb filters
             comb_out_l = 0.0
@@ -351,12 +529,69 @@ class Freeverb(DSPNode):
             for ch in range(2, num_channels):
                 output_buffer[ch, i] = output_buffer[ch % 2, i]
 
+        return output_buffer
+
+    def process_stereo(self, left: np.ndarray, right: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Process stereo signal."""
+        if self._bypass:
+            return left.copy(), right.copy()
+
+        out_l = np.zeros_like(left, dtype=np.float64)
+        out_r = np.zeros_like(right, dtype=np.float64)
+
+        for i in range(len(left)):
+            # Mix to mono for processing
+            mono = (float(left[i]) + float(right[i])) * 0.5
+
+            # Apply predelay
+            predelayed = self._process_predelay(mono)
+
+            # Apply modulation
+            if self._modulation_depth > 0:
+                mod = math.sin(self._modulation_phase * 2 * math.pi) * self._modulation_depth * 0.01
+                predelayed *= (1.0 + mod)
+                self._modulation_phase += self._modulation_rate / self._sample_rate_init
+                if self._modulation_phase >= 1.0:
+                    self._modulation_phase -= 1.0
+
+            # Process through comb filters
+            comb_out_l = 0.0
+            comb_out_r = 0.0
+
+            for comb_l, comb_r in zip(self._combs_l, self._combs_r):
+                comb_out_l += comb_l.process(predelayed)
+                comb_out_r += comb_r.process(predelayed)
+
+            # Process through all-pass filters
+            reverb_l = comb_out_l
+            reverb_r = comb_out_r
+
+            for ap_l, ap_r in zip(self._allpass_l, self._allpass_r):
+                reverb_l = ap_l.process(reverb_l)
+                reverb_r = ap_r.process(reverb_r)
+
+            # Apply width
+            width = self._width.advance()
+            wet = self._wet.advance()
+            dry = self._dry.advance()
+
+            wet_l = reverb_l * (0.5 + 0.5 * width) + reverb_r * (0.5 - 0.5 * width)
+            wet_r = reverb_r * (0.5 + 0.5 * width) + reverb_l * (0.5 - 0.5 * width)
+
+            out_l[i] = left[i] * dry + wet_l * wet
+            out_r[i] = right[i] * dry + wet_r * wet
+
+        return out_l.astype(left.dtype), out_r.astype(right.dtype)
+
     def reset(self) -> None:
         """Reset all filters."""
         for comb in self._combs_l + self._combs_r:
             comb.clear()
         for ap in self._allpass_l + self._allpass_r:
             ap.clear()
+        self._predelay_buffer.fill(0.0)
+        self._predelay_index = 0
+        self._modulation_phase = 0.0
 
     def load_preset(self, preset_name: str) -> None:
         """Load a reverb preset."""
@@ -366,6 +601,7 @@ class Freeverb(DSPNode):
             self.damping = preset.damping
             self.wet = preset.wet
             self.dry = preset.dry
+            self.width = preset.width
 
 
 class PlateReverb(DSPNode):
@@ -382,16 +618,12 @@ class PlateReverb(DSPNode):
         damping: float = 0.5,
         predelay_ms: float = 0.0,
         wet: float = 0.3,
+        mix: Optional[float] = None,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        super().__init__(sample_rate, block_size, num_channels)
-
-        self._decay = self.add_parameter('decay', decay)
-        self._damping = self.add_parameter('damping', damping)
-        self._wet = self.add_parameter('wet', wet)
-
+        # Initialize all state BEFORE calling super().__init__ (which calls reset())
         # Predelay
         predelay_samples = ms_to_samples(REVERB_MAX_PREDELAY_MS, sample_rate)
         self._predelay = DelayLine(predelay_samples, num_channels)
@@ -425,6 +657,16 @@ class PlateReverb(DSPNode):
         # Tank state
         self._tank_l = 0.0
         self._tank_r = 0.0
+
+        # Now call parent init
+        super().__init__(sample_rate, block_size, num_channels)
+
+        # Support both 'wet' and 'mix' parameter names (mix is alias for wet)
+        wet_val = mix if mix is not None else wet
+
+        self._decay = self.add_parameter('decay', decay)
+        self._damping = self.add_parameter('damping', damping)
+        self._wet = self.add_parameter('wet', wet_val)
 
     @property
     def decay(self) -> float:
@@ -490,9 +732,61 @@ class PlateReverb(DSPNode):
         else:
             return sample * (1.0 - wet) + self._tank_r * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> np.ndarray:
+        """Process a block. Supports both 1D and 2D input."""
+        # Handle 1D input
+        if input_buffer.ndim == 1:
+            output = np.zeros_like(input_buffer, dtype=np.float64)
+            for i in range(len(input_buffer)):
+                mono_in = float(input_buffer[i])
+
+                # Predelay
+                predelay_samples = ms_to_samples(self._predelay_time, self._state.sample_rate)
+                self._predelay.write(mono_in, 0)
+                predelayed = self._predelay.read(max(1, predelay_samples), 0)
+                self._predelay.advance()
+
+                # Input diffusion - keep track of early reflections
+                # Boost factor compensates for unity-gain allpass attenuation
+                diffused = predelayed
+                early_out = 0.0
+                for diffuser in self._input_diffusers:
+                    diffused = diffuser.process(diffused)
+                    early_out += diffused * 0.5  # Early reflection contribution (boosted)
+
+                decay = self._decay.advance()
+                wet = self._wet.advance()
+
+                # Tank processing
+                tank_in_l = diffused + self._tank_r * decay
+                for delay in self._tank_delays[:2]:
+                    delay.write(tank_in_l, 0)
+                    tank_in_l = delay.read(delay._max_delay - 1, 0)
+                    delay.advance()
+                tank_in_l = self._tank_allpass[0].process(tank_in_l)
+                tank_in_l = self._tank_damping_l.process_sample(tank_in_l, 0)
+                self._tank_l = tank_in_l
+
+                tank_in_r = diffused + self._tank_l * decay
+                for delay in self._tank_delays[2:]:
+                    delay.write(tank_in_r, 0)
+                    tank_in_r = delay.read(delay._max_delay - 1, 0)
+                    delay.advance()
+                tank_in_r = self._tank_allpass[1].process(tank_in_r)
+                tank_in_r = self._tank_damping_r.process_sample(tank_in_r, 0)
+                self._tank_r = tank_in_r
+
+                # Output (mono: early reflections + tank reverb)
+                late_reverb = (self._tank_l + self._tank_r) * 0.5
+                reverb_out = early_out * 0.5 + late_reverb * 0.5  # Mix early and late
+                output[i] = input_buffer[i] * (1.0 - wet) + reverb_out * wet
+
+            return output.astype(input_buffer.dtype)
+
+        # 2D input
         num_channels, num_samples = input_buffer.shape
+        if output_buffer is None:
+            output_buffer = np.zeros_like(input_buffer)
 
         for i in range(num_samples):
             mono_in = input_buffer[0, i]
@@ -540,6 +834,8 @@ class PlateReverb(DSPNode):
             for ch in range(2, num_channels):
                 output_buffer[ch, i] = output_buffer[ch % 2, i]
 
+        return output_buffer
+
     def reset(self) -> None:
         """Reset reverb state."""
         self._predelay.clear()
@@ -572,17 +868,19 @@ class ConvolutionReverb(DSPNode):
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        super().__init__(sample_rate, block_size, num_channels)
-
-        self._wet = self.add_parameter('wet', wet)
-        self._dry = self.add_parameter('dry', dry)
-
+        # Initialize state BEFORE calling super().__init__ (which calls reset())
         self._ir: Optional[np.ndarray] = None
         self._ir_fft: Optional[np.ndarray] = None
         self._fft_size = 0
         self._overlap_buffer: Optional[np.ndarray] = None
         self._input_buffer: Optional[np.ndarray] = None
         self._input_index = 0
+
+        # Now call parent init
+        super().__init__(sample_rate, block_size, num_channels)
+
+        self._wet = self.add_parameter('wet', wet)
+        self._dry = self.add_parameter('dry', dry)
 
         if impulse_response is not None:
             self.load_impulse_response(impulse_response)
@@ -639,6 +937,10 @@ class ConvolutionReverb(DSPNode):
     def dry(self, value: float) -> None:
         self._dry.set_value(max(0.0, min(1.0, value)))
 
+    def set_impulse_response(self, ir: np.ndarray) -> None:
+        """Set/swap the impulse response."""
+        self.load_impulse_response(ir)
+
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample (inefficient - prefer block processing)."""
         # For convolution, sample-by-sample is very inefficient
@@ -686,13 +988,58 @@ class ConvolutionReverb(DSPNode):
 
             self._overlap_buffer[ch] += output
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block using FFT convolution."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> np.ndarray:
+        """Process a block using FFT convolution. Supports 1D and 2D input."""
+        # Handle 1D input
+        if input_buffer.ndim == 1:
+            if self._ir_fft is None:
+                return input_buffer.copy()
+
+            num_samples = len(input_buffer)
+
+            # If input is larger than FFT size, we need to process in chunks
+            ir_len = len(self._ir) if self._ir is not None else 0
+            required_fft_size = 2 ** int(np.ceil(np.log2(ir_len + num_samples)))
+            if required_fft_size > self._fft_size:
+                # Resize FFT for this larger block
+                local_fft_size = required_fft_size
+                ir_padded = np.zeros(local_fft_size, dtype=np.float64)
+                ir_padded[:ir_len] = self._ir
+                local_ir_fft = np.fft.rfft(ir_padded)
+            else:
+                local_fft_size = self._fft_size
+                local_ir_fft = self._ir_fft
+
+            # Prepare input for FFT
+            input_padded = np.zeros(local_fft_size, dtype=np.float64)
+            input_padded[:num_samples] = input_buffer
+
+            # FFT convolution
+            input_fft = np.fft.rfft(input_padded)
+            output_fft = input_fft * local_ir_fft
+            conv_output = np.fft.irfft(output_fft)
+
+            # For 1D case, just take the convolution output (overlap-add is more complex)
+            # Use the first num_samples of the convolution result
+            reverb_output = conv_output[:num_samples]
+
+            # Mix wet/dry
+            wet = self._wet.target
+            dry = self._dry.target
+            output = input_buffer * dry + reverb_output * wet
+
+            return output.astype(input_buffer.dtype)
+
+        # 2D input
         if self._ir_fft is None:
-            np.copyto(output_buffer, input_buffer)
-            return
+            if output_buffer is not None:
+                np.copyto(output_buffer, input_buffer)
+                return output_buffer
+            return input_buffer.copy()
 
         num_channels, num_samples = input_buffer.shape
+        if output_buffer is None:
+            output_buffer = np.zeros_like(input_buffer)
 
         for ch in range(num_channels):
             # Prepare input for FFT
@@ -720,6 +1067,8 @@ class ConvolutionReverb(DSPNode):
             wet = self._wet.target
             dry = self._dry.target
             output_buffer[ch] = input_buffer[ch] * dry + reverb_output * wet
+
+        return output_buffer
 
     def reset(self) -> None:
         """Reset convolution state."""
@@ -751,18 +1100,18 @@ class SimpleReverb(DSPNode):
     def __init__(
         self,
         decay_time: float = 1.0,
+        room_size: Optional[float] = None,
         damping: float = 0.5,
         wet: float = 0.3,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        super().__init__(sample_rate, block_size, num_channels)
+        # room_size maps to decay_time (0-1 -> 0.1-5.0)
+        if room_size is not None:
+            decay_time = 0.1 + room_size * 4.9
 
-        self._decay_time = self.add_parameter('decay_time', decay_time)
-        self._damping = self.add_parameter('damping', damping)
-        self._wet = self.add_parameter('wet', wet)
-
+        # Initialize state BEFORE calling super().__init__ (which calls reset())
         # Simplified comb filters (4 instead of 8)
         comb_delays = [1116, 1188, 1277, 1356]
         self._combs: List[CombFilter] = []
@@ -775,6 +1124,13 @@ class SimpleReverb(DSPNode):
 
         # Low-pass for damping
         self._damping_filter = OnePoleFilter(4000.0, FilterType.LOWPASS, sample_rate, block_size, 1)
+
+        # Now call parent init
+        super().__init__(sample_rate, block_size, num_channels)
+
+        self._decay_time = self.add_parameter('decay_time', decay_time)
+        self._damping = self.add_parameter('damping', damping)
+        self._wet = self.add_parameter('wet', wet)
 
         self._update_feedback()
 
@@ -823,9 +1179,31 @@ class SimpleReverb(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + damped * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> np.ndarray:
+        """Process a block. Supports 1D and 2D input."""
+        # Handle 1D input
+        if input_buffer.ndim == 1:
+            output = np.zeros_like(input_buffer, dtype=np.float64)
+            for i in range(len(input_buffer)):
+                mono = float(input_buffer[i])
+
+                # Process
+                comb_sum = 0.0
+                for comb in self._combs:
+                    comb_sum += comb.process(mono)
+
+                diffused = self._allpass.process(comb_sum)
+                damped = self._damping_filter.process_sample(diffused, 0)
+
+                wet = self._wet.advance()
+                output[i] = input_buffer[i] * (1.0 - wet) + damped * wet
+
+            return output.astype(input_buffer.dtype)
+
+        # 2D input
         num_channels, num_samples = input_buffer.shape
+        if output_buffer is None:
+            output_buffer = np.zeros_like(input_buffer)
 
         for i in range(num_samples):
             # Mono input
@@ -847,9 +1225,15 @@ class SimpleReverb(DSPNode):
             for ch in range(num_channels):
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + damped * wet
 
+        return output_buffer
+
     def reset(self) -> None:
         """Reset reverb state."""
         for comb in self._combs:
             comb.clear()
         self._allpass.clear()
         self._damping_filter.reset()
+
+
+# Alias for convenience
+Reverb = Freeverb

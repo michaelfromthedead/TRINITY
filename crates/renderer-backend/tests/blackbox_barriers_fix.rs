@@ -6,7 +6,7 @@
 //
 // Acceptance criterion (T-FG-4.5 FIX):
 //   generate_barriers() now correctly handles multi-resource same-boundary
-//   via 5-tuple (PassIndex, PassIndex, ResourceHandle, ResourceState,
+//   via 6-tuple (PassIndex, PassIndex, ResourceHandle, ResourceState,
 //   ResourceState). When two or more edges share the same (from, to) pass
 //   boundary but reference different resources, each resource gets its own
 //   barrier tuple carrying the correct ResourceHandle directly -- eliminating
@@ -14,7 +14,7 @@
 //   or_insert) collapsed multi-resource same-boundary barriers to a single
 //   resource handle.
 //
-// 5-tuple contract:
+// 6-tuple contract:
 //   - compute_barriers returns Vec<(PassIndex, PassIndex, ResourceHandle,
 //     ResourceState, ResourceState)>
 //   - generate_barriers accepts &[(PassIndex, PassIndex, ResourceHandle,
@@ -81,15 +81,15 @@ fn two_textures_same_boundary_both_barriers_present() {
         "two resources at same boundary must produce two barrier tuples",
     );
 
-    // Each tuple carries its own ResourceHandle.
+    // Each tuple carries its own ResourceHandle (index 2 in 6-tuple).
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     assert!(
         handles.contains(&r_a),
-        "barrier for r_a must be present in 5-tuples",
+        "barrier for r_a must be present in 6-tuples",
     );
     assert!(
         handles.contains(&r_b),
-        "barrier for r_b must be present in 5-tuples",
+        "barrier for r_b must be present in 6-tuples",
     );
 
     // Feed into generate_barriers -- both barriers must resolve.
@@ -138,10 +138,10 @@ fn two_buffers_same_boundary_both_barriers_present() {
     assert_eq!(
         barrier_tuples.len(),
         2,
-        "two buffer resources at same boundary = two barrier 5-tuples",
+        "two buffer resources at same boundary = two barrier 6-tuples",
     );
 
-    // Verify each 5-tuple carries its ResourceHandle.
+    // Verify each 6-tuple carries its ResourceHandle (index 2).
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     assert!(handles.contains(&r_buf_a));
     assert!(handles.contains(&r_buf_b));
@@ -184,7 +184,7 @@ fn mixed_texture_and_buffer_same_boundary() {
     let passes = vec![
         {
             let mut p = mock_pass_graphics(PassIndex(0), "write_both", &[r_tex]);
-            p.access_set.reads.push(r_buf); // not semantically critical for barrier
+            p.access_set.writes.push(r_buf); // P0 writes buffer for RAW edge
             p
         },
         {
@@ -200,18 +200,18 @@ fn mixed_texture_and_buffer_same_boundary() {
     assert_eq!(
         barrier_tuples.len(),
         2,
-        "two resources of different types = two barrier 5-tuples",
+        "two resources of different types = two barrier 6-tuples",
     );
 
-    // Verify 5-tuple ResourceHandle correctness.
+    // Verify 6-tuple ResourceHandle correctness (index 2).
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     assert!(
         handles.contains(&r_tex),
-        "texture handle in barrier 5-tuples"
+        "texture handle in barrier 6-tuples"
     );
     assert!(
         handles.contains(&r_buf),
-        "buffer handle in barrier 5-tuples"
+        "buffer handle in barrier 6-tuples"
     );
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -271,14 +271,14 @@ fn three_textures_same_boundary_all_present() {
     let order = vec![PassIndex(0), PassIndex(1)];
 
     let barrier_tuples = compute_barriers(&order, &passes, &edges);
-    assert_eq!(barrier_tuples.len(), 3, "three resources = three 5-tuples");
+    assert_eq!(barrier_tuples.len(), 3, "three resources = three 6-tuples");
 
-    // Verify all three handles are present in 5-tuples.
+    // Verify all three handles are present in 6-tuples.
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     for r in &[r1, r2, r3] {
         assert!(
             handles.contains(r),
-            "ResourceHandle({}) present in barrier 5-tuples",
+            "ResourceHandle({}) present in barrier 6-tuples",
             r.0
         );
     }
@@ -312,7 +312,7 @@ fn three_textures_same_boundary_all_present() {
 #[test]
 fn full_chain_multi_resource_same_boundary() {
     // Full pipeline: build edges, call compute_barriers, then
-    // generate_barriers. Verify the 5-tuple carries correct ResourceHandle
+    // generate_barriers. Verify the 6-tuple carries correct ResourceHandle
     // all the way through to the BarrierCommand.
     let r_tex = ResourceHandle(1);
     let r_buf = ResourceHandle(10);
@@ -339,12 +339,12 @@ fn full_chain_multi_resource_same_boundary() {
     ];
     let order = vec![PassIndex(0), PassIndex(1)];
 
-    // Phase 4: compute barriers (5-tuples with ResourceHandle).
+    // Phase 4: compute barriers (6-tuples with ResourceHandle).
     let barrier_tuples = compute_barriers(&order, &passes, &edges);
-    assert_eq!(barrier_tuples.len(), 2, "two resources = two 5-tuples");
+    assert_eq!(barrier_tuples.len(), 2, "two resources = two 6-tuples");
 
-    // Verify 5-tuple structure: each entry is (from, to, handle, before, after).
-    for &(from, to, handle, _before, _after) in &barrier_tuples {
+    // Verify 6-tuple structure: each entry is (from, to, handle, edge_type, before, after).
+    for &(from, to, handle, _edge_type, _before, _after) in &barrier_tuples {
         assert_eq!(from, PassIndex(0), "from is P0");
         assert_eq!(to, PassIndex(1), "to is P1");
         assert!(
@@ -353,7 +353,7 @@ fn full_chain_multi_resource_same_boundary() {
         );
     }
 
-    // Phase 4b: generate BarrierCommands from the 5-tuples.
+    // Phase 4b: generate BarrierCommands from the 6-tuples.
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
     assert_eq!(commands.len(), 1, "one boundary = one BarrierCommand");
 
@@ -364,7 +364,7 @@ fn full_chain_multi_resource_same_boundary() {
 
 #[test]
 fn full_chain_preserves_state_transition_per_resource() {
-    // Verify each 5-tuple carries the correct (before, after) state pair
+    // Verify each 6-tuple carries the correct (before, after) state pair
     // for its specific resource -- distinct resources may have different
     // state transitions at the same boundary.
     let r_write = ResourceHandle(1); // ColorAttachment -> ShaderRead
@@ -401,8 +401,8 @@ fn full_chain_preserves_state_transition_per_resource() {
     // Only the resource with an actual state transition gets a barrier.
     assert_eq!(barrier_tuples.len(), 1, "only r_write transitions");
 
-    // The single barrier 5-tuple must reference r_write with correct states.
-    let (from, to, handle, before, after) = barrier_tuples[0];
+    // The single barrier 6-tuple must reference r_write with correct states.
+    let (from, to, handle, _edge_type, before, after) = barrier_tuples[0];
     assert_eq!(from, PassIndex(0));
     assert_eq!(to, PassIndex(1));
     assert_eq!(handle, r_write, "barrier is for r_write, not r_read");
@@ -452,11 +452,11 @@ fn multi_resource_across_two_boundaries() {
         "three total barriers across two boundaries"
     );
 
-    // Verify 5-tuple handles.
+    // Verify 6-tuple handles (index 2 is handle).
     let p0p1_handles: Vec<ResourceHandle> = barrier_tuples
         .iter()
         .filter(|&&(from, to, ..)| from == PassIndex(0) && to == PassIndex(1))
-        .map(|&(_, _, h, _, _)| h)
+        .map(|&(_, _, h, _, _, _)| h)
         .collect();
     assert_eq!(p0p1_handles.len(), 2, "two resources at P0->P1");
     assert!(p0p1_handles.contains(&r_tex_a));
@@ -465,7 +465,7 @@ fn multi_resource_across_two_boundaries() {
     let p1p2_handles: Vec<ResourceHandle> = barrier_tuples
         .iter()
         .filter(|&&(from, to, ..)| from == PassIndex(1) && to == PassIndex(2))
-        .map(|&(_, _, h, _, _)| h)
+        .map(|&(_, _, h, _, _, _)| h)
         .collect();
     assert_eq!(p1p2_handles.len(), 1, "one resource at P1->P2");
     assert_eq!(p1p2_handles[0], r_buf_c);
@@ -518,10 +518,10 @@ fn dedup_same_resource_distinct_resource_preserved() {
     assert_eq!(
         barrier_tuples.len(),
         2,
-        "dedup: duplicate edges for same resource produce one barrier 5-tuple",
+        "dedup: duplicate edges for same resource produce one barrier 6-tuple",
     );
 
-    // Both unique resources must have their own barrier 5-tuple.
+    // Both unique resources must have their own barrier 6-tuple.
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     assert!(handles.contains(&r_a), "r_a present");
     assert!(handles.contains(&r_b), "r_b present");
@@ -572,7 +572,7 @@ fn texture_buffer_texture_interleaved_same_boundary() {
     assert_eq!(
         barrier_tuples.len(),
         3,
-        "three resources = three barrier 5-tuples"
+        "three resources = three barrier 6-tuples"
     );
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -663,15 +663,15 @@ fn four_textures_same_boundary_all_present() {
     assert_eq!(
         barrier_tuples.len(),
         4,
-        "four resources = four barrier 5-tuples",
+        "four resources = four barrier 6-tuples",
     );
 
-    // Verify all four handles in the 5-tuples.
+    // Verify all four handles in the 6-tuples.
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
     for expected in &r {
         assert!(
             handles.contains(expected),
-            "ResourceHandle({}) present in 5-tuples",
+            "ResourceHandle({}) present in 6-tuples",
             expected.0,
         );
     }
@@ -736,7 +736,7 @@ fn multi_resource_different_edge_types_same_boundary() {
     assert_eq!(
         barrier_tuples.len(),
         2,
-        "two resources with different edge types = two barrier 5-tuples",
+        "two resources with different edge types = two barrier 6-tuples",
     );
 
     let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();

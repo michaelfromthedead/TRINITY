@@ -15,7 +15,15 @@ collision, and wind configuration.
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Type
+
+from engine.world.foliage.constants import (
+    DEFAULT_LOD_DISTANCES,
+    DEFAULT_CULL_DISTANCE,
+    DEFAULT_DENSITY,
+    DEFAULT_MIN_SPACING,
+    DEFAULT_SCALE_RANGE,
+)
 
 
 class FoliageCategory(Enum):
@@ -472,7 +480,7 @@ def foliage_type(
     wind_response: bool = True,
     wind_weight: float = 1.0,
     register: bool = True,
-):
+) -> Callable[[Type], Type]:
     """
     Decorator for defining foliage types using Trinity Pattern.
 
@@ -493,7 +501,7 @@ def foliage_type(
         Decorator function
     """
 
-    def decorator(cls):
+    def decorator(cls: Type) -> Type:
         # Create foliage type from class
         ft = FoliageType(
             type_id=type_id,

@@ -1,0 +1,14 @@
+{
+  "id": "session-1779840243200",
+  "startedAt": "2026-05-27T00:04:03.200Z",
+  "cwd": "/home/user/dev/USER/PROJECTS_VOID/TRINITY/crates/renderer-backend",
+  "context": {},
+  "metrics": {
+    "edits": 187,
+    "commands": 0,
+    "tasks": 0,
+    "errors": 0
+  },
+  "endedAt": "2026-05-27T00:30:07.831Z",
+  "duration": 1564632
+}

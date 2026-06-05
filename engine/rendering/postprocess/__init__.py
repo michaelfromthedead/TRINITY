@@ -17,7 +17,6 @@ Provides comprehensive post-processing effects for the rendering pipeline:
 
 # Post-Process Stack
 from .postprocess_stack import (
-    BlendMode,
     BoxVolumeShape,
     EffectExecutionPath,
     EffectPriority,
@@ -206,7 +205,6 @@ from .constants import (
 
 __all__ = [
     # Post-Process Stack
-    "BlendMode",
     "EffectExecutionPath",
     "EffectPriority",
     "EffectQuality",

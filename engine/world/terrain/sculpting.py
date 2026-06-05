@@ -10,7 +10,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, List, Optional, Protocol, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Protocol, Tuple
+from typing import runtime_checkable
+
+from engine.world.terrain.constants import (
+    DEFAULT_BRUSH_RADIUS,
+    DEFAULT_BRUSH_STRENGTH,
+    DEFAULT_BRUSH_FALLOFF,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -61,6 +68,7 @@ class BrushSettings:
             raise ValueError("falloff must be in range [0, 1]")
 
 
+@runtime_checkable
 class Heightfield(Protocol):
     """Protocol for heightfield data structures."""
 
@@ -1000,9 +1008,9 @@ class SculptingSession:
 
 def create_tool(
     tool_type: SculptTool,
-    brush: TerrainBrush,
-    **kwargs,
-) -> BaseSculptTool:
+    brush: "TerrainBrush",
+    **kwargs: Any,
+) -> "BaseSculptTool":
     """Factory function to create sculpting tools.
 
     Args:

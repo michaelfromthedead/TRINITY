@@ -18,6 +18,7 @@ from functools import lru_cache
 from typing import (
     Any,
     Callable,
+    Dict,
     FrozenSet,
     Iterable,
     Iterator,
@@ -34,6 +35,14 @@ from engine.gameplay.abilities.constants import (
 )
 
 T = TypeVar("T")
+
+# Check if Foundation is available
+try:
+    from foundation import registry as foundation_registry
+    FOUNDATION_AVAILABLE = True
+except ImportError:
+    FOUNDATION_AVAILABLE = False
+    foundation_registry = None  # type: ignore
 
 
 # =============================================================================
@@ -187,6 +196,19 @@ class GameplayTag:
     def __repr__(self) -> str:
         return f"GameplayTag({self.hierarchy!r})"
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize tag to dictionary."""
+        return {
+            "hierarchy": self.hierarchy,
+            "parts": list(self.parts),
+            "depth": self.depth,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GameplayTag":
+        """Deserialize tag from dictionary."""
+        return cls(data["hierarchy"])
+
 
 # =============================================================================
 # GAMEPLAY TAG CONTAINER
@@ -277,6 +299,44 @@ class GameplayTagContainer:
             tag = GameplayTag(tag)
         return tag in self._tags
 
+    # Aliases for compatibility
+    def add_tag(self, tag: GameplayTag | str) -> bool:
+        """Alias for add()."""
+        return self.add(tag)
+
+    def remove_tag(self, tag: GameplayTag | str) -> bool:
+        """Alias for remove()."""
+        return self.remove(tag)
+
+    def has_tag(
+        self,
+        tag: GameplayTag | str,
+        match_children: bool = False,
+        hierarchical: bool = False,
+    ) -> bool:
+        """
+        Check if container has a tag.
+
+        Args:
+            tag: The tag to check for.
+            match_children: If True, also match child tags hierarchically (legacy).
+            hierarchical: If True, also match child tags hierarchically.
+        """
+        if isinstance(tag, str):
+            tag = GameplayTag(tag)
+
+        if tag in self._tags:
+            return True
+
+        # Support both param names
+        if match_children or hierarchical:
+            # Check if any contained tag is a child of the given tag
+            for contained in self._tags:
+                if contained.is_child_of(tag):
+                    return True
+
+        return False
+
     def has_any(self, tags: Iterable[GameplayTag | str]) -> bool:
         """Check if container has any of the given tags."""
         for tag in tags:
@@ -359,7 +419,22 @@ class GameplayTagContainer:
         return self.has(tag)
 
     def __bool__(self) -> bool:
+        # Follow Python convention: empty containers are falsy
         return len(self._tags) > 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize container to dictionary."""
+        return {
+            "tags": [tag.hierarchy for tag in self._tags],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GameplayTagContainer":
+        """Deserialize container from dictionary."""
+        container = cls()
+        for tag_str in data.get("tags", []):
+            container.add(GameplayTag(tag_str))
+        return container
 
 
 # =============================================================================
@@ -486,26 +561,185 @@ class GameplayTagQuery:
 # =============================================================================
 
 
-def gameplay_tag(hierarchy: str) -> Callable[[type[T]], type[T]]:
+def gameplay_tag(
+    hierarchy: str,
+    parent: Optional[str] = None,
+) -> Callable[[type[T]], type[T]]:
     """
     Decorator to attach a gameplay tag to a class.
+
+    Args:
+        hierarchy: The tag hierarchy (e.g., "ability.offensive.fire")
+        parent: Optional parent hierarchy to prepend if not already present
 
     Usage:
         @gameplay_tag("ability.offensive.fire")
         class Fireball:
             pass
+
+        @gameplay_tag("Speed", parent="Buff")
+        class SpeedBuff:
+            pass
     """
 
     def decorator(cls: type[T]) -> type[T]:
-        tag = GameplayTag(hierarchy)
+        # Calculate the final hierarchy
+        final_hierarchy = hierarchy
+        if parent:
+            # Only prepend parent if hierarchy doesn't already start with it
+            if not hierarchy.startswith(parent + TAG_SEPARATOR) and hierarchy != parent:
+                final_hierarchy = f"{parent}{TAG_SEPARATOR}{hierarchy}"
+
+        tag = GameplayTag(final_hierarchy)
         cls._gameplay_tag = True  # type: ignore
         cls._tag = tag  # type: ignore
-        cls._tag_hierarchy = hierarchy  # type: ignore
+        cls._tag_hierarchy = final_hierarchy  # type: ignore
+        cls._tag_parent = parent  # type: ignore
 
         # Ensure tag container exists
         if not hasattr(cls, "_tag_container"):
             cls._tag_container = GameplayTagContainer()  # type: ignore
         cls._tag_container.add(tag)  # type: ignore
+
+        # Register with Foundation if available
+        if FOUNDATION_AVAILABLE and foundation_registry is not None:
+            try:
+                # Register the class first (if not already registered)
+                if not foundation_registry.is_registered(cls):
+                    foundation_registry.register(cls)
+                # Add the gameplay_tag tag
+                foundation_registry.add_tag(cls, "gameplay_tag")
+                # Set metadata
+                foundation_registry.set_metadata(cls, "tag_hierarchy", final_hierarchy)
+                foundation_registry.set_metadata(cls, "root", tag.root.hierarchy)
+                if parent:
+                    foundation_registry.set_metadata(cls, "parent", parent)
+            except Exception:
+                # Class may already be registered or registry may not support all methods
+                pass
+
+        return cls
+
+    return decorator
+
+
+def ability_with_tags(
+    *tags: Any,  # Can be strings or a single list
+    required: Optional[Iterable[str]] = None,
+    blocked: Optional[Iterable[str]] = None,
+    # New-style keyword arguments
+    required_tags: Optional[Iterable[str]] = None,
+    granted_tags: Optional[Iterable[str]] = None,
+    blocked_by_tags: Optional[Iterable[str]] = None,
+) -> Callable[[type[T]], type[T]]:
+    """
+    Decorator to attach multiple gameplay tags to an ability class.
+
+    Also allows specifying required, granted, and blocked tags for ability activation.
+
+    Usage:
+        @ability_with_tags(
+            "ability.offensive.fire",
+            "ability.aoe",
+            required=["status.can_cast"],
+            blocked=["status.silenced"],
+        )
+        class Fireball:
+            pass
+
+        @ability_with_tags(
+            required_tags=["Combat"],
+            granted_tags=["Buff.Speed"],
+            blocked_by_tags=["Status.Stunned"],
+        )
+        class SprintAbility:
+            pass
+    """
+
+    def decorator(cls: type[T]) -> type[T]:
+        # Initialize tag container
+        if not hasattr(cls, "_tag_container"):
+            cls._tag_container = GameplayTagContainer()  # type: ignore
+
+        # Normalize tags - handle both ability_with_tags("a", "b") and ability_with_tags(["a", "b"])
+        normalized_tags: list[str] = []
+        for item in tags:
+            if isinstance(item, (list, tuple)):
+                normalized_tags.extend(item)
+            else:
+                normalized_tags.append(item)
+
+        # Add all specified tags
+        for tag_str in normalized_tags:
+            tag = GameplayTag(tag_str)
+            cls._tag_container.add(tag)  # type: ignore
+
+        # Store the first tag as the primary tag
+        if normalized_tags:
+            cls._gameplay_tag = True  # type: ignore
+            cls._tag = GameplayTag(normalized_tags[0])  # type: ignore
+            cls._tag_hierarchy = normalized_tags[0]  # type: ignore
+
+        # Store required tags for activation (support both param names)
+        cls._required_tags = GameplayTagContainer()  # type: ignore
+        actual_required = required_tags or required
+        if actual_required:
+            for req_tag in actual_required:
+                cls._required_tags.add(req_tag)  # type: ignore
+
+        # Store granted tags (tags applied when ability is active)
+        cls._granted_tags = GameplayTagContainer()  # type: ignore
+        if granted_tags:
+            for grant_tag in granted_tags:
+                cls._granted_tags.add(grant_tag)  # type: ignore
+
+        # Store blocked tags for activation (support both param names)
+        cls._blocked_by_tags = GameplayTagContainer()  # type: ignore
+        cls._blocked_tags = cls._blocked_by_tags  # Alias for backwards compatibility
+        actual_blocked = blocked_by_tags or blocked
+        if actual_blocked:
+            for block_tag in actual_blocked:
+                cls._blocked_by_tags.add(block_tag)  # type: ignore
+
+        # Mark as ability with tags
+        cls._ability_with_tags = True  # type: ignore
+
+        # Add instance methods for ability tag operations
+        def can_activate(self, owner_tags: GameplayTagContainer) -> bool:
+            """Check if this ability can be activated given owner's tags."""
+            # Check required tags
+            req_tags = getattr(self.__class__, "_required_tags", None)
+            if req_tags and len(req_tags) > 0:
+                for tag in req_tags:
+                    if not owner_tags.has_tag(tag):
+                        return False
+
+            # Check blocked tags
+            blocked_tags = getattr(self.__class__, "_blocked_by_tags", None)
+            if blocked_tags and len(blocked_tags) > 0:
+                for tag in blocked_tags:
+                    if owner_tags.has_tag(tag):
+                        return False
+
+            return True
+
+        def apply_granted_tags(self, target_tags: GameplayTagContainer) -> None:
+            """Apply this ability's granted tags to a target container."""
+            grant_tags = getattr(self.__class__, "_granted_tags", None)
+            if grant_tags:
+                for tag in grant_tags:
+                    target_tags.add_tag(tag)
+
+        def remove_granted_tags(self, target_tags: GameplayTagContainer) -> None:
+            """Remove this ability's granted tags from a target container."""
+            grant_tags = getattr(self.__class__, "_granted_tags", None)
+            if grant_tags:
+                for tag in grant_tags:
+                    target_tags.remove_tag(tag)
+
+        cls.can_activate = can_activate  # type: ignore
+        cls.apply_granted_tags = apply_granted_tags  # type: ignore
+        cls.remove_granted_tags = remove_granted_tags  # type: ignore
 
         return cls
 
@@ -560,6 +794,36 @@ class GameplayTagRegistry:
         instance._tags.clear()
         cls.get_cached.cache_clear()
 
+    @classmethod
+    def query_foundation(cls, **kwargs: Any) -> list:
+        """Query Foundation registry for gameplay tag classes."""
+        if not FOUNDATION_AVAILABLE or foundation_registry is None:
+            return []
+        try:
+            return list(foundation_registry.query(tag="gameplay_tag", **kwargs))
+        except Exception:
+            return []
+
+    @classmethod
+    def query_by_parent(cls, parent_hierarchy: str) -> list:
+        """Query for classes with tags that have the given parent hierarchy."""
+        if not FOUNDATION_AVAILABLE or foundation_registry is None:
+            return []
+        try:
+            # Get all gameplay tag classes
+            all_tagged = foundation_registry.query(tag="gameplay_tag")
+            results = []
+            for tagged_cls in all_tagged:
+                hierarchy = foundation_registry.get_metadata(tagged_cls, "tag_hierarchy")
+                if hierarchy and (
+                    hierarchy.startswith(parent_hierarchy + TAG_SEPARATOR) or
+                    hierarchy == parent_hierarchy
+                ):
+                    results.append(tagged_cls)
+            return results
+        except Exception:
+            return []
+
 
 # =============================================================================
 # EXPORTS
@@ -570,5 +834,6 @@ __all__ = [
     "GameplayTagContainer",
     "GameplayTagQuery",
     "GameplayTagRegistry",
+    "ability_with_tags",
     "gameplay_tag",
 ]

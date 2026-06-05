@@ -63,6 +63,11 @@ def apply_dead_zone(
     if abs_value > outer_zone:
         return copysign(1.0, value)
 
+    # Handle edge case where dead_zone equals outer_zone
+    if dead_zone >= outer_zone:
+        # No valid range to rescale, return 0 if at/below threshold, 1 otherwise
+        return copysign(1.0, value) if abs_value >= outer_zone else 0.0
+
     # Rescale the value to maintain smooth transition
     rescaled = (abs_value - dead_zone) / (outer_zone - dead_zone)
     return copysign(rescaled, value)
@@ -122,11 +127,12 @@ def apply_cross_dead_zone(
     processed_x = apply_dead_zone(x, dead_zone)
     processed_y = apply_dead_zone(y, dead_zone)
 
-    # If either is in dead zone, reduce the other
-    if abs(x) < dead_zone:
-        processed_y *= (1.0 - dead_zone + abs(x)) / (1.0 - dead_zone) if dead_zone < 1.0 else 0.0
-    if abs(y) < dead_zone:
-        processed_x *= (1.0 - dead_zone + abs(y)) / (1.0 - dead_zone) if dead_zone < 1.0 else 0.0
+    # If either is in dead zone, reduce the other proportionally
+    # The closer to 0, the more reduction. At dead_zone edge, no reduction.
+    if abs(x) < dead_zone and dead_zone > 0:
+        processed_y *= abs(x) / dead_zone
+    if abs(y) < dead_zone and dead_zone > 0:
+        processed_x *= abs(y) / dead_zone
 
     return (processed_x, processed_y)
 

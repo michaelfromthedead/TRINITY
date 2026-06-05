@@ -481,7 +481,7 @@ class ChainedConverter(IConverter[Any, Any]):
 
     def __init__(self, converters: List[IConverter]):
         if not converters:
-            raise ValueError("At least one converter required")
+            raise ValueError("at least one converter required")
         self._converters = converters
 
     def convert(self, value: Any, parameter: Any = None) -> Any:

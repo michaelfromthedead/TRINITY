@@ -9,11 +9,11 @@
 //
 // Regression scenarios:
 //
-//   1. Barrier 5-tuple integrity
+//   1. Barrier 6-tuple integrity
 //      Every barrier carries (PassIndex, PassIndex, ResourceHandle,
 //      ResourceState, ResourceState).  No tuple is ever shorter, longer, or
 //      malformed.  Duplicate (from, to, resource) triples collapse to one
-//      5-tuple.  Same-state transitions produce zero tuples.
+//      6-tuple.  Same-state transitions produce zero tuples.
 //
 //   2. BarrierOptimizer wired into compile()
 //      CompiledFrameGraph::compile now runs BarrierOptimizer::optimize as a
@@ -35,7 +35,7 @@ use renderer_backend::frame_graph::{
 };
 
 // =============================================================================
-// SECTION 1 -- Barrier 5-tuple integrity
+// SECTION 1 -- Barrier 6-tuple integrity
 // =============================================================================
 
 /// Every barrier produced by compute_barriers has exactly 5 elements:
@@ -58,12 +58,13 @@ fn barrier_5tuple_exactly_five_elements() {
 
     let barriers = compute_barriers(&order, &passes, &edges);
 
-    // Each barrier must have exactly 5 fields matching the 5-tuple contract.
-    for (idx, &(from, to, handle, before, after)) in barriers.iter().enumerate() {
-        // Destructure proves 5-element tuple -- would fail if the type changed.
+    // Each barrier must have exactly 6 fields matching the 6-tuple contract.
+    for (idx, &(from, to, handle, edge_type, before, after)) in barriers.iter().enumerate() {
+        // Destructure proves 6-element tuple -- would fail if the type changed.
         let _: PassIndex = from;
         let _: PassIndex = to;
         let _: ResourceHandle = handle;
+        let _: EdgeType = edge_type;
         let _: ResourceState = before;
         let _: ResourceState = after;
         let _ = idx; // unused but keeps the iterator bound.
@@ -71,7 +72,7 @@ fn barrier_5tuple_exactly_five_elements() {
 }
 
 /// Two edges with the same (from, to, resource) must produce exactly one
-/// barrier 5-tuple (deduplication).
+/// barrier 6-tuple (deduplication).
 #[test]
 fn barrier_5tuple_deduplicates_same_edge() {
     let r = ResourceHandle(1);
@@ -97,16 +98,16 @@ fn barrier_5tuple_deduplicates_same_edge() {
     assert_eq!(
         barriers.len(),
         1,
-        "duplicate edges for same (from, to, resource) produce one 5-tuple",
+        "duplicate edges for same (from, to, resource) produce one 6-tuple",
     );
 
-    // The 5-tuple must reference the correct resource.
-    assert_eq!(barriers[0].2, r, "5-tuple resource handle is correct");
+    // The 6-tuple must reference the correct resource.
+    assert_eq!(barriers[0].2, r, "6-tuple resource handle is correct");
     assert_eq!(barriers[0].0, PassIndex(0), "from is P0");
     assert_eq!(barriers[0].1, PassIndex(1), "to is P1");
 }
 
-/// A ShaderRead -> ShaderRead state transition produces no barrier 5-tuple
+/// A ShaderRead -> ShaderRead state transition produces no barrier 6-tuple
 /// (read-read transitions are safe and can be elided by compute_barriers).
 #[test]
 fn barrier_5tuple_read_read_omitted() {
@@ -124,12 +125,12 @@ fn barrier_5tuple_read_read_omitted() {
 
     assert!(
         barriers.is_empty(),
-        "read-read transition produces zero barrier 5-tuples",
+        "read-read transition produces zero barrier 6-tuples",
     );
 }
 
 /// Three distinct resources at the same boundary produce exactly three
-/// barrier 5-tuples, each with a unique ResourceHandle.
+/// barrier 6-tuples, each with a unique ResourceHandle.
 #[test]
 fn barrier_5tuple_three_resources_all_distinct() {
     let r_a = ResourceHandle(1);
@@ -162,21 +163,21 @@ fn barrier_5tuple_three_resources_all_distinct() {
     assert_eq!(
         barriers.len(),
         3,
-        "three resources at same boundary produce three 5-tuples",
+        "three resources at same boundary produce three 6-tuples",
     );
 
-    // Each 5-tuple carries its own ResourceHandle.
+    // Each 6-tuple carries its own ResourceHandle.
     let handles: Vec<ResourceHandle> = barriers.iter().map(|b| b.2).collect();
     for expected in &[r_a, r_b, r_c] {
         assert!(
             handles.contains(expected),
-            "ResourceHandle({}) present in barrier 5-tuples",
+            "ResourceHandle({}) present in barrier 6-tuples",
             expected.0,
         );
     }
 }
 
-/// The 5-tuple carries the correct (before, after) state pair matching the
+/// The 6-tuple carries the correct (before, after) state pair matching the
 /// actual state transition that occurs between the two passes.
 #[test]
 fn barrier_5tuple_state_transition_is_correct() {
@@ -196,7 +197,7 @@ fn barrier_5tuple_state_transition_is_correct() {
     let barriers = compute_barriers(&order, &passes, &edges);
     assert_eq!(barriers.len(), 1, "exactly one barrier for the transition");
 
-    let (_from, _to, handle, before, after) = barriers[0];
+    let (_from, _to, handle, _edge_type, before, after) = barriers[0];
     assert_eq!(handle, r, "barrier targets the correct resource");
     assert_eq!(
         before,
@@ -244,8 +245,8 @@ fn optimizer_wired_in_default_compile() {
         },
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles with optimizer");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles with optimizer");
 
     let stats = &compiled.stats;
 
@@ -329,8 +330,8 @@ fn optimizer_stats_reflect_elision_count() {
         },
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("compiles");
 
     let stats = &compiled.stats;
 
@@ -502,8 +503,8 @@ fn texture_cube_compiles_through_pipeline() {
         },
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("TextureCube graph compiles successfully");
 
     // Both passes survive (no dead elimination since both are connected).
@@ -523,7 +524,7 @@ fn texture_cube_compiles_through_pipeline() {
 }
 
 /// A graphics pass writing to a TextureCube via color attachment produces a
-/// valid compiled graph with correct 5-tuple barriers referencing the cube
+/// valid compiled graph with correct 6-tuple barriers referencing the cube
 /// resource handle.
 #[test]
 fn texture_cube_graphics_pass_compiles() {
@@ -550,8 +551,8 @@ fn texture_cube_graphics_pass_compiles() {
 
     let passes: Vec<IrPass> = vec![p0, p1];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("TextureCube graphics pass graph compiles");
 
     assert_eq!(
@@ -560,23 +561,24 @@ fn texture_cube_graphics_pass_compiles() {
         "both passes survive with TextureCube color attachment",
     );
 
-    // The barrier 5-tuples must reference the cube resource handle.
-    let cube_barriers: Vec<&(PassIndex, PassIndex, ResourceHandle, ResourceState, ResourceState)> = compiled
+    // The barrier 6-tuples must reference the cube resource handle.
+    let cube_barriers: Vec<&(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)> = compiled
         .barriers
         .iter()
-        .filter(|(_, _, h, _, _)| *h == r_cube)
+        .filter(|(_, _, h, _, _, _)| *h == r_cube)
         .collect();
     assert!(
         !cube_barriers.is_empty() || compiled.stats.barriers_total == 0,
-        "barrier 5-tuples exist for TextureCube resource",
+        "barrier 6-tuples exist for TextureCube resource",
     );
 
-    // Each 5-tuple has the correct structure (verified by destructuring).
+    // Each 6-tuple has the correct structure (verified by destructuring).
     for b in &compiled.barriers {
         let _: PassIndex = b.0;
         let _: PassIndex = b.1;
         let _: ResourceHandle = b.2;
-        let _: ResourceState = b.3;
+        let _: EdgeType = b.3;
+        let _: ResourceState = b.4;
         let _: ResourceState = b.4;
     }
 }
@@ -612,8 +614,8 @@ fn texture_cube_json_serialization_preserves_kind() {
     ];
     let resources = vec![res];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("TextureCube minimal graph compiles");
 
     // The cube resource is preserved in the output.
@@ -671,7 +673,7 @@ fn texture_cube_transition_transfer_to_shader_read() {
     }
 }
 
-/// Barrier 5-tuples from the compile pipeline consistently use the correct
+/// Barrier 6-tuples from the compile pipeline consistently use the correct
 /// type for every element across multiple boundaries.
 #[test]
 fn barrier_5tuple_structure_consistency_multi_boundary() {
@@ -708,12 +710,13 @@ fn barrier_5tuple_structure_consistency_multi_boundary() {
         "two barriers across two boundaries",
     );
 
-    // Verify every 5-tuple has the correct structure by exhaustive
+    // Verify every 6-tuple has the correct structure by exhaustive
     // destructuring and type annotation.
-    for (i, &(from, to, handle, before, after)) in barriers.iter().enumerate() {
+    for (i, &(from, to, handle, edge_type, before, after)) in barriers.iter().enumerate() {
         let _: PassIndex = from;
         let _: PassIndex = to;
         let _: ResourceHandle = handle;
+        let _: EdgeType = edge_type;
         let _: ResourceState = before;
         let _: ResourceState = after;
 

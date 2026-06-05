@@ -91,6 +91,43 @@ class ItemDefinition:
             return False
         return self.id == other.id
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "item_type": self.item_type.name,
+            "rarity": self.rarity.name,
+            "max_stack": self.max_stack,
+            "weight": self.weight,
+            "base_value": self.base_value,
+            "level_requirement": self.level_requirement,
+            "description": self.description,
+            "icon": self.icon,
+            "model": self.model,
+            "flags": list(self.flags),
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ItemDefinition":
+        """Deserialize from dictionary."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            item_type=ItemType[data["item_type"]],
+            rarity=Rarity[data.get("rarity", "COMMON")],
+            max_stack=data.get("max_stack", 1),
+            weight=data.get("weight", 0.0),
+            base_value=data.get("base_value", 0),
+            level_requirement=data.get("level_requirement", 1),
+            description=data.get("description", ""),
+            icon=data.get("icon", ""),
+            model=data.get("model", ""),
+            flags=frozenset(data.get("flags", [])),
+            metadata=dict(data.get("metadata", {})),
+        )
+
 
 @dataclass
 class ItemInstance:
@@ -214,6 +251,78 @@ class ItemInstance:
             custom_data=dict(self.custom_data),
         )
 
+    def to_dict(self, embed_definition: bool = True) -> Dict[str, Any]:
+        """
+        Serialize to dictionary.
+
+        Args:
+            embed_definition: If True, embed the full definition; otherwise only ID
+
+        Returns:
+            Dictionary representation
+        """
+        result = {
+            "definition_id": self.definition.id,
+            "quantity": self.quantity,
+            "instance_id": str(self.instance_id),
+            "bound_to": self.bound_to,
+            "durability": self.durability,
+            "custom_data": dict(self.custom_data),
+        }
+        if embed_definition:
+            result["definition"] = self.definition.to_dict()
+        return result
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry_or_definition: Optional[Union["ItemRegistry", Dict[str, ItemDefinition], ItemDefinition]] = None,
+    ) -> "ItemInstance":
+        """
+        Deserialize from dictionary.
+
+        Args:
+            data: Serialized data
+            registry_or_definition: Either an ItemDefinition, ItemRegistry, or dict of definitions
+
+        Returns:
+            New ItemInstance
+
+        Raises:
+            ValueError: If definition cannot be resolved
+        """
+        definition: Optional[ItemDefinition] = None
+
+        # Determine what was passed
+        if isinstance(registry_or_definition, ItemDefinition):
+            definition = registry_or_definition
+        elif registry_or_definition is not None:
+            # It's a registry or dict - lookup definition
+            if isinstance(registry_or_definition, dict):
+                definition = registry_or_definition.get(data["definition_id"])
+            else:
+                # ItemRegistry
+                definition = registry_or_definition.get(data["definition_id"])
+            if definition is None:
+                raise ValueError(f"Item '{data['definition_id']}' not in registry")
+
+        # If still no definition, check for embedded definition
+        if definition is None:
+            if "definition" in data:
+                definition = ItemDefinition.from_dict(data["definition"])
+            else:
+                raise ValueError("Either definition, embedded definition, or registry must be provided")
+
+        return cls(
+            definition=definition,
+            quantity=data.get("quantity", 1),
+            instance_id=UUID(data["instance_id"]) if "instance_id" in data else uuid4(),
+            bound_to=data.get("bound_to"),
+            durability=data.get("durability"),
+            custom_data=dict(data.get("custom_data", {})),
+        )
+
 
 # =============================================================================
 # Inventory Slot
@@ -246,6 +355,54 @@ class InventorySlot:
             if item.definition.item_type != self.filter_type:
                 return False
         return True
+
+    def to_dict(self, embed_definition: bool = True) -> Dict[str, Any]:
+        """
+        Serialize slot to dictionary.
+
+        Args:
+            embed_definition: If True, embed item definitions
+
+        Returns:
+            Dictionary representation
+        """
+        return {
+            "index": self.index,
+            "locked": self.locked,
+            "filter_type": self.filter_type.name if self.filter_type else None,
+            "item": self.item.to_dict(embed_definition=embed_definition) if self.item else None,
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry_or_definition: Optional[Union["ItemRegistry", Dict[str, ItemDefinition]]] = None,
+    ) -> "InventorySlot":
+        """
+        Deserialize slot from dictionary.
+
+        Args:
+            data: Serialized data
+            registry_or_definition: Optional registry for item definitions
+
+        Returns:
+            InventorySlot instance
+        """
+        item = None
+        if data.get("item"):
+            item = ItemInstance.from_dict(data["item"], registry_or_definition)
+
+        filter_type = None
+        if data.get("filter_type"):
+            filter_type = ItemType[data["filter_type"]]
+
+        return cls(
+            index=data["index"],
+            item=item,
+            locked=data.get("locked", False),
+            filter_type=filter_type,
+        )
 
 
 # =============================================================================
@@ -617,14 +774,13 @@ class InventoryContainer:
                 self._emit_event(EconomyEvent.ITEM_ADDED, slot.item, empty_idx, added)
                 quantity_added += added
             else:
-                # Clone the item so the slot owns its own reference
-                cloned = item.clone()
-                slot.item = cloned
+                # Add the item directly to the slot (ownership transfer)
+                slot.item = item
                 added = add_amount
-                self._current_weight += cloned.total_weight
-                self._emit_event(EconomyEvent.ITEM_ADDED, cloned, empty_idx, added)
+                self._current_weight += item.total_weight
+                self._emit_event(EconomyEvent.ITEM_ADDED, item, empty_idx, added)
                 quantity_added += added
-                item.quantity = 0
+                break  # Item fully added, exit loop
 
         return (quantity_added == quantity_to_add, quantity_added)
 
@@ -1143,34 +1299,70 @@ class InventoryContainer:
     # Serialization
     # -------------------------------------------------------------------------
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Serialize container to dictionary."""
+    def to_dict(self, embed_definitions: bool = True) -> Dict[str, Any]:
+        """
+        Serialize container to dictionary.
+
+        Args:
+            embed_definitions: If True, embed full item definitions
+
+        Returns:
+            Dictionary representation
+        """
         return {
+            "__version__": ECONOMY_SCHEMA_VERSION,
             "id": str(self._id),
             "type": self._type.name,
             "owner_id": self._owner_id,
             "weight_limit": self._weight_limit,
             "slots": [
-                {
-                    "index": slot.index,
-                    "locked": slot.locked,
-                    "filter_type": slot.filter_type.name if slot.filter_type else None,
-                    "item": self._item_to_dict(slot.item) if slot.item else None,
-                }
+                slot.to_dict(embed_definition=embed_definitions)
                 for slot in self._slots
             ],
         }
 
-    def _item_to_dict(self, item: ItemInstance) -> Dict[str, Any]:
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry_or_definition: Optional[Union["ItemRegistry", Dict[str, ItemDefinition]]] = None,
+    ) -> "InventoryContainer":
+        """
+        Deserialize container from dictionary.
+
+        Args:
+            data: Serialized data
+            registry_or_definition: Optional registry for item definitions
+
+        Returns:
+            InventoryContainer instance
+        """
+        container_type = ContainerType[data["type"]]
+        container = cls(
+            container_type=container_type,
+            slot_count=len(data["slots"]),
+            weight_limit=data.get("weight_limit"),
+            owner_id=data.get("owner_id"),
+            container_id=UUID(data["id"]) if "id" in data else None,
+        )
+
+        for slot_data in data["slots"]:
+            idx = slot_data["index"]
+            if slot_data.get("locked"):
+                container.lock_slot(idx)
+            if slot_data.get("filter_type"):
+                filter_type = ItemType[slot_data["filter_type"]]
+                container.set_slot_filter(idx, filter_type)
+            if slot_data.get("item"):
+                item = ItemInstance.from_dict(slot_data["item"], registry_or_definition)
+                if item:
+                    container.add(item, target_slot=idx)
+
+        return container
+
+    def _item_to_dict(self, item: ItemInstance, embed_definition: bool = True) -> Dict[str, Any]:
         """Serialize item instance."""
-        return {
-            "instance_id": str(item.instance_id),
-            "definition_id": item.definition.id,
-            "quantity": item.quantity,
-            "bound_to": item.bound_to,
-            "durability": item.durability,
-            "custom_data": item.custom_data,
-        }
+        return item.to_dict(embed_definition=embed_definition)
 
 
 # =============================================================================
@@ -1231,6 +1423,187 @@ class ItemRegistry:
         """Get definitions by rarity."""
         return [d for d in self._definitions.values() if d.rarity == rarity]
 
+    def as_dict(self) -> Dict[str, ItemDefinition]:
+        """
+        Return definitions as a dictionary for serialization lookup.
+
+        Returns:
+            Dictionary mapping item IDs to ItemDefinitions
+        """
+        return dict(self._definitions)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialize registry to dictionary.
+
+        Returns:
+            Dictionary representation of all item definitions
+        """
+        return {
+            "items": {
+                item_id: definition.to_dict()
+                for item_id, definition in self._definitions.items()
+            }
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ItemRegistry":
+        """
+        Deserialize registry from dictionary.
+
+        Args:
+            data: Serialized data
+
+        Returns:
+            ItemRegistry instance
+        """
+        registry = cls()
+        for item_id, item_data in data.get("items", {}).items():
+            definition = ItemDefinition.from_dict(item_data)
+            registry.register(definition)
+        return registry
+
     def clear(self) -> None:
         """Clear all definitions."""
         self._definitions.clear()
+
+
+# =============================================================================
+# Serialization
+# =============================================================================
+
+
+# Schema version for economy serialization format
+ECONOMY_SCHEMA_VERSION: str = "1.0.0"
+
+
+class Serializer:
+    """
+    Serializer for inventory and economy data.
+
+    Provides methods for converting inventory structures to/from dictionaries
+    for persistence and network transmission.
+    """
+
+    def __init__(self, item_registry: Optional[ItemRegistry] = None) -> None:
+        """
+        Initialize serializer.
+
+        Args:
+            item_registry: Registry for resolving item definitions
+        """
+        self._registry = item_registry or ItemRegistry.instance()
+
+    @property
+    def schema_version(self) -> str:
+        """Get schema version."""
+        return ECONOMY_SCHEMA_VERSION
+
+    def serialize_item(self, item: ItemInstance) -> Dict[str, Any]:
+        """
+        Serialize item instance to dictionary.
+
+        Args:
+            item: ItemInstance to serialize
+
+        Returns:
+            Dictionary representation
+        """
+        return {
+            "schema_version": ECONOMY_SCHEMA_VERSION,
+            "instance_id": str(item.instance_id),
+            "definition_id": item.definition.id,
+            "quantity": item.quantity,
+            "bound_to": item.bound_to,
+            "durability": item.durability,
+            "custom_data": item.custom_data,
+        }
+
+    def deserialize_item(self, data: Dict[str, Any]) -> Optional[ItemInstance]:
+        """
+        Deserialize dictionary to item instance.
+
+        Args:
+            data: Dictionary to deserialize
+
+        Returns:
+            ItemInstance or None if definition not found
+        """
+        definition = self._registry.get(data["definition_id"])
+        if definition is None:
+            return None
+
+        return ItemInstance(
+            definition=definition,
+            quantity=data.get("quantity", 1),
+            instance_id=UUID(data["instance_id"]) if "instance_id" in data else uuid4(),
+            bound_to=data.get("bound_to"),
+            durability=data.get("durability"),
+            custom_data=data.get("custom_data", {}),
+        )
+
+    def serialize_container(self, container: InventoryContainer) -> Dict[str, Any]:
+        """
+        Serialize inventory container to dictionary.
+
+        Args:
+            container: Container to serialize
+
+        Returns:
+            Dictionary representation
+        """
+        return {
+            "schema_version": ECONOMY_SCHEMA_VERSION,
+            "id": str(container.id),
+            "type": container.container_type.name,
+            "owner_id": container.owner_id,
+            "weight_limit": container.weight_limit,
+            "slots": [
+                {
+                    "index": slot.index,
+                    "locked": slot.locked,
+                    "filter_type": slot.filter_type.name if slot.filter_type else None,
+                    "item": self.serialize_item(slot.item) if slot.item else None,
+                }
+                for slot in container
+            ],
+        }
+
+    def deserialize_container(
+        self,
+        data: Dict[str, Any],
+    ) -> Optional[InventoryContainer]:
+        """
+        Deserialize dictionary to inventory container.
+
+        Args:
+            data: Dictionary to deserialize
+
+        Returns:
+            InventoryContainer or None on failure
+        """
+        try:
+            container_type = ContainerType[data["type"]]
+            container = InventoryContainer(
+                container_type=container_type,
+                slot_count=len(data["slots"]),
+                weight_limit=data.get("weight_limit"),
+                owner_id=data.get("owner_id"),
+                container_id=UUID(data["id"]) if "id" in data else None,
+            )
+
+            for slot_data in data["slots"]:
+                idx = slot_data["index"]
+                if slot_data.get("locked"):
+                    container.lock_slot(idx)
+                if slot_data.get("filter_type"):
+                    filter_type = ItemType[slot_data["filter_type"]]
+                    container.set_slot_filter(idx, filter_type)
+                if slot_data.get("item"):
+                    item = self.deserialize_item(slot_data["item"])
+                    if item:
+                        container.add(item, target_slot=idx)
+
+            return container
+        except (KeyError, ValueError):
+            return None

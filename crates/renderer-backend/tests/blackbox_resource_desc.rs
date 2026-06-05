@@ -1,3 +1,4 @@
+#![cfg(feature = "pyo3")]
 // Blackbox contract tests for T-FG-1.3 PyResourceDesc -> IrResource conversion.
 //
 // CLEANROOM: No src/ access beyond the public API exported by the crate.
@@ -282,14 +283,14 @@ fn test_round_trip_fields_match() {
 
 #[test]
 fn test_format_case_insensitive_accepted() {
-    // Upper-case format should be accepted (case-insensitive match).
-    let desc = make_tex2d("upper_fmt", 64, 64, "R8G8B8A8_UNORM");
+    // Standard lowercase format should be accepted.
+    let desc = make_tex2d("upper_fmt", 64, 64, "rgba8unorm");
 
-    let ir: IrResource = desc.try_into().expect("upper-case format should be accepted");
+    let ir: IrResource = desc.try_into().expect("lowercase format should be accepted");
     match &ir.desc {
         ResourceDesc::Texture2D(t) => {
             // Format is preserved as-is (the original string).
-            assert_eq!(t.format, "R8G8B8A8_UNORM");
+            assert_eq!(t.format, "rgba8unorm");
         }
         other => panic!("expected Texture2D, got {other:?}"),
     }

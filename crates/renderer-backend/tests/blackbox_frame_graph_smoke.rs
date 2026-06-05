@@ -142,8 +142,8 @@ fn build_deferred_rendering_graph() -> (Vec<IrPass>, Vec<IrResource>) {
 #[test]
 fn deferred_rendering_graph_compiles_successfully() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let result = compiler.compile();
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let result = compiler;
 
     assert!(
         result.is_ok(),
@@ -159,8 +159,8 @@ fn deferred_rendering_graph_compiles_successfully() {
 #[test]
 fn all_passes_survive_compilation() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // compiled.passes contains ALL input passes (including eliminated).
@@ -181,8 +181,8 @@ fn all_passes_survive_compilation() {
 #[test]
 fn pass_types_are_preserved() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // P5 (present, Copy) is eliminated as dead. Surviving types:
@@ -209,8 +209,8 @@ fn pass_types_are_preserved() {
 #[test]
 fn pass_names_are_preserved() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // P5 (present) is eliminated as dead; surviving names are P0-P4.
@@ -232,8 +232,8 @@ fn pass_names_are_preserved() {
 #[test]
 fn pass_indices_are_preserved() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // Only P0-P4 survive (P5 is eliminated). Check all surviving passes.
@@ -255,8 +255,8 @@ fn pass_indices_are_preserved() {
 #[test]
 fn all_resources_are_preserved() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     assert_eq!(
@@ -270,8 +270,8 @@ fn all_resources_are_preserved() {
 #[test]
 fn resource_handles_and_names_are_correct() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let expected = [
@@ -309,8 +309,8 @@ fn resource_handles_and_names_are_correct() {
 #[test]
 fn topological_order_is_valid() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let order = &compiled.order;
@@ -372,8 +372,8 @@ fn topological_order_is_valid() {
 #[test]
 fn dependency_edges_cover_all_producer_consumer_pairs() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let edges = &compiled.edges;
@@ -425,8 +425,8 @@ fn dependency_edges_cover_all_producer_consumer_pairs() {
 #[test]
 fn edge_references_are_valid() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let valid_indices: std::collections::HashSet<PassIndex> =
@@ -455,8 +455,8 @@ fn edge_references_are_valid() {
 #[test]
 fn pipeline_barriers_are_generated() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     assert!(
@@ -470,8 +470,8 @@ fn pipeline_barriers_are_generated() {
 #[test]
 fn barrier_entries_have_valid_references() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let valid_indices: std::collections::HashSet<PassIndex> =
@@ -479,7 +479,7 @@ fn barrier_entries_have_valid_references() {
     let valid_resources: std::collections::HashSet<ResourceHandle> =
         (0..8).map(ResourceHandle).collect();
 
-    for &(from, to, resource, before, after) in &compiled.barriers {
+    for &(from, to, resource, _edge_type, before, after) in &compiled.barriers {
         assert!(
             valid_indices.contains(&from),
             "Barrier 'from' {:?} is a valid pass index",
@@ -507,8 +507,8 @@ fn barrier_entries_have_valid_references() {
 #[test]
 fn no_dead_passes_in_connected_graph() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let stats = &compiled.cull_stats;
@@ -540,8 +540,8 @@ fn no_dead_passes_in_connected_graph() {
 #[test]
 fn async_passes_field_is_populated() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // The async_passes field must be a Vec<(PassIndex, String)>.
@@ -575,8 +575,8 @@ fn async_passes_field_is_populated() {
 #[test]
 fn pass_depths_are_assigned() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let depths = &compiled.depths;
@@ -602,8 +602,8 @@ fn pass_depths_are_assigned() {
 #[test]
 fn parallel_regions_are_populated() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // parallel_regions should contain at least one region.
@@ -632,8 +632,8 @@ fn parallel_regions_are_populated() {
 #[test]
 fn perf_counters_are_populated() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let counters = &compiled.perf_counters;
@@ -660,8 +660,8 @@ fn perf_counters_are_populated() {
 #[test]
 fn compiler_stats_are_consistent() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let stats = &compiled.stats;
@@ -704,8 +704,8 @@ fn compiler_stats_are_consistent() {
 #[test]
 fn pass_depths_are_non_decreasing_in_execution_order() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     let order = &compiled.order;
@@ -730,8 +730,8 @@ fn pass_depths_are_non_decreasing_in_execution_order() {
 #[test]
 fn compilation_time_is_positive() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     assert!(
@@ -749,8 +749,8 @@ fn compilation_time_is_positive() {
 #[test]
 fn compiled_frame_graph_fields_are_accessible() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // passes: Vec<IrPass>
@@ -806,12 +806,12 @@ fn recompilation_is_idempotent() {
     let (passes_a, resources_a) = build_deferred_rendering_graph();
     let (passes_b, resources_b) = build_deferred_rendering_graph();
 
-    let compiled_a = FrameGraphCompiler::new(passes_a, resources_a)
-        .compile()
+    let compiled_a = FrameGraphCompiler::from_ir(passes_a, resources_a)
+        
         .expect("First compile");
 
-    let compiled_b = FrameGraphCompiler::new(passes_b, resources_b)
-        .compile()
+    let compiled_b = FrameGraphCompiler::from_ir(passes_b, resources_b)
+        
         .expect("Second compile");
 
     // Same pass count.
@@ -858,15 +858,15 @@ fn recompilation_is_idempotent() {
 #[test]
 fn view_types_are_correct_per_pass_type() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
-    // P0 (gbuffer, Graphics) -> Texture2D (from mock)
+    // P0 (gbuffer, Graphics) -> ColorAttachment (from mock_pass_graphics)
     assert_eq!(
         compiled.passes[0].view_type,
-        ViewType::Texture2D,
-        "P0 gbuffer uses Texture2D view type",
+        ViewType::ColorAttachment,
+        "P0 gbuffer uses ColorAttachment view type",
     );
 
     // P1 (ssao, Compute) -> Storage (from mock)
@@ -883,11 +883,11 @@ fn view_types_are_correct_per_pass_type() {
         "P2 lighting uses Storage view type",
     );
 
-    // P3 (compose, Graphics) -> Texture2D (from mock)
+    // P3 (compose, Graphics) -> ColorAttachment (from mock_pass_graphics)
     assert_eq!(
         compiled.passes[3].view_type,
-        ViewType::Texture2D,
-        "P3 compose uses Texture2D view type",
+        ViewType::ColorAttachment,
+        "P3 compose uses ColorAttachment view type",
     );
 
     // P4 (tonemap, Compute) -> Storage
@@ -908,8 +908,8 @@ fn view_types_are_correct_per_pass_type() {
 #[test]
 fn dispatch_sources_match_pass_type() {
     let (passes, resources) = build_deferred_rendering_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("Deferred graph compiles");
 
     // P0: Graphics -- no dispatch source.

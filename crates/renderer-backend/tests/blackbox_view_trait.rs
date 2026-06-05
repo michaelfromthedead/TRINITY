@@ -82,6 +82,7 @@ fn camera_view_constructs_and_implements_view() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
 
     assert_eq!(
@@ -141,6 +142,7 @@ fn view_trait_is_object_safe() {
         width: 800,
         height: 600,
         format: "bgra8unorm".into(),
+        ..Default::default()
     });
 
     // All four trait methods accessible via dynamic dispatch.
@@ -205,6 +207,7 @@ fn camera_view_bind_returns_non_empty() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
     let ctx = RenderContext::default();
 
@@ -233,13 +236,15 @@ fn heterogeneous_view_collection() {
             width: 1920,
             height: 1080,
             format: "rgba8unorm".into(),
-        }),
+        ..Default::default()
+    }),
         Box::new(CameraView {
             name: "camera_shadow".into(),
             width: 1024,
             height: 1024,
             format: "d32float".into(),
-        }),
+        ..Default::default()
+    }),
     ];
 
     assert_eq!(views.len(), 3, "three view trait objects in collection");
@@ -395,6 +400,7 @@ fn camera_view_debug_output() {
         width: 800,
         height: 600,
         format: "r8unorm".into(),
+        ..Default::default()
     };
     let debug = format!("{:?}", view);
     assert!(!debug.is_empty(), "CameraView Debug output is non-empty",);
@@ -431,6 +437,7 @@ fn camera_view_is_send_sync() {
         width: 640,
         height: 480,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
     assert_send(&view);
     assert_sync(&view);
@@ -459,6 +466,7 @@ fn camera_view_type_is_color_attachment() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
     assert_eq!(
         view.view_type(),
@@ -475,6 +483,7 @@ fn empty_and_camera_view_types_differ() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
 
     assert_ne!(
@@ -497,19 +506,22 @@ fn multiple_camera_views_distinct_configs() {
             width: 1920,
             height: 1080,
             format: "rgba8unorm".into(),
-        },
+        ..Default::default()
+    },
         CameraView {
             name: "shadow".into(),
             width: 1024,
             height: 1024,
             format: "d32float".into(),
-        },
+        ..Default::default()
+    },
         CameraView {
             name: "ui".into(),
             width: 1920,
             height: 1080,
             format: "bgra8unorm-srgb".into(),
-        },
+        ..Default::default()
+    },
     ];
 
     assert_eq!(cameras.len(), 3, "three camera views");
@@ -560,6 +572,7 @@ fn camera_view_fields_preserved() {
         width: 3840,
         height: 2160,
         format: "rgba16float".into(),
+        ..Default::default()
     };
 
     assert_eq!(view.name(), "hdr_camera");
@@ -604,6 +617,7 @@ fn bind_accepts_render_context_reference() {
         width: 640,
         height: 480,
         format: "r8unorm".into(),
+        ..Default::default()
     };
 
     // Both calls should succeed (different implementations handle ctx differently).
@@ -650,6 +664,7 @@ fn camera_view_clone_preserves_contract() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
     let cloned = original.clone();
 
@@ -785,6 +800,7 @@ fn bind_returns_bind_group_type() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
 
     let groups: Vec<BindGroup> = camera.bind(&ctx);
@@ -826,6 +842,7 @@ fn view_trait_as_function_parameter() {
         width: 1920,
         height: 1080,
         format: "rgba8unorm".into(),
+        ..Default::default()
     };
 
     let desc_empty = describe_view(&empty, &ctx);

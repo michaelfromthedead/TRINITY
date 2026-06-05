@@ -2,15 +2,16 @@
 T-GPU-1.6 FIX#2 WHITEBOX verification.
 
 FIX#2 applied M3:
-  - H1  _resolve_wgpu_usage_flags auto-adds COPY_DST (0x0008) when storage
-        or indirect usage is present, per WebGPU spec.
+  - H1  _resolve_wgpu_usage_flags auto-adds COPY_DST (0x0008) when indirect
+        usage is present. Storage alone does NOT auto-add COPY_DST as it
+        may be GPU-only (compute shader write, render pass read).
   - M3  All 6 after-step functions guard target._tags access with
         getattr(target, "_tags", {}).get() instead of bare target._tags.get().
   - M4  Unknown wgpu usage flag name triggers warnings.warn().
 
 Whitebox tests:
   1. H1: _resolve_wgpu_usage_flags auto-adds COPY_DST for {"indirect"},
-         {"storage"}, and {"storage", "indirect"}.
+         but NOT for {"storage"} alone.
   2. H1: @gpu_buffer(usage={"storage","indirect"}) produces resolved usage
          that includes COPY_DST (0x0008) in _gpu_wgpu_usage.
   3. M3: All 6 after-step functions use getattr(target, "_tags", {}) guard.
@@ -58,11 +59,12 @@ class TestH1CopyDstAutoAddInResolver:
             f"Got {hex(flags)}, expected 0x0108"
         )
 
-    def test_storage_gets_copy_dst(self):
-        """{"storage"} -> STORAGE | COPY_DST = 0x0088"""
+    def test_storage_no_copy_dst(self):
+        """{"storage"} -> STORAGE only (no auto COPY_DST per FIX#2)"""
         flags = _resolve_wgpu_usage_flags(frozenset({"storage"}))
-        assert flags == (0x0080 | 0x0008), (
-            f"Got {hex(flags)}, expected 0x0088"
+        # FIX#2: storage alone does NOT auto-add COPY_DST (may be GPU-only)
+        assert flags == 0x0080, (
+            f"Got {hex(flags)}, expected 0x0080"
         )
 
     def test_storage_and_indirect_gets_copy_dst_once(self):
@@ -106,12 +108,13 @@ class TestH1CopyDstAutoAddInResolver:
         )
         assert flags == (0x0080 | 0x0008)
 
-    def test_storage_with_other_flags_still_gets_copy_dst(self):
+    def test_storage_with_other_flags_no_copy_dst(self):
+        # FIX#2: storage does NOT auto-add COPY_DST even with other flags
         flags = _resolve_wgpu_usage_flags(
             frozenset({"storage", "uniform", "vertex"})
         )
-        assert flags & 0x0008, "COPY_DST should be present"
-        assert flags == (0x0080 | 0x0040 | 0x0020 | 0x0008)
+        assert not (flags & 0x0008), "COPY_DST should NOT be present"
+        assert flags == (0x0080 | 0x0040 | 0x0020)
 
     def test_indirect_with_other_flags_still_gets_copy_dst(self):
         flags = _resolve_wgpu_usage_flags(
@@ -138,13 +141,14 @@ class TestH1CopyDstAutoAddInResolver:
 class TestH1CopyDstOnDecoratedClass:
     """Verify @gpu_buffer classes get COPY_DST in resolved wgpu usage."""
 
-    def test_storage_buffer_gets_copy_dst(self):
+    def test_storage_buffer_no_copy_dst(self):
+        # FIX#2: storage alone does NOT auto-add COPY_DST
         @gpu_buffer(usage={"storage"})
         class Buf:
             data: float
 
-        assert Buf._gpu_wgpu_usage & 0x0008, "COPY_DST bit missing"
-        assert Buf._gpu_wgpu_usage == (0x0080 | 0x0008)
+        assert not (Buf._gpu_wgpu_usage & 0x0008), "COPY_DST should NOT be present"
+        assert Buf._gpu_wgpu_usage == 0x0080
 
     def test_indirect_buffer_gets_copy_dst(self):
         @gpu_buffer(usage={"indirect"})
@@ -194,16 +198,17 @@ class TestH1CopyDstOnDecoratedClass:
             "_gpu_usage should not be mutated"
         )
 
-    def test_default_storage_gets_copy_dst(self):
-        """Default @gpu_buffer() uses usage={"storage"} -> gets COPY_DST."""
+    def test_default_storage_no_copy_dst(self):
+        """Default @gpu_buffer() uses usage={"storage"} -> no COPY_DST per FIX#2."""
         @gpu_buffer()
         class Buf:
             data: float
 
-        assert Buf._gpu_wgpu_usage & 0x0008, (
-            "Default storage buffer should get COPY_DST"
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        assert not (Buf._gpu_wgpu_usage & 0x0008), (
+            "Default storage buffer should NOT get COPY_DST per FIX#2"
         )
-        assert Buf._gpu_wgpu_usage == (0x0080 | 0x0008)
+        assert Buf._gpu_wgpu_usage == 0x0080
 
 
 # =============================================================================
@@ -358,7 +363,8 @@ class TestM4UnknownFlagWarning:
             flags = _resolve_wgpu_usage_flags(
                 frozenset({"storage", "quantum"})
             )
-        assert flags == (0x0080 | 0x0008), f"Got {hex(flags)}"
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        assert flags == 0x0080, f"Got {hex(flags)}"
 
     def test_multiple_unknown_emits_warning(self):
         with pytest.warns(UserWarning):
@@ -424,8 +430,9 @@ class TestAllSixDecoratorsWorkWithTags:
             x: float
 
         assert Buf._gpu_buffer is True
-        assert Buf._gpu_wgpu_usage & 0x0008
-        assert Buf._gpu_wgpu_usage == (0x0080 | 0x0008)
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        assert not (Buf._gpu_wgpu_usage & 0x0008)
+        assert Buf._gpu_wgpu_usage == 0x0080
 
     def test_gpu_kernel_works(self):
         from trinity.decorators.gpu import gpu_kernel

@@ -92,12 +92,15 @@ fn empty_graph() -> CompiledFrameGraph {
         depths: HashMap::new(),
         barriers: Vec::new(),
         async_passes: Vec::new(),
+        async_timeline: Vec::new(),
         eliminated_passes: Vec::new(),
         cull_stats: CullStats::default(),
         parallel_regions: Vec::new(),
         compilation_time_us: 0,
         stats: CompilerStats::default(),
         perf_counters: PerfCounters::default(),
+        scheduled_passes: Vec::new(),
+        interference_graph: Default::default(),
     }
 }
 
@@ -323,9 +326,9 @@ fn chained_barrier_optimizer_eliminates_same_state_barriers() {
     let mut input = empty_graph();
     // Two identical same-state barriers for the same resource.
     input.barriers = vec![
-        (PassIndex(0), PassIndex(1), ResourceHandle(1),
+        (PassIndex(0), PassIndex(1), ResourceHandle(1), EdgeType::RAW,
          ResourceState::ShaderRead, ResourceState::ShaderRead),
-        (PassIndex(0), PassIndex(1), ResourceHandle(1),
+        (PassIndex(0), PassIndex(1), ResourceHandle(1), EdgeType::RAW,
          ResourceState::ShaderRead, ResourceState::ShaderRead),
     ];
 
@@ -344,7 +347,7 @@ fn chained_barrier_optimizer_preserves_different_state_transitions() {
     let mut input = empty_graph();
     // A genuine transition that should survive optimisation.
     input.barriers = vec![
-        (PassIndex(0), PassIndex(1), ResourceHandle(1),
+        (PassIndex(0), PassIndex(1), ResourceHandle(1), EdgeType::RAW,
          ResourceState::ShaderRead, ResourceState::ColorAttachment),
     ];
 
@@ -358,11 +361,11 @@ fn chained_barrier_optimizer_preserves_different_state_transitions() {
         "genuine transition preserved",
     );
     assert_eq!(
-        result.barriers[0].3, ResourceState::ShaderRead,
+        result.barriers[0].4, ResourceState::ShaderRead,
         "before state unchanged",
     );
     assert_eq!(
-        result.barriers[0].4, ResourceState::ColorAttachment,
+        result.barriers[0].5, ResourceState::ColorAttachment,
         "after state unchanged",
     );
 }
@@ -516,10 +519,10 @@ fn all_builtin_passes_chain_without_error() {
     ];
     input.barriers = vec![
         // Same-state barrier (removed by BarrierOptimizer).
-        (PassIndex(0), PassIndex(1), ResourceHandle(0),
+        (PassIndex(0), PassIndex(1), ResourceHandle(0), EdgeType::RAW,
          ResourceState::ShaderRead, ResourceState::ShaderRead),
         // Genuine transition (preserved through BarrierOptimizer).
-        (PassIndex(0), PassIndex(1), ResourceHandle(1),
+        (PassIndex(0), PassIndex(1), ResourceHandle(1), EdgeType::RAW,
          ResourceState::Uninitialized, ResourceState::ShaderRead),
     ];
     input.resources = vec![
@@ -573,7 +576,7 @@ fn all_builtin_passes_chain_without_error() {
 fn mixed_custom_and_builtin_passes() {
     let mut input = empty_graph();
     input.barriers = vec![
-        (PassIndex(0), PassIndex(1), ResourceHandle(0),
+        (PassIndex(0), PassIndex(1), ResourceHandle(0), EdgeType::RAW,
          ResourceState::ShaderRead, ResourceState::ShaderRead),
     ];
 

@@ -31,9 +31,46 @@ from engine.animation.ik.config import (
 from engine.animation.ik.two_bone import TwoBoneIK
 
 
-# Type alias for raycast callback
-# Returns (hit, position, normal) given (origin, direction, max_distance)
-RaycastCallback = Callable[[Vec3, Vec3, float], Tuple[bool, Vec3, Vec3]]
+@dataclass
+class RaycastHit:
+    """Result of a raycast query for foot placement.
+
+    This dataclass provides a clean interface for physics engine integration.
+    Implement a RaycastCallback that returns RaycastHit instances to enable
+    terrain-aware foot placement.
+
+    Example usage with a physics engine:
+        def my_raycast(origin: Vec3, direction: Vec3, max_dist: float) -> Optional[RaycastHit]:
+            # Query your physics engine here
+            hit_result = physics.raycast(origin, direction, max_dist)
+            if hit_result.hit:
+                return RaycastHit(
+                    hit=True,
+                    position=hit_result.point,
+                    normal=hit_result.normal,
+                    distance=hit_result.distance
+                )
+            return None
+
+    Attributes:
+        hit: True if ray intersected geometry
+        position: World space hit position
+        normal: Surface normal at hit point
+        distance: Distance from ray origin to hit
+    """
+    hit: bool
+    position: Vec3
+    normal: Vec3
+    distance: float
+
+    @staticmethod
+    def miss() -> 'RaycastHit':
+        """Create a miss result (no hit)."""
+        return RaycastHit(hit=False, position=Vec3.zero(), normal=Vec3(0, 1, 0), distance=float('inf'))
+
+
+# Type alias for raycast callback - returns RaycastHit or None for miss
+RaycastCallback = Callable[[Vec3, Vec3, float], Optional[RaycastHit]]
 
 
 class FootState(Enum):
@@ -210,8 +247,8 @@ class FootPlacement:
         pelvis_pos = transforms[self.pelvis].translation
 
         # Raycast for both feet
-        left_hit, left_ground, left_normal = self._raycast_foot(left_pos)
-        right_hit, right_ground, right_normal = self._raycast_foot(right_pos)
+        left_result = self._raycast_foot(left_pos)
+        right_result = self._raycast_foot(right_pos)
 
         # Determine foot states and targets
         left_target = left_pos
@@ -219,22 +256,22 @@ class FootPlacement:
         left_planted = False
         right_planted = False
 
-        if left_hit:
+        if left_result is not None and left_result.hit:
             left_target = Vec3(
-                left_ground.x,
-                left_ground.y + self.foot_height + self.left_foot.height_offset,
-                left_ground.z
+                left_result.position.x,
+                left_result.position.y + self.foot_height + self.left_foot.height_offset,
+                left_result.position.z
             )
-            self.left_foot.target_normal = left_normal
+            self.left_foot.target_normal = left_result.normal
             left_planted = True
 
-        if right_hit:
+        if right_result is not None and right_result.hit:
             right_target = Vec3(
-                right_ground.x,
-                right_ground.y + self.foot_height + self.right_foot.height_offset,
-                right_ground.z
+                right_result.position.x,
+                right_result.position.y + self.foot_height + self.right_foot.height_offset,
+                right_result.position.z
             )
-            self.right_foot.target_normal = right_normal
+            self.right_foot.target_normal = right_result.normal
             right_planted = True
 
         # Smooth transitions
@@ -316,22 +353,20 @@ class FootPlacement:
             terrain_slope=terrain_slope
         )
 
-    def _raycast_foot(self, foot_pos: Vec3) -> Tuple[bool, Vec3, Vec3]:
+    def _raycast_foot(self, foot_pos: Vec3) -> Optional[RaycastHit]:
         """Raycast from foot position to find ground.
 
         Args:
             foot_pos: Current foot position
 
         Returns:
-            Tuple of (hit, ground_position, normal).
+            RaycastHit if ground was found, None otherwise.
         """
         # Cast ray downward from slightly above foot
         origin = Vec3(foot_pos.x, foot_pos.y + self.ray_length * 0.5, foot_pos.z)
         direction = Vec3(0, -1, 0)
 
-        hit, position, normal = self._raycast(origin, direction, self.ray_length)
-
-        return hit, position, normal
+        return self._raycast(origin, direction, self.ray_length)
 
     def _calculate_pelvis_offset(
         self,
@@ -661,16 +696,16 @@ class MultiLegFootPlacement:
 
             # Raycast
             origin = Vec3(foot_pos.x, foot_pos.y + self.ray_length * 0.5, foot_pos.z)
-            hit, position, normal = self._raycast(origin, Vec3(0, -1, 0), self.ray_length)
+            hit_result = self._raycast(origin, Vec3(0, -1, 0), self.ray_length)
 
-            if hit:
+            if hit_result is not None and hit_result.hit:
                 target = Vec3(
-                    position.x,
-                    position.y + self.foot_height + foot.height_offset,
-                    position.z
+                    hit_result.position.x,
+                    hit_result.position.y + self.foot_height + foot.height_offset,
+                    hit_result.position.z
                 )
                 targets.append(target)
-                normals.append(normal)
+                normals.append(hit_result.normal)
                 planted.append(True)
             else:
                 targets.append(foot_pos)

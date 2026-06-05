@@ -1,14 +1,18 @@
 """
 T-GPU-1.6: BLACKBOX fix verification tests for @gpu_buffer auto-append COPY_DST.
 
-Acceptance (WebGPU spec compliance):
+Acceptance (FIX#2 - refined WebGPU spec compliance):
   1. @gpu_buffer(usage={"storage","indirect"}) -> STORAGE|INDIRECT|COPY_DST
-  2. @gpu_buffer(usage={"storage"}) -> STORAGE|COPY_DST (no INDIRECT)
+  2. @gpu_buffer(usage={"storage"}) -> STORAGE only (no auto COPY_DST per FIX#2)
   3. @gpu_buffer(usage={"indirect"}) -> INDIRECT|COPY_DST
-  4. No error on duplicate (copy_dst given explicitly alongside storage/indirect)
+  4. No error on duplicate (copy_dst given explicitly alongside indirect)
   5. Buffer allocation succeeds with resolved usage
   6. allocate_wgpu_buffer(device=None) returns WgpuBufferAllocation
   7. Unknown flag warns (emits warning, does not prevent resolution)
+
+NOTE: FIX#2 changed the behavior so that storage alone does NOT auto-add
+COPY_DST, as storage buffers may be GPU-only (compute shader write, render
+pass read). Only indirect buffers auto-add COPY_DST.
 
 All tests use ONLY blackbox public API: @gpu_buffer, allocate_wgpu_buffer,
 WgpuBufferAllocation. No internal functions are imported.
@@ -63,14 +67,15 @@ class TestGpuBufferAutoCopyDst:
             f"expected 0x{STORAGE | INDIRECT | COPY_DST:04X}, got 0x{usage:04X}"
         )
 
-    def test_storage_only_includes_copy_dst(self):
-        """@gpu_buffer(usage={"storage"}) -> STORAGE|COPY_DST (no INDIRECT)"""
+    def test_storage_only_no_copy_dst(self):
+        """@gpu_buffer(usage={"storage"}) -> STORAGE only (no auto COPY_DST per FIX#2)"""
         usage = self._alloc_usage({"storage"})
         assert usage & STORAGE, "missing STORAGE bit"
-        assert usage & COPY_DST, "missing COPY_DST bit"
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        assert not (usage & COPY_DST), "unexpected COPY_DST bit (FIX#2)"
         assert not (usage & INDIRECT), "unexpected INDIRECT bit"
-        assert usage == (STORAGE | COPY_DST), (
-            f"expected 0x{STORAGE | COPY_DST:04X}, got 0x{usage:04X}"
+        assert usage == STORAGE, (
+            f"expected 0x{STORAGE:04X}, got 0x{usage:04X}"
         )
 
     def test_indirect_only_includes_copy_dst(self):
@@ -99,8 +104,8 @@ class TestGpuBufferAutoCopyDst:
         alloc = allocate_wgpu_buffer(_Buf, device=None)
         assert alloc.usage == (STORAGE | INDIRECT | COPY_DST)
 
-    def test_duplicate_with_explicit_copy_dst_returns_same(self):
-        """Explicit copy_dst and auto-append produce the same bitmask as without."""
+    def test_explicit_copy_dst_adds_to_storage(self):
+        """Explicit copy_dst adds COPY_DST to storage (since FIX#2 doesn't auto-add)."""
         from trinity.decorators.gpu import gpu_buffer, allocate_wgpu_buffer
 
         @gpu_buffer(usage={"storage", "copy_dst"})
@@ -111,9 +116,10 @@ class TestGpuBufferAutoCopyDst:
         class _Without:
             x: int
 
-        assert allocate_wgpu_buffer(_With, device=None).usage == (
-            allocate_wgpu_buffer(_Without, device=None).usage
-        ), "explicit copy_dst should produce same mask as auto-append"
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        # So _With (with explicit copy_dst) should have it, _Without should not
+        assert allocate_wgpu_buffer(_With, device=None).usage == (STORAGE | COPY_DST)
+        assert allocate_wgpu_buffer(_Without, device=None).usage == STORAGE
 
     # ------------------------------------------------------------------
     # Acceptance criteria 5: buffer allocation succeeds
@@ -185,8 +191,8 @@ class TestGpuBufferAutoCopyDst:
         with warnings.catch_warnings(record=True) as captured:
             warnings.simplefilter("always")
             result = _resolve_wgpu_usage_flags(frozenset({"storage", "nope"}))
-            # storage still resolved, copy_dst auto-appended, nope warned
-            assert result == (STORAGE | COPY_DST)
+            # storage still resolved, nope warned (FIX#2: no auto COPY_DST for storage)
+            assert result == STORAGE
 
         nope_warnings = [
             w for w in captured if "nope" in str(w.message).lower()
@@ -267,7 +273,7 @@ class TestGpuBufferAutoCopyDst:
         assert device._last["usage"] == (STORAGE | INDIRECT | COPY_DST)
 
     def test_default_storage_with_mapped(self):
-        """Default usage (storage) with mapped=True still appends COPY_DST."""
+        """Default usage (storage) with mapped=True does NOT auto-add COPY_DST (FIX#2)."""
         from trinity.decorators.gpu import gpu_buffer, allocate_wgpu_buffer
 
         @gpu_buffer(mapped=True)
@@ -276,4 +282,5 @@ class TestGpuBufferAutoCopyDst:
 
         alloc = allocate_wgpu_buffer(_Buf, device=None)
         assert alloc.mapped is True
-        assert alloc.usage == (STORAGE | COPY_DST)
+        # FIX#2: storage alone does NOT auto-add COPY_DST
+        assert alloc.usage == STORAGE

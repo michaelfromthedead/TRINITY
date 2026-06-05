@@ -107,6 +107,7 @@ class HealthComponent:
 
     __slots__ = (
         "__dict__",
+        "__weakref__",
         "_state",
         "_resistances",
         "_armor",
@@ -254,8 +255,8 @@ class HealthComponent:
             timestamp=timestamp,
         )
 
-        # Check invulnerability
-        if self.is_invulnerable and damage_type != DamageType.TRUE:
+        # Check invulnerability - blocks ALL damage types including TRUE
+        if self.is_invulnerable:
             event.final_damage = 0.0
             return event
 

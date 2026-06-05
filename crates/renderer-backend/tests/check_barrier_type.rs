@@ -12,8 +12,7 @@ fn check_barrier_type() {
         mock_pass_compute(PassIndex(1), "p1", &[r], &[]),
     ];
     let resources = vec![mock_resource_texture(r, "tex", 64, 64)];
-    let compiled = FrameGraphCompiler::new(passes, resources)
-        .compile()
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("compile");
 
     // Test 1: can we get .texture_barriers? (BarrierCommand struct)

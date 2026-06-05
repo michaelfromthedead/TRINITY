@@ -132,7 +132,7 @@ class CollisionResponseStrategy:
 
 
 class PullInResponse(CollisionResponseStrategy):
-    """Pull camera in toward target on collision."""
+    """Pull camera position back from collision, offsetting toward desired position."""
 
     def __init__(self, offset: float = 0.1):
         self.offset = offset
@@ -140,7 +140,9 @@ class PullInResponse(CollisionResponseStrategy):
     def respond(
         self, desired_position: Vector3, hit: RaycastHit, target: Vector3
     ) -> Vector3:
-        direction = (target - desired_position).normalized()
+        # Direction from target to desired position (away from target)
+        direction = (desired_position - target).normalized()
+        # Place camera at hit point plus offset toward desired position
         return hit.point + direction * self.offset
 
 
@@ -362,18 +364,25 @@ class TransparencyFader:
         self.max_alpha = 1.0
         self._fading_objects: dict[str, float] = {}
         self._target_alpha: dict[str, float] = {}
+        self._final_alpha: dict[str, float] = {}  # Stores final alpha after fade completes
 
     def start_fade_out(self, object_id: str):
         """Start fading out an object."""
         if object_id not in self._fading_objects:
-            self._fading_objects[object_id] = self.max_alpha
+            self._fading_objects[object_id] = self._final_alpha.get(object_id, self.max_alpha)
         self._target_alpha[object_id] = self.min_alpha
+        # Remove from final if restarting fade
+        if object_id in self._final_alpha:
+            del self._final_alpha[object_id]
 
     def start_fade_in(self, object_id: str):
         """Start fading in an object."""
         if object_id not in self._fading_objects:
-            self._fading_objects[object_id] = self.min_alpha
+            self._fading_objects[object_id] = self._final_alpha.get(object_id, self.min_alpha)
         self._target_alpha[object_id] = self.max_alpha
+        # Remove from final if restarting fade
+        if object_id in self._final_alpha:
+            del self._final_alpha[object_id]
 
     def update(self, delta_time: float):
         """Update all fading objects."""
@@ -393,17 +402,24 @@ class TransparencyFader:
 
             self._fading_objects[object_id] = new_alpha
 
+            # Mark as completed if fade has finished (reached target)
             if abs(new_alpha - target) < 0.01:
-                if target >= self.max_alpha - 0.01:
-                    completed.append(object_id)
+                completed.append((object_id, new_alpha))
 
-        for object_id in completed:
+        for object_id, final_alpha in completed:
+            self._final_alpha[object_id] = final_alpha
             del self._fading_objects[object_id]
             del self._target_alpha[object_id]
 
     def get_alpha(self, object_id: str) -> float:
         """Get current alpha value for an object."""
-        return self._fading_objects.get(object_id, self.max_alpha)
+        if object_id in self._fading_objects:
+            return self._fading_objects[object_id]
+        return self._final_alpha.get(object_id, self.max_alpha)
+
+    def get_transparency(self, object_id: str) -> float:
+        """Get current transparency value (1 - alpha) for an object."""
+        return 1.0 - self.get_alpha(object_id)
 
     def is_fading(self, object_id: str) -> bool:
         """Check if an object is currently fading."""
@@ -2087,7 +2103,10 @@ class TestCollisionAdvancedScenarios:
             fader.update(0.016)
 
         assert fader.is_fading("object1") is False
-        assert fader.get_transparency("object1") < 0.1
+        # After fade out, alpha should be at min_alpha (0.3)
+        # So transparency (1 - alpha) should be 0.7
+        assert fader.get_alpha("object1") <= fader.min_alpha + 0.05
+        assert fader.get_transparency("object1") >= 1.0 - fader.min_alpha - 0.05
 
 
 if __name__ == "__main__":

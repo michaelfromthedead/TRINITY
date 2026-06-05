@@ -104,6 +104,25 @@ class GraphNodeMeta(EngineMeta, ABCMeta):
 
 
 # =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
+
+class CycleDetectedError(Exception):
+    """Exception raised when a cycle is detected in the animation graph.
+
+    Attributes:
+        cycle_nodes: List of node IDs forming the cycle.
+        message: Human-readable description of the cycle.
+    """
+
+    def __init__(self, cycle_nodes: List[str], message: str = ""):
+        self.cycle_nodes = cycle_nodes
+        self.message = message or f"Cycle detected: {' -> '.join(cycle_nodes)}"
+        super().__init__(self.message)
+
+
+# =============================================================================
 # POSE REPRESENTATION
 # =============================================================================
 
@@ -1516,6 +1535,8 @@ class SubgraphNode(AnimationNode):
 
 
 __all__ = [
+    # Exceptions
+    "CycleDetectedError",
     # Metaclass
     "GraphNodeMeta",
     # Slot types

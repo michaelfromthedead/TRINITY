@@ -11,6 +11,12 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Protocol, Tuple
+from typing import runtime_checkable
+
+from engine.world.terrain.constants import (
+    DEFAULT_RESOLUTION,
+    MATERIAL_WEIGHT_EPSILON,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -61,6 +67,7 @@ class TerrainLayer:
             raise ValueError("normal_scale must be >= 0")
 
 
+@runtime_checkable
 class Heightfield(Protocol):
     """Protocol for heightfield data structures."""
 

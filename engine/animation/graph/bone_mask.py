@@ -43,6 +43,24 @@ class MissingBoneMode(Enum):
     ONE = 1
 
 
+class CombineMode(Enum):
+    """Mode for combining two bone masks.
+
+    ``MULTIPLY``
+        Multiply weights together (both masks must allow the bone).
+    ``ADD``
+        Add weights together (clamped to 1.0).
+    ``MAX``
+        Take the maximum weight from either mask.
+    ``MIN``
+        Take the minimum weight from either mask.
+    """
+    MULTIPLY = 0
+    ADD = 1
+    MAX = 2
+    MIN = 3
+
+
 class BoneMask:
     """Per-bone weight mask controlling partial animation application.
 
@@ -456,6 +474,7 @@ class BoneMaskPresets:
 
 __all__ = [
     "MissingBoneMode",
+    "CombineMode",
     "BoneMask",
     "BoneMaskPresets",
 ]

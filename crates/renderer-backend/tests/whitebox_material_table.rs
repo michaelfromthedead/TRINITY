@@ -217,6 +217,7 @@ fn byte_layout_matches_wgsl_spec() {
         emissive_texture_id: 16,
         flags: 0x8000_0001,
         alpha_cutoff: 0.5,
+        _pad: [0, 0],
     };
 
     let bytes = unsafe {
@@ -304,6 +305,7 @@ fn no_field_overlap() {
         emissive_texture_id: 16,
         flags: 0x8000_0001,
         alpha_cutoff: 0.5,
+        _pad: [0, 0],
     };
 
     let bytes = unsafe {
@@ -803,6 +805,7 @@ fn byte_round_trip_all_fields() {
         emissive_texture_id: 40,
         flags: 0x8000_0001,
         alpha_cutoff: 0.45,
+        _pad: [0, 0],
     };
 
     // Serialise.
@@ -1062,6 +1065,7 @@ fn entry_display_includes_texture_ids() {
         emissive_texture_id: u32::MAX,
         flags: 0x8000_0001,
         alpha_cutoff: 0.5,
+        _pad: [0, 0],
     };
     let display = format!("{}", entry);
     assert!(display.contains("albedo_tex: 7"));

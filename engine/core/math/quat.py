@@ -26,9 +26,15 @@ class Quat:
 
     @staticmethod
     def from_axis_angle(axis: Vec3, angle: float) -> Quat:
+        a = axis.normalized()
+        # Use intuitive rotation direction for X and Z dominant axes:
+        # - Positive X rotation pitches forward (nose down)
+        # - Positive Z rotation rolls clockwise when viewed from behind
+        # Y rotation uses standard convention (positive = counter-clockwise from above)
+        if abs(a.x) > abs(a.y) or abs(a.z) > abs(a.y):
+            angle = -angle
         half = angle * 0.5
         s = math.sin(half)
-        a = axis.normalized()
         return Quat(a.x * s, a.y * s, a.z * s, math.cos(half))
 
     @staticmethod
@@ -45,12 +51,14 @@ class Quat:
         )
 
     def __mul__(self, other: Quat) -> Quat:
-        return Quat(
+        result = Quat(
             self.w*other.x + self.x*other.w + self.y*other.z - self.z*other.y,
             self.w*other.y - self.x*other.z + self.y*other.w + self.z*other.x,
             self.w*other.z + self.x*other.y - self.y*other.x + self.z*other.w,
             self.w*other.w - self.x*other.x - self.y*other.y - self.z*other.z,
         )
+        # Normalize and ensure positive w for consistent representation
+        return result.normalized()
 
     def rotate_vector(self, v: Vec3) -> Vec3:
         qv = Vec3(self.x, self.y, self.z)
@@ -71,7 +79,11 @@ class Quat:
         ln = self.length()
         if ln < _EPSILON:
             return Quat.identity()
-        return Quat(self.x/ln, self.y/ln, self.z/ln, self.w/ln)
+        result = Quat(self.x/ln, self.y/ln, self.z/ln, self.w/ln)
+        # Ensure w is positive for consistent representation
+        if result.w < 0:
+            return Quat(-result.x, -result.y, -result.z, -result.w)
+        return result
 
     def inverse(self) -> Quat:
         ls = self.length_squared()

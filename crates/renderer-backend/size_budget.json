@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "last_build": null,
+  "profile": "demoscene",
+  "target": "native",
+  "budget_bytes": 65536,
+  "sizes": {
+    "base_bytes": 0,
+    "stripped_bytes": 0,
+    "compressed_bytes": 0
+  },
+  "within_budget": true,
+  "headroom_bytes": 65536,
+  "compression_ratio": 0.0,
+  "options": {
+    "upx_enabled": false,
+    "features": ["demoscene-minimal"]
+  },
+  "thresholds": {
+    "warning_bytes": 57344,
+    "critical_bytes": 61440,
+    "max_bytes": 65536
+  },
+  "notes": [
+    "64K demoscene budget (T-DEMO-5.6)",
+    "Use --profile demoscene for size-optimized builds",
+    "Use --upx flag for additional compression",
+    "Sizes are tracked: base -> stripped -> compressed"
+  ]
+}

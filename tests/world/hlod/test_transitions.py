@@ -747,8 +747,10 @@ class TestHLODVisibilitySystem:
 
         system.configure_transitions(settings)
 
-        # Settings should be applied (tested indirectly)
-        assert True
+        # Verify settings were applied via internal transition manager
+        applied_settings = system._transition_manager.settings
+        assert applied_settings.mode == TransitionMode.CROSSFADE
+        assert applied_settings.transition_range == 100.0
 
     def test_lod_thresholds_property(self, system: HLODVisibilitySystem) -> None:
         """Test LOD thresholds property."""

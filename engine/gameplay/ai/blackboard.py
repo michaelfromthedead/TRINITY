@@ -128,6 +128,20 @@ class Observer:
                 self._triggered = True
 
 
+# =============================================================================
+# Blackboard Registry (must be before Blackboard class for from_registry method)
+# =============================================================================
+
+# Valid scopes for blackboards
+VALID_SCOPES = frozenset({"entity", "shared", "team", "group", "zone", "session"})
+
+# Registry tag
+TAG_BLACKBOARD = "blackboard"
+
+# Registry storage
+_blackboard_registry: Dict[str, Dict[str, Any]] = {}
+
+
 class Blackboard:
     """
     A shared memory space for AI agents to communicate.
@@ -140,11 +154,18 @@ class Blackboard:
     - Scoped access through BlackboardScope
     """
 
-    def __init__(self, name: str = "default") -> None:
+    def __init__(
+        self,
+        name: str = "default",
+        enable_event_logging: bool = True,
+        entity_id: Optional[int] = None,
+    ) -> None:
         self.name = name
+        self.enable_event_logging = enable_event_logging
+        self.entity_id = entity_id
         self._data: Dict[str, BlackboardEntry] = {}
         self._observers: List[Observer] = []
-        self._parent: Optional[Blackboard] = None
+        self._parent: Optional["Blackboard"] = None
 
     def set(
         self,
@@ -168,9 +189,12 @@ class Blackboard:
             metadata=metadata or {},
         )
 
-        # Notify observers
+        # Notify observers and log events
         if old_value != value:
             self._notify_observers(key, old_value, value)
+            # Log event if enabled and entity_id is set
+            if self.enable_event_logging and self.entity_id is not None:
+                self._log_value_changed(full_key, old_value, value)
 
     def get(
         self,
@@ -304,6 +328,20 @@ class Blackboard:
             if observer.matches(key):
                 observer.notify(key, old_value, new_value)
 
+    def _log_value_changed(self, key: str, old_value: Any, new_value: Any) -> None:
+        """Log a value change event to the AI event logger."""
+        try:
+            from .ai_events import get_ai_event_logger
+            logger = get_ai_event_logger()
+            logger.log_blackboard_value_changed(
+                entity_id=self.entity_id,
+                key=key,
+                old_value=old_value,
+                new_value=new_value,
+            )
+        except ImportError:
+            pass  # AI events module not available
+
     def cleanup_expired(self) -> int:
         """Remove all expired entries. Returns count of removed entries."""
         current_time = time.time()
@@ -346,6 +384,26 @@ class Blackboard:
     def __iter__(self) -> Iterator[BlackboardKey]:
         """Iterate over all keys."""
         return iter(self.keys())
+
+    @classmethod
+    def from_registry(cls, name: str, **kwargs: Any) -> "Blackboard":
+        """
+        Create a Blackboard instance from a registered blackboard class.
+
+        Args:
+            name: The registered name of the blackboard class.
+            **kwargs: Additional keyword arguments passed to the constructor.
+
+        Returns:
+            A new instance of the registered blackboard class.
+
+        Raises:
+            ValueError: If the blackboard name is not found in registry.
+        """
+        if name not in _blackboard_registry:
+            raise ValueError(f"Blackboard '{name}' not found in registry")
+        registered_cls = _blackboard_registry[name]["class"]
+        return registered_cls(**kwargs)
 
 
 class BlackboardScope:
@@ -459,24 +517,191 @@ class TypedBlackboard(Blackboard):
         return self.get(key.key, default)
 
 
-def blackboard(cls: type) -> type:
+def blackboard(
+    scope_or_cls: Union[str, type] = "entity",
+    name: Optional[str] = None,
+    key_types: Optional[Union[Dict[str, type], List[str]]] = None,
+    description: str = "",
+    track_instances: bool = False,
+    scope: Optional[str] = None,
+) -> Union[Callable[[type], type], type]:
     """
-    Decorator to mark a class as using a blackboard.
+    Decorator to register a blackboard class with the registry.
 
-    This decorator adds a _blackboard attribute to the class
-    and ensures proper initialization.
+    Can be used with or without parentheses:
+        @blackboard
+        class MyBlackboard(Blackboard):
+            pass
+
+        @blackboard(scope="entity", name="combat_ai")
+        class CombatBlackboard(Blackboard):
+            pass
+
+    Args:
+        scope_or_cls: Either the scope string, or the class (when used without parens)
+        name: Optional name for the blackboard
+        key_types: Optional dict of key names to types, or list of key names
+        description: Human-readable description
+        track_instances: If True, track all instances via WeakSet
+        scope: Alternative way to pass scope (for backwards compat)
+
+    Raises:
+        ValueError: If scope is not one of the valid scopes.
     """
-    original_init = cls.__init__
+    # Handle @blackboard without parentheses
+    if isinstance(scope_or_cls, type):
+        # Called as @blackboard directly on a class
+        cls = scope_or_cls
+        actual_scope = "entity"
 
-    def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
-        self._blackboard = kwargs.pop("blackboard", None) or Blackboard(
-            name=cls.__name__
+        original_init = getattr(cls, "__init__", lambda self: None)
+
+        def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
+            self._blackboard = kwargs.pop("blackboard", None) or Blackboard(
+                name=name or cls.__name__
+            )
+            if hasattr(original_init, "__call__") and original_init is not object.__init__:
+                original_init(self, *args, **kwargs)
+
+        cls.__init__ = new_init
+        cls._blackboard_registered = True
+        cls._blackboard_decorated = True
+        cls._blackboard_scope = actual_scope
+        cls._blackboard_name = cls.__name__
+        cls._blackboard_key_types = frozenset()
+        cls._blackboard_description = ""
+
+        # Register in the blackboard registry
+        bb_name = cls.__name__
+        _blackboard_registry[bb_name] = {
+            "class": cls,
+            "bb_name": bb_name,
+            "scope": actual_scope,
+            "key_types": frozenset(),
+            "description": "",
+        }
+
+        # Also register with Foundation Registry if available
+        try:
+            from foundation import registry
+            registry_name = f"bb.{bb_name}"
+            try:
+                registry.register(cls, name=registry_name, track_instances=False)
+                registry.add_tag(cls, TAG_BLACKBOARD)
+                registry.set_metadata(cls, "scope", actual_scope)
+                registry.set_metadata(cls, "bb_name", bb_name)
+                registry.set_metadata(cls, "key_types", frozenset())
+                registry.set_metadata(cls, "description", "")
+            except ValueError:
+                pass  # Already registered
+        except ImportError:
+            pass
+
+        return cls
+
+    # Called with arguments: @blackboard(...) or @blackboard()
+    actual_scope = scope if scope is not None else scope_or_cls if isinstance(scope_or_cls, str) else "entity"
+
+    # Validate scope
+    if actual_scope not in VALID_SCOPES:
+        raise ValueError(
+            f"Invalid blackboard scope '{actual_scope}'. Must be one of: {VALID_SCOPES}"
         )
-        original_init(self, *args, **kwargs)
 
-    cls.__init__ = new_init
-    cls._blackboard_decorated = True
-    return cls
+    # Handle key_types - can be a list of strings or a dict
+    if isinstance(key_types, list):
+        resolved_key_types = frozenset(key_types)
+    elif key_types is not None:
+        resolved_key_types = frozenset(key_types.keys())
+    else:
+        resolved_key_types = frozenset()
+
+    def decorator(cls: type) -> type:
+        original_init = getattr(cls, "__init__", lambda self: None)
+
+        # Use explicit name if provided (even empty string), otherwise use class name
+        bb_name = name if name is not None else cls.__name__
+
+        def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
+            self._blackboard = kwargs.pop("blackboard", None) or Blackboard(
+                name=bb_name or cls.__name__
+            )
+            if hasattr(original_init, "__call__") and original_init is not object.__init__:
+                original_init(self, *args, **kwargs)
+
+        cls.__init__ = new_init
+        cls._blackboard_registered = True
+        cls._blackboard_decorated = True
+        cls._blackboard_scope = actual_scope
+        cls._blackboard_name = bb_name
+        cls._blackboard_key_types = resolved_key_types
+        cls._blackboard_description = description
+
+        # Register in the blackboard registry
+        _blackboard_registry[bb_name] = {
+            "class": cls,
+            "bb_name": bb_name,
+            "scope": actual_scope,
+            "key_types": resolved_key_types,
+            "description": description,
+        }
+
+        # Also register with Foundation Registry if available
+        try:
+            from foundation import registry
+            registry_name = f"bb.{bb_name}"
+            try:
+                registry.register(cls, name=registry_name, track_instances=track_instances)
+                registry.add_tag(cls, TAG_BLACKBOARD)
+                registry.set_metadata(cls, "scope", actual_scope)
+                registry.set_metadata(cls, "bb_name", bb_name)
+                registry.set_metadata(cls, "key_types", resolved_key_types)
+                registry.set_metadata(cls, "description", description or "")
+            except ValueError:
+                pass  # Already registered
+        except ImportError:
+            pass
+
+        return cls
+
+    return decorator
+
+
+# =============================================================================
+# Blackboard Registry Helper Functions
+# =============================================================================
+
+
+def get_all_blackboards() -> Dict[str, type]:
+    """Get all registered blackboard classes."""
+    return [info["class"] for info in _blackboard_registry.values()]
+
+
+def get_blackboards_by_scope(scope: str) -> List[type]:
+    """Get all blackboard classes with the specified scope."""
+    return [
+        info["class"]
+        for info in _blackboard_registry.values()
+        if info["scope"] == scope
+    ]
+
+
+def get_blackboard_metadata(name: str) -> Optional[Dict[str, Any]]:
+    """Get metadata for a registered blackboard."""
+    return _blackboard_registry.get(name)
+
+
+def create_blackboard_from_registry(name: str, **kwargs: Any) -> Blackboard:
+    """Create a blackboard instance from the registry."""
+    if name not in _blackboard_registry:
+        raise KeyError(f"Blackboard '{name}' not found in registry")
+    cls = _blackboard_registry[name]["class"]
+    return cls(**kwargs)
+
+
+def clear_blackboard_registry() -> None:
+    """Clear the blackboard registry (mainly for testing)."""
+    _blackboard_registry.clear()
 
 
 # =============================================================================
@@ -490,7 +715,14 @@ __all__ = [
     "BlackboardScope",
     "Observer",
     "ObserverCallback",
+    "TAG_BLACKBOARD",
     "TypedBlackboard",
     "TypedBlackboardKey",
+    "VALID_SCOPES",
     "blackboard",
+    "clear_blackboard_registry",
+    "create_blackboard_from_registry",
+    "get_all_blackboards",
+    "get_blackboard_metadata",
+    "get_blackboards_by_scope",
 ]

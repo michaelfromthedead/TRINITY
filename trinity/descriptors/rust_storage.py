@@ -17,9 +17,16 @@ try:
     _HAVE_OMEGA = True
 except ImportError:
     _HAVE_OMEGA = False
+    component_read = None  # type: ignore
+    component_write = None  # type: ignore
+    component_delete = None  # type: ignore
 
 # Sentinel for uninitialised defaults.
 _UNSET: Any = object()
+
+# Store reference to module globals for testability
+# (allows mock.patch.object to work when module is loaded via importlib.util)
+_GLOBALS = globals()
 
 
 class RustStorageDescriptor(BaseDescriptor):
@@ -54,44 +61,60 @@ class RustStorageDescriptor(BaseDescriptor):
 
     def _get_stored(self, obj: Any) -> Any:
         """Fetch value — prefer Rust store, fall back to __dict__."""
-        if _HAVE_OMEGA:
-            offset = self._rust_offset
-            entity_id = getattr(obj, "_entity_id", None)
-            component_id = getattr(obj, "_component_id", None)
-            if entity_id is not None and component_id is not None and offset is not None:
-                try:
-                    return component_read(entity_id, component_id, offset, self._field_type)
-                except RuntimeError:
-                    pass
+        offset = self._rust_offset
+        entity_id = getattr(obj, "_entity_id", None)
+        component_id = getattr(obj, "_component_id", None)
+        if entity_id is not None and component_id is not None and offset is not None:
+            # Check module-level flag (can be patched in tests)
+            if _GLOBALS.get("_HAVE_OMEGA", False):
+                cr = _GLOBALS.get("component_read")
+                if cr is not None:
+                    try:
+                        return cr(entity_id, component_id, offset, self._field_type)
+                    except BaseException:
+                        # Any error (RuntimeError, PanicException, ValueError, etc.) -> fallback
+                        # Note: PanicException from pyo3 inherits from BaseException, not Exception
+                        pass
         # Python-only fallback
         return self._dict_get(obj)
 
     def _set_stored(self, obj: Any, value: Any) -> None:
         """Store value — prefer Rust store, fall back to __dict__."""
-        if _HAVE_OMEGA:
-            offset = self._rust_offset
-            entity_id = getattr(obj, "_entity_id", None)
-            component_id = getattr(obj, "_component_id", None)
-            if entity_id is not None and component_id is not None and offset is not None:
-                try:
-                    component_write(entity_id, component_id, offset, value)
-                    return
-                except RuntimeError:
-                    pass
+        offset = self._rust_offset
+        entity_id = getattr(obj, "_entity_id", None)
+        component_id = getattr(obj, "_component_id", None)
+        if entity_id is not None and component_id is not None and offset is not None:
+            # Check module-level flag (can be patched in tests)
+            if _GLOBALS.get("_HAVE_OMEGA", False):
+                cw = _GLOBALS.get("component_write")
+                if cw is not None:
+                    try:
+                        cw(entity_id, component_id, offset, value)
+                        return
+                    except BaseException:
+                        # Any error (RuntimeError, PanicException, ValueError, etc.) -> fallback
+                        # Note: PanicException from pyo3 inherits from BaseException, not Exception
+                        pass
         # Python-only fallback
         self._dict_set(obj, value)
 
     def _delete_stored(self, obj: Any) -> None:
         """Delete value -- prefer Rust store, fall back to __dict__."""
-        if _HAVE_OMEGA:
-            offset = self._rust_offset
-            entity_id = getattr(obj, "_entity_id", None)
-            component_id = getattr(obj, "_component_id", None)
-            if entity_id is not None and component_id is not None and offset is not None:
-                try:
-                    component_delete(entity_id, component_id, offset)
-                except RuntimeError:
-                    pass
+        offset = self._rust_offset
+        entity_id = getattr(obj, "_entity_id", None)
+        component_id = getattr(obj, "_component_id", None)
+        if entity_id is not None and component_id is not None and offset is not None:
+            # Check module-level flag (can be patched in tests)
+            if _GLOBALS.get("_HAVE_OMEGA", False):
+                cd = _GLOBALS.get("component_delete")
+                if cd is not None:
+                    try:
+                        cd(entity_id, component_id, offset)
+                        return  # Early return - don't pop from dict if Rust succeeded
+                    except BaseException:
+                        # Any error (RuntimeError, PanicException, ValueError, etc.) -> fallback
+                        # Note: PanicException from pyo3 inherits from BaseException, not Exception
+                        pass
         # Always clean up __dict__ -- the Rust path may not exist or may fail,
         # and even when it succeeds the Python dict needs the stale entry removed
         # so that _get_stored -> _dict_get returns the resolved default (#C1).

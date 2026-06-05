@@ -163,8 +163,8 @@ fn build_stress_graph(n: usize) -> (Vec<IrPass>, Vec<IrResource>) {
 
 /// Compile and return the result, panicking on error.
 fn compile(passes: Vec<IrPass>, resources: Vec<IrResource>) -> CompiledFrameGraph {
-    FrameGraphCompiler::new(passes, resources)
-        .compile()
+    FrameGraphCompiler::from_ir(passes, resources)
+        
         .expect("compilation should succeed")
 }
 
@@ -250,6 +250,7 @@ fn linear_chain_100_compiles() {
 }
 
 #[test]
+#[cfg_attr(debug_assertions, ignore)] // Performance test - only valid in release mode
 fn linear_chain_500_compiles_under_50ms() {
     let (passes, resources) = build_linear_chain(500);
     let compiled = compile(passes, resources);

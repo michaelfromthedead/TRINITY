@@ -17,9 +17,10 @@
 //       error (no assertion on timing)
 
 use renderer_backend::frame_graph::{
-    build_dag, topological_sort, DispatchSource, EdgeType, InstanceSource, IrEdge, IrPass,
-    IrResource, PassIndex, PassType, ResourceAccessSet, ResourceHandle, ViewType,
+    build_dag, topological_sort, DispatchSource, EdgeType, EmptyView, InstanceSource, IrEdge,
+    IrPass, IrResource, PassIndex, PassType, ResourceAccessSet, ResourceHandle, ViewType,
 };
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helper: create a single IrPass with a given access pattern
@@ -50,6 +51,8 @@ fn make_pass(index: usize, reads: &[ResourceHandle], writes: &[ResourceHandle]) 
         }),
         view_type: ViewType::Storage,
         tags: Vec::new(),
+        feature_flags: 0,
+        view: Arc::new(EmptyView { name: format!("pass_{}", index) }),
     }
 }
 

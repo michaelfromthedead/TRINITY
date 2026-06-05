@@ -107,7 +107,6 @@ import pytest
 
 # ── Stack ──────────────────────────────────────────────────────────────────
 from engine.rendering.postprocess.postprocess_stack import (
-    BlendMode,
     BoxVolumeShape,
     EffectExecutionPath,
     EffectPriority,

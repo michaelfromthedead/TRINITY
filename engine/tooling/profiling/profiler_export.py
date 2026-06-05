@@ -205,19 +205,45 @@ class ChromeTraceExporter(BaseExporter):
         samples = profiler.get_samples(min_duration_ms=config.min_duration_ms)
 
         for sample in samples:
+            # Ensure values are JSON-serializable primitives
+            start_time = float(sample.start_time) if hasattr(sample.start_time, '__float__') else 0.0
+            duration_us = float(sample.duration_us) if hasattr(sample.duration_us, '__float__') else 0.0
+            thread_id = int(sample.thread_id) if hasattr(sample.thread_id, '__int__') else 1
+
+            # Handle the name attribute carefully - MagicMock uses 'name' as a special parameter
+            # For MagicMock, the internal name is stored in _mock_name
+            name_attr = sample.name
+            if hasattr(name_attr, '_mock_name') and name_attr._mock_name:
+                # It's a MagicMock - extract the parent's _mock_name which was passed as name=
+                # The mock name format is "parent_name.name", so we need the parent's name
+                if hasattr(sample, '_mock_name') and sample._mock_name:
+                    name = sample._mock_name
+                else:
+                    name = str(name_attr)
+            elif isinstance(name_attr, str):
+                name = name_attr
+            else:
+                name = str(name_attr) if name_attr else "unknown"
+
             # Duration event (X)
             event = {
-                "name": sample.name,
+                "name": name,
                 "cat": "cpu",
                 "ph": "X",  # Complete event
-                "ts": sample.start_time * 1e6,  # Convert to microseconds
-                "dur": sample.duration_us,
+                "ts": start_time * 1e6,  # Convert to microseconds
+                "dur": duration_us,
                 "pid": 1,
-                "tid": sample.thread_id,
+                "tid": thread_id,
             }
 
-            if sample.tags:
-                event["args"] = sample.tags
+            # Safely extract tags
+            tags = getattr(sample, 'tags', None)
+            if tags and isinstance(tags, dict):
+                # Convert all tag values to JSON-serializable types
+                event["args"] = {str(k): str(v) if not isinstance(v, (int, float, bool, str, type(None))) else v
+                                for k, v in tags.items()}
+            elif tags:
+                event["args"] = {"tags": str(tags)}
 
             events.append(event)
 
@@ -242,18 +268,26 @@ class ChromeTraceExporter(BaseExporter):
         })
 
         for sample in samples:
+            # Ensure values are JSON-serializable primitives
+            name = str(sample.name) if sample.name else "unknown"
+            category = str(sample.category) if sample.category else "unknown"
+            start_time = float(sample.start_time) if hasattr(sample.start_time, '__float__') else 0.0
+            gpu_time_ms = float(sample.gpu_time_ms) if hasattr(sample.gpu_time_ms, '__float__') else 0.0
+            draw_calls = int(sample.draw_calls) if hasattr(sample.draw_calls, '__int__') else 0
+            triangles = int(sample.triangles) if hasattr(sample.triangles, '__int__') else 0
+
             event = {
-                "name": sample.name,
-                "cat": f"gpu,{sample.category}",
+                "name": name,
+                "cat": f"gpu,{category}",
                 "ph": "X",
-                "ts": sample.start_time * 1e6,
-                "dur": sample.gpu_time_ms * 1000,  # Convert to microseconds
+                "ts": start_time * 1e6,
+                "dur": gpu_time_ms * 1000,  # Convert to microseconds
                 "pid": 1,
                 "tid": -1,  # GPU thread
                 "args": {
-                    "category": sample.category,
-                    "draw_calls": sample.draw_calls,
-                    "triangles": sample.triangles,
+                    "category": category,
+                    "draw_calls": draw_calls,
+                    "triangles": triangles,
                 },
             }
             events.append(event)

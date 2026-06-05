@@ -242,12 +242,17 @@ class TestWgslTypes:
 
 class TestDecoratorStacking:
     def test_gpu_struct_and_gpu_buffer(self):
-        @gpu_struct @gpu_buffer(usage={"storage"})
-        class T: x: f32; y: f32
+        @gpu_struct
+        @gpu_buffer(usage={"storage"})
+        class T:
+            x: f32
+            y: f32
         assert allocate_wgpu_buffer(T).size >= 8
     def test_stacked_with_mapped(self):
-        @gpu_struct @gpu_buffer(usage={"storage"}, mapped=True)
-        class T: data: f32
+        @gpu_struct
+        @gpu_buffer(usage={"storage"}, mapped=True)
+        class T:
+            data: f32
         assert allocate_wgpu_buffer(T).mapped
 
 class TestEdgeCases:
@@ -282,7 +287,16 @@ class TestAllocationContract:
     def test_frozen(self):
         a = WgpuBufferAllocation(size=64, usage=_WGPU_STORAGE)
         import dataclasses
-        assert dataclasses.is_frozen(a)
+        # Check if the dataclass is frozen by verifying it has __dataclass_fields__
+        # and trying to mutate would raise FrozenInstanceError
+        assert hasattr(a, "__dataclass_fields__")
+        # Verify it's actually frozen by checking the decorator metadata
+        assert dataclasses.fields(a.__class__)[0].name == "size"
+        try:
+            a.size = 128
+            assert False, "Expected FrozenInstanceError"
+        except dataclasses.FrozenInstanceError:
+            pass  # Expected behavior
     def test_equality(self):
         a = WgpuBufferAllocation(size=4, usage=_WGPU_STORAGE)
         b = WgpuBufferAllocation(size=4, usage=_WGPU_STORAGE)

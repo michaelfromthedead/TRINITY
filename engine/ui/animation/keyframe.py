@@ -252,14 +252,14 @@ class KeyframeTrack(Generic[T]):
         # Handle numeric types
         if isinstance(from_val, (int, float)) and isinstance(to_val, (int, float)):
             result = lerp(float(from_val), float(to_val), t)
-            if isinstance(from_val, int) and isinstance(to_val, int):
-                return round(result)  # type: ignore
+            # Don't round - return float for precise interpolation
             return result  # type: ignore
 
         # Handle tuple/list (for colors, vectors, etc.)
         if isinstance(from_val, (tuple, list)) and isinstance(to_val, (tuple, list)):
+            # Interpolate elements as floats for precision
             interpolated = [
-                self._interpolate(f, t_val, t)
+                lerp(float(f), float(t_val), t)
                 for f, t_val in zip(from_val, to_val)
             ]
             return type(from_val)(interpolated)  # type: ignore

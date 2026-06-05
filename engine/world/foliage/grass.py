@@ -14,6 +14,12 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, Tuple
 
+from engine.world.foliage.constants import (
+    DEFAULT_DENSITY,
+    DENSITY_GRASS,
+    CULL_DISTANCE_GRASS,
+    DEFAULT_MIN_SPACING,
+)
 from .placement import Bounds, TerrainInterface
 from .types import FoliageCategory, GrassType
 

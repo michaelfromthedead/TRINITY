@@ -189,7 +189,7 @@ class BuffContainer:
         tags: Optional[GameplayTagContainer] = None,
     ) -> None:
         self._attributes = attributes
-        self._tags = tags or GameplayTagContainer()
+        self._tags = tags if tags is not None else GameplayTagContainer()
         self._buffs: Dict[UUID, BuffInstance] = {}
         self._by_id: Dict[str, Set[UUID]] = {}  # spec.id -> instance UUIDs
         self._modifier_handles: Dict[UUID, List[Any]] = {}  # buff UUID -> modifier handles
@@ -308,16 +308,26 @@ class BuffContainer:
             self._apply_modifiers(existing)
 
         elif mode == StackingMode.INDEPENDENT:
-            # Create new instance
-            return self.apply(
-                BuffSpec(
-                    id=f"{spec.id}_{uuid4().hex[:8]}",  # Unique ID
-                    name=spec.name,
-                    **{k: v for k, v in spec.__dict__.items() if k not in ("id", "name")}
-                ),
+            # Create new independent instance with same spec.id for tracking
+            instance = BuffInstance(
+                spec=spec,
                 source=existing.source,
-                stacks=stacks,
+                current_stacks=min(stacks, spec.max_stacks),
+                remaining_duration=spec.duration,
+                is_visible=spec.category != BuffCategory.HIDDEN,
             )
+
+            self._buffs[instance.id] = instance
+            self._by_id[spec.id].add(instance.id)
+
+            # Apply modifiers
+            self._apply_modifiers(instance)
+
+            # Grant tags (already granted by first instance, but safe to call)
+            for tag in spec.granted_tags:
+                self._tags.add(tag)
+
+            return instance
 
         return existing
 

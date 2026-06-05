@@ -13,9 +13,10 @@ const NUM_DEPTH_SLICES: u32 = 32u;
 const MAX_LIGHTS_PER_TILE: u32 = 256u;
 
 // ── Shared memory for depth reduction ──
+// Use atomic<u32> and bitcast f32 values for atomic min/max operations.
 
-var<workgroup> shared_min_depth: f32;
-var<workgroup> shared_max_depth: f32;
+var<workgroup> shared_min_depth: atomic<u32>;
+var<workgroup> shared_max_depth: atomic<u32>;
 
 // ── Data structures ──
 
@@ -110,31 +111,50 @@ fn cone_aabb_intersect(
         return false;
     }
 
-    // Check if any AABB corner is inside the cone frustum.
-    let corners: array<vec3<f32>, 8> = array<vec3<f32>, 8>(
-        vec3<f32>(aabb_min.x, aabb_min.y, aabb_min.z),
-        vec3<f32>(aabb_max.x, aabb_min.y, aabb_min.z),
-        vec3<f32>(aabb_min.x, aabb_max.y, aabb_min.z),
-        vec3<f32>(aabb_max.x, aabb_max.y, aabb_min.z),
-        vec3<f32>(aabb_min.x, aabb_min.y, aabb_max.z),
-        vec3<f32>(aabb_max.x, aabb_min.y, aabb_max.z),
-        vec3<f32>(aabb_min.x, aabb_max.y, aabb_max.z),
-        vec3<f32>(aabb_max.x, aabb_max.y, aabb_max.z),
-    );
+    // Check if any AABB corner is inside the cone frustum (unrolled for WGSL compatibility).
+    // Check corner 0: (min, min, min)
+    var to_c = vec3<f32>(aabb_min.x, aabb_min.y, aabb_min.z) - cone_tip;
+    var d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
 
-    for (var i: u32 = 0u; i < 8u; i = i + 1u) {
-        let to_corner = corners[i] - cone_tip;
-        let dist = length(to_corner);
-        if dist <= range {
-            let cos_to_corner = dot(normalize(to_corner), cone_dir);
-            if cos_to_corner >= cos_angle {
-                return true;
-            }
-        }
-    }
+    // Check corner 1: (max, min, min)
+    to_c = vec3<f32>(aabb_max.x, aabb_min.y, aabb_min.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 2: (min, max, min)
+    to_c = vec3<f32>(aabb_min.x, aabb_max.y, aabb_min.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 3: (max, max, min)
+    to_c = vec3<f32>(aabb_max.x, aabb_max.y, aabb_min.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 4: (min, min, max)
+    to_c = vec3<f32>(aabb_min.x, aabb_min.y, aabb_max.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 5: (max, min, max)
+    to_c = vec3<f32>(aabb_max.x, aabb_min.y, aabb_max.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 6: (min, max, max)
+    to_c = vec3<f32>(aabb_min.x, aabb_max.y, aabb_max.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
+
+    // Check corner 7: (max, max, max)
+    to_c = vec3<f32>(aabb_max.x, aabb_max.y, aabb_max.z) - cone_tip;
+    d = length(to_c);
+    if d <= range && dot(normalize(to_c), cone_dir) >= cos_angle { return true; }
 
     // Check if cone direction points toward AABB (conservative).
-    let to_closest = clamp(center - cone_tip, -extent, extent) + (center - cone_tip);
+    let extent_vec = vec3<f32>(extent, extent, extent);
+    let to_closest = clamp(center - cone_tip, -extent_vec, extent_vec) + (center - cone_tip);
     return dot(normalize(to_closest), cone_dir) >= cos_angle;
 }
 
@@ -164,19 +184,20 @@ fn main(
 
     // Initialize shared memory from thread 0.
     if local_idx == 0u {
-        shared_min_depth = 1.0;
-        shared_max_depth = 0.0;
+        atomicStore(&shared_min_depth, bitcast<u32>(1.0f));
+        atomicStore(&shared_max_depth, bitcast<u32>(0.0f));
     }
     workgroupBarrier();
 
-    // Parallel reduction: min depth.
-    atomicMin(&bitcast<atomic<i32>>((&shared_min_depth)), bitcast<i32>(min_depth));
+    // Parallel reduction: min depth (using u32 bit representation).
+    // For IEEE 754 floats in [0,1], u32 comparison preserves ordering.
+    atomicMin(&shared_min_depth, bitcast<u32>(min_depth));
     // Parallel reduction: max depth.
-    atomicMax(&bitcast<atomic<i32>>((&shared_max_depth)), bitcast<i32>(max_depth));
+    atomicMax(&shared_max_depth, bitcast<u32>(max_depth));
     workgroupBarrier();
 
-    let tile_min_depth = shared_min_depth;
-    let tile_max_depth = shared_max_depth;
+    let tile_min_depth = bitcast<f32>(atomicLoad(&shared_min_depth));
+    let tile_max_depth = bitcast<f32>(atomicLoad(&shared_max_depth));
 
     // Step 2: Compute froxel Z range for this tile.
     let min_slice = depth_to_slice(tile_min_depth);

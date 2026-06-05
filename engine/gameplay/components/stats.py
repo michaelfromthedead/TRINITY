@@ -270,6 +270,7 @@ class StatsComponent:
 
     __slots__ = (
         "__dict__",
+        "__weakref__",
         "_stats",
         "_derived_stats",
         "_on_stat_changed",

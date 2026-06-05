@@ -14,6 +14,18 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from engine.world.environment.constants import (
+    DEFAULT_ATMOSPHERE_HEIGHT,
+    EARTH_RADIUS,
+    SUN_ANGULAR_RADIUS,
+    DEFAULT_RAYLEIGH_DENSITY,
+    DEFAULT_MIE_DENSITY,
+    DEFAULT_MIE_ANISOTROPY,
+    DEFAULT_OZONE_DENSITY,
+    DEFAULT_RAYLEIGH_COLOR,
+    DEFAULT_MIE_COLOR,
+    DEFAULT_OZONE_COLOR,
+)
 from engine.world.environment.time_of_day import SunPosition, TimeOfDayController
 
 # Type aliases

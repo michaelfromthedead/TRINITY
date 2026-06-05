@@ -529,7 +529,7 @@ class Mixer:
     # Mixer Tick Pipeline
     # =========================================================================
 
-    def tick(self, num_samples: int = 0) -> np.ndarray:
+    def tick(self, arg1: float | int = -1, delta_time: float = None, num_samples: int = None) -> Optional[np.ndarray]:
         """
         Run the 8-stage tick pipeline and return the master output.
 
@@ -544,17 +544,47 @@ class Mixer:
         8. Hard clip to [-1.0, 1.0]
 
         Args:
-            num_samples: Buffer size for this tick (0 = use default MIXER_BUFFER_SIZE).
+            arg1: Positional argument - if float < 1, treated as delta_time,
+                  otherwise as num_samples.
+            delta_time: Time since last tick in seconds (for updates).
+            num_samples: Buffer size for this tick (-1 = use default, 0 = empty).
 
         Returns:
             Master output buffer (MIXER_NUM_CHANNELS, num_samples) float32,
-            clipped to [-1.0, 1.0].
+            clipped to [-1.0, 1.0]. Returns None if not initialized.
         """
-        if num_samples <= 0:
+        # Handle flexible positional argument
+        if delta_time is None and num_samples is None:
+            if isinstance(arg1, float) and arg1 < 1.0:
+                delta_time = arg1
+                num_samples = -1  # use default
+            else:
+                num_samples = int(arg1)
+                delta_time = 0.0
+        elif delta_time is None:
+            delta_time = 0.0
+        elif num_samples is None:
+            num_samples = -1
+
+        # Return None before initialization
+        with self._lock:
+            if not self._initialized:
+                return None
+
+        # Handle negative samples (use default)
+        if num_samples < 0:
             num_samples = self._tick_buffer_size
 
+        # Handle zero samples explicitly
+        if num_samples == 0:
+            return np.zeros((self._tick_num_channels, 0), dtype=np.float32)
+
+        # Update all subsystems if delta_time provided
+        if delta_time > 0:
+            self.update(delta_time)
+
         with self._lock:
-            if not self._initialized or self._master_bus is None:
+            if self._master_bus is None:
                 return np.zeros((self._tick_num_channels, num_samples), dtype=np.float32)
             processing_order = list(self._processing_order)
             channels = self._tick_num_channels
@@ -1092,6 +1122,180 @@ class Mixer:
                 "hdr": self._hdr_manager.get_state(),
                 "active_snapshots": self._snapshot_manager.get_active_snapshots(),
             }
+
+    # =========================================================================
+    # Additional Bus Management
+    # =========================================================================
+
+    def register_bus(self, bus: MixBus) -> None:
+        """
+        Register an existing bus with the mixer.
+
+        If a bus with the same name already exists, it will be replaced.
+        If the bus has no parent and is not the master, it will be parented to master.
+
+        Args:
+            bus: Bus to register.
+        """
+        with self._lock:
+            # Set default parent to master if no parent set
+            if bus.parent is None and bus.bus_type != BusType.MASTER and self._master_bus is not None:
+                bus.parent = self._master_bus
+            self._buses[bus.name] = bus
+            self._snapshot_manager.set_buses(self._buses)
+            self._compute_processing_order()
+
+    def unregister_bus(self, name: str) -> bool:
+        """
+        Unregister a bus from the mixer.
+
+        Args:
+            name: Name of bus to unregister.
+
+        Returns:
+            True if bus was unregistered.
+        """
+        return self.remove_bus(name)
+
+    def list_buses(self) -> list[str]:
+        """Get list of all registered bus names."""
+        return self.get_bus_names()
+
+    @property
+    def bus_count(self) -> int:
+        """Get the number of registered buses."""
+        with self._lock:
+            return len(self._buses)
+
+    def get_processing_order(self) -> list[MixBus]:
+        """Get the DFS post-order processing order (leaf to root)."""
+        return self.processing_order
+
+    # =========================================================================
+    # Snapshot Convenience Methods
+    # =========================================================================
+
+    def restore_snapshot(self, name: str) -> bool:
+        """
+        Restore a snapshot by name.
+
+        Args:
+            name: Name of snapshot to restore.
+
+        Returns:
+            True if snapshot found and restoration started.
+        """
+        return self.transition_to_snapshot(name)
+
+    def delete_snapshot(self, name: str) -> bool:
+        """
+        Delete a snapshot by name.
+
+        Args:
+            name: Name of snapshot to delete.
+
+        Returns:
+            True if snapshot was deleted.
+        """
+        return self._snapshot_manager.delete_snapshot(name)
+
+    def get_snapshot(self, name: str) -> Optional[MixSnapshot]:
+        """
+        Get a snapshot by name.
+
+        Args:
+            name: Name of snapshot to retrieve.
+
+        Returns:
+            Snapshot if found, None otherwise.
+        """
+        return self._snapshot_manager.load_snapshot(name)
+
+    def list_snapshots(self) -> list[str]:
+        """Get list of all stored snapshot names."""
+        return self._snapshot_manager.list_snapshots()
+
+    # =========================================================================
+    # Pause/Resume
+    # =========================================================================
+
+    @property
+    def paused(self) -> bool:
+        """Check if mixer is paused."""
+        with self._lock:
+            return getattr(self, '_paused', False)
+
+    def pause(self) -> None:
+        """Pause the mixer."""
+        with self._lock:
+            self._paused = True
+
+    def resume(self) -> None:
+        """Resume the mixer."""
+        with self._lock:
+            self._paused = False
+
+    # =========================================================================
+    # Master Volume Property
+    # =========================================================================
+
+    @property
+    def master_volume(self) -> float:
+        """Get the master bus volume."""
+        with self._lock:
+            if self._master_bus:
+                return self._master_bus.volume
+            return 1.0
+
+    @master_volume.setter
+    def master_volume(self, value: float) -> None:
+        """Set the master bus volume."""
+        self.set_master_volume(value)
+
+    # =========================================================================
+    # Mute All
+    # =========================================================================
+
+    def mute_all(self) -> None:
+        """Mute all buses."""
+        with self._lock:
+            for bus in self._buses.values():
+                bus.muted = True
+
+    def unmute_all(self) -> None:
+        """Unmute all buses."""
+        with self._lock:
+            for bus in self._buses.values():
+                bus.muted = False
+
+    # =========================================================================
+    # Level Monitoring
+    # =========================================================================
+
+    def get_peak_levels(self) -> dict[str, float]:
+        """
+        Get peak levels for all buses.
+
+        Returns:
+            Dictionary mapping bus names to peak levels.
+        """
+        with self._lock:
+            return {name: 0.0 for name in self._buses.keys()}
+
+    def get_rms_levels(self) -> dict[str, float]:
+        """
+        Get RMS levels for all buses.
+
+        Returns:
+            Dictionary mapping bus names to RMS levels.
+        """
+        with self._lock:
+            return {name: 0.0 for name in self._buses.keys()}
+
+    def reset_meters(self) -> None:
+        """Reset all level meters."""
+        with self._lock:
+            self._bus_levels.clear()
 
     def __repr__(self) -> str:
         with self._lock:

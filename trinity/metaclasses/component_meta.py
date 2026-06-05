@@ -309,14 +309,16 @@ class ComponentMeta(EngineMeta):
                         annotated_descriptors.append(meta(field_type=actual_type))
 
             # 8.6: Store unwrapped base type.
-            # NOTE: `offset` here is a sequential field index (0, 1, 2, …),
-            # NOT a byte offset.  Byte-level layout with alignment padding is
-            # computed separately in _build_rust_layout().  The sequential
-            # index is used as a dense key for descriptor plumbing (e.g.
-            # bit-flags, change-tracking slot IDs).
+            # _field_offsets now stores byte offsets matching Rust layout,
+            # computed using TYPE_MAP sizes and C-style alignment rules.
             cls._field_types[field_name] = actual_type
-            cls._field_offsets[field_name] = offset
-            offset += 1
+
+            # Compute byte offset with alignment (matching _build_rust_layout)
+            type_code, size = ComponentMeta.TYPE_MAP.get(actual_type, (getattr(actual_type, '__name__', str(actual_type)), 4))
+            alignment = min(size, 8)
+            aligned_offset = (offset + alignment - 1) & ~(alignment - 1)
+            cls._field_offsets[field_name] = aligned_offset
+            offset = aligned_offset + size
 
             # Capture default value if present
             if hasattr(cls, field_name):

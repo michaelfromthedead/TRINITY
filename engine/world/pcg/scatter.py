@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, List, Optional, Tuple
 
+from engine.world.pcg.constants import (
+    DEFAULT_SCATTER_DENSITY,
+    DEFAULT_MIN_SPACING,
+)
 from engine.world.pcg.noise import NoiseMap
 
 

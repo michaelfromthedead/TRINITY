@@ -189,6 +189,14 @@ class HDRAudioManager:
         with self._lock:
             self._enabled = value
 
+    def enable(self) -> None:
+        """Enable HDR audio processing."""
+        self.enabled = True
+
+    def disable(self) -> None:
+        """Disable HDR audio processing."""
+        self.enabled = False
+
     # =========================================================================
     # Source Management
     # =========================================================================

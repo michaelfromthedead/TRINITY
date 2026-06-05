@@ -545,6 +545,7 @@ impl TryFrom<PyPassNode> for IrPass {
                     },
                 };
 
+                let pass_name = node.name.clone();
                 Ok(IrPass {
                     index: PassIndex(0),
                     name: node.name,
@@ -556,6 +557,8 @@ impl TryFrom<PyPassNode> for IrPass {
                     dispatch_source: None,
                     view_type,
                     tags: Vec::new(),
+                    feature_flags: 0,
+                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
                     })
             }
 
@@ -569,6 +572,7 @@ impl TryFrom<PyPassNode> for IrPass {
                     None => return Err(ConversionError::MissingDispatchSource),
                 };
 
+                let pass_name = node.name.clone();
                 Ok(IrPass {
                     index: PassIndex(0),
                     name: node.name,
@@ -586,6 +590,8 @@ impl TryFrom<PyPassNode> for IrPass {
                     dispatch_source,
                     view_type,
                     tags: Vec::new(),
+                    feature_flags: 0,
+                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
                     })
             }
 
@@ -595,6 +601,7 @@ impl TryFrom<PyPassNode> for IrPass {
                     return Err(ConversionError::AttachmentsNotAllowed(pass_type));
                 }
 
+                let pass_name = node.name.clone();
                 Ok(IrPass {
                     index: PassIndex(0),
                     name: node.name,
@@ -612,6 +619,8 @@ impl TryFrom<PyPassNode> for IrPass {
                     dispatch_source: None,
                     view_type,
                     tags: Vec::new(),
+                    feature_flags: 0,
+                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
                     })
             }
         }

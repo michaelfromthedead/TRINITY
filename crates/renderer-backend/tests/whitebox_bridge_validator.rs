@@ -72,6 +72,7 @@ fn make_bv_compiled() -> renderer_backend::frame_graph::CompiledFrameGraph {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     }
 }
 
@@ -86,6 +87,7 @@ fn test_bv_barrier_invalid_from_pass() {
         PassIndex(999),
         PassIndex(0),
         ResourceHandle(1),
+        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
     ));
@@ -106,6 +108,7 @@ fn test_bv_barrier_invalid_to_pass() {
         PassIndex(0),
         PassIndex(999),
         ResourceHandle(1),
+        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
     ));
@@ -199,6 +202,7 @@ fn test_bv_topological_sort_violation() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -246,6 +250,7 @@ fn test_bv_execution_order_pass_not_in_list() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -308,6 +313,7 @@ fn test_bv_valid_graph_passes_all_checks() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -325,6 +331,7 @@ fn test_bv_multiple_errors_accumulated() {
         PassIndex(999),
         PassIndex(0),
         ResourceHandle(1),
+        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
     ));
@@ -380,6 +387,7 @@ fn test_bv_imported_resource_treated_as_written() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -428,6 +436,7 @@ fn test_bv_transient_uninitialized_raw_hazard() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -476,6 +485,7 @@ fn test_bv_none_handle_triggers_resource_error() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);
@@ -526,6 +536,7 @@ fn test_bv_none_indirect_buffer_skipped() {
         eliminated_passes: vec![],
         cull_stats: CullStats::default(),
         parallel_regions: vec![],
+        ..Default::default()
     };
 
     let result = BridgeValidator::validate(&graph);

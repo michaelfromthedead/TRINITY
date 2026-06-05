@@ -218,6 +218,7 @@ class VOCache:
                 self._evict_oldest()
 
             # Add new entry
+            # access_count starts at 0 and increments on each get()
             cached = CachedAudio(
                 asset_id=asset_id,
                 size_bytes=size_bytes,
@@ -225,7 +226,7 @@ class VOCache:
                 data=data,
                 load_time=current_time,
                 last_access_time=current_time,
-                access_count=1,
+                access_count=0,
                 is_preloaded=is_preloaded,
             )
 

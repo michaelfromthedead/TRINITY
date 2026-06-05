@@ -290,6 +290,51 @@ class SidechainManager:
     # Compressor Management
     # =========================================================================
 
+    def create(
+        self,
+        key_source: str,
+        target: str,
+        ratio: float = SIDECHAIN_RATIO,
+        threshold_db: float = SIDECHAIN_THRESHOLD_DB,
+        attack_ms: float = SIDECHAIN_ATTACK_MS,
+        release_ms: float = SIDECHAIN_RELEASE_MS,
+    ) -> str:
+        """
+        Create a sidechain compressor with string-based bus names.
+
+        Args:
+            key_source: Name of the key input bus.
+            target: Name of the target bus.
+            ratio: Compression ratio.
+            threshold_db: Compression threshold in dB.
+            attack_ms: Attack time in ms.
+            release_ms: Release time in ms.
+
+        Returns:
+            ID of the created compressor.
+        """
+        config = SidechainConfig(
+            name=f"{key_source}_to_{target}",
+            threshold_db=threshold_db,
+            ratio=ratio,
+            attack_ms=attack_ms,
+            release_ms=release_ms,
+        )
+        self.create_compressor(config)
+        return config.id
+
+    def remove(self, compressor_id: str) -> bool:
+        """
+        Remove a compressor by ID.
+
+        Args:
+            compressor_id: ID of compressor to remove.
+
+        Returns:
+            True if removed.
+        """
+        return self.remove_compressor(compressor_id)
+
     def create_compressor(self, config: SidechainConfig) -> SidechainCompressor:
         """
         Create a new sidechain compressor.

@@ -375,6 +375,34 @@ class MotionDatabase:
         return sum(clip.frame_count for clip in self._clip_metadata)
 
     @property
+    def frame_count(self) -> int:
+        """Alias for entry_count (number of frames in database)."""
+        return len(self._entries)
+
+    def add_frame(self, frame: 'MotionFrame') -> int:
+        """Add a motion frame to the database.
+
+        Args:
+            frame: MotionFrame to add
+
+        Returns:
+            Index of added frame
+        """
+        idx = len(self._entries)
+        # Create database entry from frame
+        clip_idx = getattr(frame, 'clip_index', getattr(frame, 'animation_index', 0))
+        frame_num = getattr(frame, 'frame_index', idx)
+        features = frame.get_feature_vector() if hasattr(frame, 'get_feature_vector') else np.zeros(self._feature_dimension)
+        entry = DatabaseEntry(
+            clip_index=clip_idx,
+            frame=frame_num,
+            features=features,
+        )
+        self._entries.append(entry)
+        self._dirty = True
+        return idx
+
+    @property
     def memory_usage_bytes(self) -> int:
         """Estimated memory usage in bytes."""
         # Feature matrix memory

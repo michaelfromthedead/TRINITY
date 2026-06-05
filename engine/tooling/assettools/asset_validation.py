@@ -156,12 +156,26 @@ class TextureValidationRule(ValidationRule):
         require_power_of_two: Require power-of-2 dimensions
         allowed_formats: Allowed file formats
         max_file_size_mb: Maximum file size in MB
+        min_file_size_bytes: Minimum file size in bytes (files smaller are likely corrupt)
         require_mipmaps: Require mipmap data
     """
 
     name = "texture_validation"
     description = "Validates texture assets"
     extensions = {"png", "jpg", "jpeg", "tga", "dds", "exr", "hdr", "bmp", "tiff"}
+
+    # Minimum valid sizes for texture headers (approximate)
+    MIN_TEXTURE_SIZES = {
+        "png": 67,   # PNG minimum with IHDR chunk
+        "jpg": 107,  # JPEG minimum with SOI/APP0/SOF/EOI
+        "jpeg": 107,
+        "tga": 18,   # TGA header minimum
+        "dds": 128,  # DDS header
+        "exr": 100,  # OpenEXR minimum
+        "hdr": 50,   # Radiance HDR minimum
+        "bmp": 54,   # BMP header minimum
+        "tiff": 8,   # TIFF header minimum
+    }
 
     def __init__(
         self,
@@ -170,6 +184,7 @@ class TextureValidationRule(ValidationRule):
         require_power_of_two: bool = True,
         allowed_formats: Optional[set[str]] = None,
         max_file_size_mb: float = 50.0,
+        min_file_size_bytes: Optional[int] = None,
         require_mipmaps: bool = False,
     ) -> None:
         self.max_width = max_width
@@ -177,6 +192,7 @@ class TextureValidationRule(ValidationRule):
         self.require_power_of_two = require_power_of_two
         self.allowed_formats = allowed_formats or self.extensions
         self.max_file_size_mb = max_file_size_mb
+        self.min_file_size_bytes = min_file_size_bytes
         self.require_mipmaps = require_mipmaps
 
     def validate(self, path: Path, context: dict[str, Any]) -> list[ValidationIssue]:
@@ -204,7 +220,24 @@ class TextureValidationRule(ValidationRule):
             ))
 
         # Check file size
-        file_size_mb = path.stat().st_size / (1024 * 1024)
+        file_size_bytes = path.stat().st_size
+        file_size_mb = file_size_bytes / (1024 * 1024)
+
+        # Check minimum size (files too small are likely corrupt or invalid)
+        min_size = self.min_file_size_bytes
+        if min_size is None:
+            # Use format-specific minimum or a general minimum
+            min_size = self.MIN_TEXTURE_SIZES.get(ext, 10)
+        if file_size_bytes < min_size:
+            issues.append(ValidationIssue(
+                rule_name=self.name,
+                severity=ValidationSeverity.ERROR,
+                message=f"File size {file_size_bytes} bytes is below minimum {min_size} bytes for {ext} format",
+                path=path,
+                suggestion="File may be corrupt or invalid",
+            ))
+
+        # Check maximum size
         if file_size_mb > self.max_file_size_mb:
             issues.append(ValidationIssue(
                 rule_name=self.name,

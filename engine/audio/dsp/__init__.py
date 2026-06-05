@@ -76,6 +76,7 @@ from .reverb import (
     PlateReverb,
     ConvolutionReverb,
     SimpleReverb,
+    Reverb,
 )
 from .distortion import (
     DistortionType,

@@ -764,7 +764,20 @@ class FrameGraph:
         try:
             result_json = _omega.frame_graph_execute(json_ir)
             data = json.loads(result_json)
-            return CompilationResult.from_bridge_json(data)
+            bridge_result = CompilationResult.from_bridge_json(data)
+
+            # If the bridge returns success but no execution order and we have
+            # passes, fall back to Python compilation to ensure passes are
+            # properly included in the execution order.
+            if (bridge_result.success
+                and not bridge_result.execution_order
+                and bridge_result.pass_count > 0):
+                import sys
+                print("[frame_graph] Rust bridge returned empty execution order; "
+                      "falling back to Python compilation", file=sys.stderr)
+                return None
+
+            return bridge_result
         except Exception as exc:
             # Bridge call failed, log and fall through to Python path
             import sys

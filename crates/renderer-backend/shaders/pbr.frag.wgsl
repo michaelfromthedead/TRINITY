@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
-// pbr.frag.wgsl — PBR fragment shader (T-BRG-6.2).
+// pbr.frag.wgsl — PBR fragment shader (T-BRG-6.2, T-MAT-4.2, T-MAT-4.3).
 //
 // Cook-Torrance BRDF with GGX normal distribution, Smith-GGX geometry,
 // and Schlick Fresnel. Supports bindless material table, point/directional/spot
-// lights, and optional CSM shadow sampling.
+// lights, optional CSM shadow sampling, clear coat (T-MAT-4.2), and
+// anisotropic GGX (T-MAT-4.3).
 
-// ── Material table entry (matches material_table.wgsl layout, 80 bytes) ──
+// ── Material table entry (matches material_table.wgsl layout, 96 bytes) ──
 
 struct MaterialTableEntry {
     base_color: vec4<f32>,
@@ -21,6 +22,12 @@ struct MaterialTableEntry {
     emissive_texture_id: u32,
     flags: u32,
     alpha_cutoff: f32,
+    // Clear coat parameters (T-MAT-4.2)
+    clear_coat: f32,
+    clear_coat_roughness: f32,
+    // Anisotropy parameters (T-MAT-4.3)
+    anisotropy: f32,
+    anisotropy_rotation: f32,
 }
 
 // ── Light types ──
@@ -111,6 +118,7 @@ struct FragmentInput {
 const PI: f32 = 3.14159265359;
 const EPSILON: f32 = 0.00001;
 const MAX_REFLECTION_LOD: f32 = 4.0;
+const CLEAR_COAT_F0: f32 = 0.04;
 
 // ── Cook-Torrance BRDF functions ──
 
@@ -142,6 +150,125 @@ fn geometry_smith(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f
 // Schlick Fresnel approximation.
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// ── Clear coat functions (T-MAT-4.2) ──
+
+// Fresnel for clear coat layer (IOR 1.5, F0 = 0.04).
+fn fresnel_clear_coat(VoH: f32) -> f32 {
+    let Fc = pow(1.0 - VoH, 5.0);
+    return CLEAR_COAT_F0 + (1.0 - CLEAR_COAT_F0) * Fc;
+}
+
+// GGX NDF for clear coat with Disney roughness remapping.
+fn distribution_ggx_clear_coat(NoH: f32, cc_roughness: f32) -> f32 {
+    let a = cc_roughness * cc_roughness;
+    let a2 = a * a;
+    let NoH2 = NoH * NoH;
+    let denom = NoH2 * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom + EPSILON);
+}
+
+// Kelemen visibility function for clear coat.
+fn geometry_clear_coat_kelemen(VoH: f32) -> f32 {
+    return 0.25 / (VoH * VoH + EPSILON);
+}
+
+// Evaluate clear coat BRDF. Returns (brdf_value, fresnel_factor).
+fn eval_clear_coat(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    l: vec3<f32>,
+    cc_intensity: f32,
+    cc_roughness: f32,
+) -> vec2<f32> {
+    if cc_intensity < EPSILON {
+        return vec2<f32>(0.0, 0.0);
+    }
+
+    let h = normalize(v + l);
+    let NoL = max(dot(n, l), 0.0);
+    let NoV = max(dot(n, v), 0.0);
+    let NoH = max(dot(n, h), 0.0);
+    let VoH = max(dot(v, h), 0.0);
+
+    if NoL < EPSILON || NoV < EPSILON {
+        return vec2<f32>(0.0, 0.0);
+    }
+
+    let D = distribution_ggx_clear_coat(NoH, cc_roughness);
+    let G = geometry_clear_coat_kelemen(VoH);
+    let F = fresnel_clear_coat(VoH);
+
+    let cc_brdf = D * G * F * cc_intensity;
+
+    return vec2<f32>(cc_brdf, F * cc_intensity);
+}
+
+// ── Anisotropic GGX functions (T-MAT-4.3) ──
+
+// Rotate tangent by angle radians.
+fn rotate_tangent_by_angle(tangent: vec3<f32>, bitangent: vec3<f32>, angle: f32) -> vec3<f32> {
+    let cos_a = cos(angle);
+    let sin_a = sin(angle);
+    return tangent * cos_a + bitangent * sin_a;
+}
+
+// Rotate bitangent by angle radians.
+fn rotate_bitangent_by_angle(tangent: vec3<f32>, bitangent: vec3<f32>, angle: f32) -> vec3<f32> {
+    let cos_a = cos(angle);
+    let sin_a = sin(angle);
+    return -tangent * sin_a + bitangent * cos_a;
+}
+
+// Compute anisotropic alpha values from roughness and anisotropy.
+fn compute_aniso_alphas(roughness: f32, anisotropy: f32) -> vec2<f32> {
+    let a = roughness * roughness;
+    let alpha_t = max(a * (1.0 + anisotropy), EPSILON);
+    let alpha_b = max(a * (1.0 - anisotropy), EPSILON);
+    return vec2<f32>(alpha_t, alpha_b);
+}
+
+// Anisotropic GGX NDF.
+fn distribution_ggx_anisotropic(
+    NoH: f32,
+    ToH: f32,
+    BoH: f32,
+    alpha_t: f32,
+    alpha_b: f32,
+) -> f32 {
+    let at = max(alpha_t, EPSILON);
+    let ab = max(alpha_b, EPSILON);
+
+    let at2 = at * at;
+    let ab2 = ab * ab;
+
+    let term_t = ToH * ToH / at2;
+    let term_b = BoH * BoH / ab2;
+    let term_n = NoH * NoH;
+
+    let denom = term_t + term_b + term_n;
+    return 1.0 / (PI * at * ab * denom * denom + EPSILON);
+}
+
+// Anisotropic Smith-GGX geometry function.
+fn geometry_smith_anisotropic(
+    NoV: f32,
+    NoL: f32,
+    ToV: f32,
+    BoV: f32,
+    ToL: f32,
+    BoL: f32,
+    alpha_t: f32,
+    alpha_b: f32,
+) -> f32 {
+    let at2 = alpha_t * alpha_t;
+    let ab2 = alpha_b * alpha_b;
+
+    let lambdaV = NoL * sqrt(at2 * ToV * ToV + ab2 * BoV * BoV + NoV * NoV);
+    let lambdaL = NoV * sqrt(at2 * ToL * ToL + ab2 * BoL * BoL + NoL * NoL);
+
+    return 0.5 / (lambdaV + lambdaL + EPSILON);
 }
 
 // ── Shadow sampling ──
@@ -205,6 +332,143 @@ fn shadow_factor(world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>) 
     return shadow / sample_count;
 }
 
+// ── BRDF evaluation functions ──
+
+// Core BRDF evaluation with clear coat support.
+fn eval_brdf_with_clear_coat(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    l: vec3<f32>,
+    h: vec3<f32>,
+    albedo: vec3<f32>,
+    f0: vec3<f32>,
+    roughness: f32,
+    radiance: vec3<f32>,
+    cc_intensity: f32,
+    cc_roughness: f32,
+) -> vec3<f32> {
+    let ndotl = max(dot(n, l), 0.0);
+    let ndotv = max(dot(n, v), 0.0);
+    if ndotl <= 0.0 || ndotv <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    // Cook-Torrance specular.
+    let ndf = distribution_ggx(n, h, roughness);
+    let g = geometry_smith(n, v, l, roughness);
+    let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+
+    let specular = (ndf * g * f) / max(4.0 * ndotv * ndotl, EPSILON);
+
+    // Lambertian diffuse (energy-conserving).
+    let kd = (1.0 - f) * (1.0 - albedo_to_metallic_f0(albedo).g);
+
+    var result = (kd * albedo / PI + specular) * radiance * ndotl;
+
+    // Add clear coat contribution (T-MAT-4.2).
+    if cc_intensity > EPSILON {
+        let cc_result = eval_clear_coat(n, v, l, cc_intensity, cc_roughness);
+        let cc_brdf = cc_result.x;
+        let cc_fresnel = cc_result.y;
+
+        // Clear coat absorbs energy from base layer.
+        let energy_attenuation = 1.0 - cc_fresnel;
+        result = result * energy_attenuation + vec3<f32>(cc_brdf) * radiance * ndotl;
+    }
+
+    return result;
+}
+
+// Full BRDF evaluation with anisotropy support (T-MAT-4.3).
+fn eval_brdf_full(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    l: vec3<f32>,
+    h: vec3<f32>,
+    tangent: vec3<f32>,
+    bitangent: vec3<f32>,
+    albedo: vec3<f32>,
+    f0: vec3<f32>,
+    roughness: f32,
+    radiance: vec3<f32>,
+    anisotropy: f32,
+    cc_intensity: f32,
+    cc_roughness: f32,
+) -> vec3<f32> {
+    let ndotl = max(dot(n, l), 0.0);
+    let ndotv = max(dot(n, v), 0.0);
+    if ndotl <= 0.0 || ndotv <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    var specular: vec3<f32>;
+
+    // Use anisotropic BRDF if abs(anisotropy) > 0.001 threshold.
+    if abs(anisotropy) > 0.001 {
+        // Anisotropic path.
+        let alphas = compute_aniso_alphas(roughness, anisotropy);
+        let alpha_t = alphas.x;
+        let alpha_b = alphas.y;
+
+        let NoH = max(dot(n, h), 0.0);
+        let ToH = dot(tangent, h);
+        let BoH = dot(bitangent, h);
+        let ToV = dot(tangent, v);
+        let BoV = dot(bitangent, v);
+        let ToL = dot(tangent, l);
+        let BoL = dot(bitangent, l);
+
+        let ndf = distribution_ggx_anisotropic(NoH, ToH, BoH, alpha_t, alpha_b);
+        let g = geometry_smith_anisotropic(ndotv, ndotl, ToV, BoV, ToL, BoL, alpha_t, alpha_b);
+        let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+
+        specular = (ndf * g * f) / max(4.0 * ndotv * ndotl, EPSILON);
+    } else {
+        // Isotropic fallback - use standard distribution_ggx(n, h, roughness).
+        let ndf = distribution_ggx(n, h, roughness);
+        let g = geometry_smith(n, v, l, roughness);
+        let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+
+        specular = (ndf * g * f) / max(4.0 * ndotv * ndotl, EPSILON);
+    }
+
+    let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
+    let kd = (1.0 - f) * (1.0 - albedo_to_metallic_f0(albedo).g);
+
+    var result = (kd * albedo / PI + specular) * radiance * ndotl;
+
+    // Add clear coat contribution.
+    if cc_intensity > EPSILON {
+        let cc_result = eval_clear_coat(n, v, l, cc_intensity, cc_roughness);
+        let cc_brdf = cc_result.x;
+        let cc_fresnel = cc_result.y;
+
+        let energy_attenuation = 1.0 - cc_fresnel;
+        result = result * energy_attenuation + vec3<f32>(cc_brdf) * radiance * ndotl;
+    }
+
+    return result;
+}
+
+// Core BRDF evaluation (shared by all light types, delegates to clear coat version).
+fn eval_brdf(
+    n: vec3<f32>,
+    v: vec3<f32>,
+    l: vec3<f32>,
+    h: vec3<f32>,
+    albedo: vec3<f32>,
+    f0: vec3<f32>,
+    roughness: f32,
+    radiance: vec3<f32>,
+) -> vec3<f32> {
+    return eval_brdf_with_clear_coat(n, v, l, h, albedo, f0, roughness, radiance, 0.0, 0.0);
+}
+
+// Helper: approximate F0 from albedo (used to scale diffuse for energy conservation).
+fn albedo_to_metallic_f0(albedo: vec3<f32>) -> vec3<f32> {
+    return albedo; // simplified — metallic controls F0 directly in the main path
+}
+
 // ── Lighting computation ──
 
 // Computes radiance from a point light with distance attenuation.
@@ -213,9 +477,14 @@ fn eval_point_light(
     n: vec3<f32>,
     v: vec3<f32>,
     world_pos: vec3<f32>,
+    tangent: vec3<f32>,
+    bitangent: vec3<f32>,
     albedo: vec3<f32>,
     f0: vec3<f32>,
     roughness: f32,
+    anisotropy: f32,
+    cc_intensity: f32,
+    cc_roughness: f32,
 ) -> vec3<f32> {
     let to_light = light.position - world_pos;
     let dist = length(to_light);
@@ -230,7 +499,7 @@ fn eval_point_light(
 
     let radiance = light.color * light.intensity * attenuation;
 
-    return eval_brdf(n, v, l, h, albedo, f0, roughness, radiance);
+    return eval_brdf_full(n, v, l, h, tangent, bitangent, albedo, f0, roughness, radiance, anisotropy, cc_intensity, cc_roughness);
 }
 
 // Computes radiance from a directional light.
@@ -239,9 +508,14 @@ fn eval_directional_light(
     n: vec3<f32>,
     v: vec3<f32>,
     world_pos: vec3<f32>,
+    tangent: vec3<f32>,
+    bitangent: vec3<f32>,
     albedo: vec3<f32>,
     f0: vec3<f32>,
     roughness: f32,
+    anisotropy: f32,
+    cc_intensity: f32,
+    cc_roughness: f32,
 ) -> vec3<f32> {
     let l = normalize(-light.direction);
     let h = normalize(v + l);
@@ -251,7 +525,7 @@ fn eval_directional_light(
     // Apply shadow factor for the first directional light (sun).
     let shadow = shadow_factor(world_pos, n, l);
 
-    return eval_brdf(n, v, l, h, albedo, f0, roughness, radiance * shadow);
+    return eval_brdf_full(n, v, l, h, tangent, bitangent, albedo, f0, roughness, radiance * shadow, anisotropy, cc_intensity, cc_roughness);
 }
 
 // Computes radiance from a spot light with cone attenuation.
@@ -260,9 +534,14 @@ fn eval_spot_light(
     n: vec3<f32>,
     v: vec3<f32>,
     world_pos: vec3<f32>,
+    tangent: vec3<f32>,
+    bitangent: vec3<f32>,
     albedo: vec3<f32>,
     f0: vec3<f32>,
     roughness: f32,
+    anisotropy: f32,
+    cc_intensity: f32,
+    cc_roughness: f32,
 ) -> vec3<f32> {
     let to_light = light.position - world_pos;
     let dist = length(to_light);
@@ -282,42 +561,7 @@ fn eval_spot_light(
 
     let radiance = light.color * light.intensity * dist_att * cone_att;
 
-    return eval_brdf(n, v, l, h, albedo, f0, roughness, radiance);
-}
-
-// Core BRDF evaluation (shared by all light types).
-fn eval_brdf(
-    n: vec3<f32>,
-    v: vec3<f32>,
-    l: vec3<f32>,
-    h: vec3<f32>,
-    albedo: vec3<f32>,
-    f0: vec3<f32>,
-    roughness: f32,
-    radiance: vec3<f32>,
-) -> vec3<f32> {
-    let ndotl = max(dot(n, l), 0.0);
-    let ndotv = max(dot(n, v), 0.0);
-    if ndotl <= 0.0 || ndotv <= 0.0 {
-        return vec3<f32>(0.0);
-    }
-
-    // Cook-Torrance specular.
-    let ndf = distribution_ggx(n, h, roughness);
-    let g = geometry_smith(n, v, l, roughness);
-    let f = fresnel_schlick(max(dot(h, v), 0.0), f0);
-
-    let specular = (ndf * g * f) / max(4.0 * ndotv * ndotl, EPSILON);
-
-    // Lambertian diffuse (energy-conserving).
-    let kd = (1.0 - f) * (1.0 - albedo_to_metallic_f0(albedo).g); // approximate metallic factor
-
-    return (kd * albedo / PI + specular) * radiance * ndotl;
-}
-
-// Helper: approximate F0 from albedo (used to scale diffuse for energy conservation).
-fn albedo_to_metallic_f0(albedo: vec3<f32>) -> vec3<f32> {
-    return albedo; // simplified — metallic controls F0 directly in the main path
+    return eval_brdf_full(n, v, l, h, tangent, bitangent, albedo, f0, roughness, radiance, anisotropy, cc_intensity, cc_roughness);
 }
 
 // ── Main ──
@@ -333,8 +577,28 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     let ao = material.occlusion;
     let emissive = material.emissive.rgb * material.emissive.a;
 
+    // Extract clear coat parameters (T-MAT-4.2).
+    let cc_intensity = material.clear_coat;
+    let cc_roughness = max(material.clear_coat_roughness, 0.04);
+
+    // Extract anisotropy parameters (T-MAT-4.3).
+    let anisotropy = material.anisotropy;
+    let anisotropy_rotation = material.anisotropy_rotation;
+
     // Compute world-space normal (with optional normal mapping would go here).
     let n = normalize(input.world_normal);
+
+    // Compute tangent basis for anisotropic shading.
+    var tangent = normalize(input.world_tangent.xyz);
+    var bitangent = normalize(cross(n, tangent)) * input.world_tangent.w;
+
+    // Apply anisotropy rotation.
+    if abs(anisotropy_rotation) > 0.001 {
+        let tangent_rotated = rotate_tangent_by_angle(tangent, bitangent, anisotropy_rotation);
+        let bitangent_rotated = rotate_bitangent_by_angle(tangent, bitangent, anisotropy_rotation);
+        tangent = tangent_rotated;
+        bitangent = bitangent_rotated;
+    }
 
     // Compute view direction.
     let v = normalize(camera.camera_position - input.world_position);
@@ -348,21 +612,21 @@ fn fs_main(input: FragmentInput) -> @location(0) vec4<f32> {
     // Accumulate directional lights.
     for (var i: u32 = 0u; i < light_counts.num_directional; i = i + 1u) {
         lo = lo + eval_directional_light(
-            dir_lights[i], n, v, input.world_position, albedo, f0, roughness
+            dir_lights[i], n, v, input.world_position, tangent, bitangent, albedo, f0, roughness, anisotropy, cc_intensity, cc_roughness
         );
     }
 
     // Accumulate point lights.
     for (var j: u32 = 0u; j < light_counts.num_point; j = j + 1u) {
         lo = lo + eval_point_light(
-            point_lights[j], n, v, input.world_position, albedo, f0, roughness
+            point_lights[j], n, v, input.world_position, tangent, bitangent, albedo, f0, roughness, anisotropy, cc_intensity, cc_roughness
         );
     }
 
     // Accumulate spot lights.
     for (var k: u32 = 0u; k < light_counts.num_spot; k = k + 1u) {
         lo = lo + eval_spot_light(
-            spot_lights[k], n, v, input.world_position, albedo, f0, roughness
+            spot_lights[k], n, v, input.world_position, tangent, bitangent, albedo, f0, roughness, anisotropy, cc_intensity, cc_roughness
         );
     }
 

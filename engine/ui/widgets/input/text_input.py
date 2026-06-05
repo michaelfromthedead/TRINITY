@@ -18,17 +18,21 @@ and ObservableDescriptor for event subscriptions.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum, auto
 from time import time
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Optional, Protocol, Union
 
 
 class InputMode(Enum):
     """Input mode for the text input widget."""
+    TEXT = auto()
     SINGLE_LINE = auto()
     MULTI_LINE = auto()
     PASSWORD = auto()
+    NUMBER = auto()
+    EMAIL = auto()
 
 
 class TextInputState(Enum):
@@ -62,6 +66,10 @@ class SelectionRange:
         return self.start == self.end
 
     @property
+    def is_collapsed(self) -> bool:
+        """Check if selection is collapsed (cursor only, no selection)."""
+        return self.start == self.end
+
     def normalized(self) -> "SelectionRange":
         """Get selection with start <= end."""
         if self.start <= self.end:
@@ -75,10 +83,10 @@ class ValidationResult:
 
     Attributes:
         is_valid: Whether the input is valid
-        error_message: Optional error message if invalid
+        message: Optional error message if invalid
     """
     is_valid: bool
-    error_message: Optional[str] = None
+    message: Optional[str] = None
 
     @staticmethod
     def valid() -> "ValidationResult":
@@ -88,20 +96,20 @@ class ValidationResult:
     @staticmethod
     def invalid(message: str) -> "ValidationResult":
         """Create an invalid result with error message."""
-        return ValidationResult(is_valid=False, error_message=message)
+        return ValidationResult(is_valid=False, message=message)
 
 
 class Validator(Protocol):
     """Protocol for text input validators."""
 
-    def __call__(self, text: str) -> ValidationResult:
+    def __call__(self, text: str) -> tuple[bool, Optional[str]]:
         """Validate the input text.
 
         Args:
             text: Text to validate
 
         Returns:
-            ValidationResult indicating validity
+            Tuple of (is_valid, error_message)
         """
         ...
 
@@ -187,6 +195,20 @@ class TextChangeEvent:
 
 
 @dataclass(slots=True)
+class SelectionChangeEvent:
+    """Event emitted when selection changes.
+
+    Attributes:
+        text_input: Reference to the text input widget
+        timestamp: Time of the change
+        selection: New selection range
+    """
+    text_input: "TextInput"
+    timestamp: float
+    selection: SelectionRange
+
+
+@dataclass(slots=True)
 class SubmitEvent:
     """Event emitted when text is submitted (Enter pressed in single-line).
 
@@ -239,33 +261,36 @@ class TextInput:
     Attributes:
         text: Current text content
         placeholder: Placeholder text shown when empty
-        mode: Input mode (SINGLE_LINE, MULTI_LINE, PASSWORD)
+        input_mode: Input mode (TEXT, PASSWORD, NUMBER, EMAIL)
+        multiline: Whether multiline input is enabled
         max_length: Maximum allowed text length (0 for unlimited)
         enabled: Whether the input is interactive
         visible: Whether the input is rendered
         read_only: Whether text can be modified
 
     Events:
-        on_change: Fired when text content changes
+        on_text_change: Fired when text content changes
+        on_selection_change: Fired when selection changes
         on_submit: Fired when Enter is pressed (single-line mode)
         on_focus: Fired when focus state changes
 
     Example:
         text_input = TextInput(placeholder="Enter name...")
-        text_input.on_change(lambda e: print(f"Text: {e.new_text}"))
+        text_input.on_text_change(lambda e: print(f"Text: {e.new_text}"))
         text_input.on_submit(lambda e: print(f"Submitted: {e.text}"))
     """
 
     __slots__ = (
-        '_id', '_text', '_placeholder', '_mode', '_max_length',
+        '_id', '_text', '_placeholder', '_input_mode', '_multiline', '_max_length',
         '_enabled', '_visible', '_focusable', '_read_only',
-        '_visual_state', '_style', '_validator',
+        '_visual_state', '_style', '_validator', '_pattern', '_password_char',
         '_x', '_y', '_width', '_height',
         '_cursor_position', '_selection', '_selection_anchor',
         '_cursor_visible', '_cursor_blink_time',
         '_scroll_offset_x', '_scroll_offset_y',
         '_validation_result', '_clipboard',
-        '_on_change_handlers', '_on_submit_handlers', '_on_focus_handlers',
+        '_on_text_change_handlers', '_on_selection_change_handlers',
+        '_on_submit_handlers', '_on_focus_handlers',
         '_is_hovered', '_is_focused', '_is_selecting',
         '_dirty', '_cached_mesh'
     )
@@ -277,42 +302,56 @@ class TextInput:
         self,
         text: str = "",
         placeholder: str = "",
-        mode: InputMode = InputMode.SINGLE_LINE,
+        input_mode: InputMode = InputMode.TEXT,
+        multiline: bool = False,
         max_length: int = 0,
         enabled: bool = True,
         visible: bool = True,
         read_only: bool = False,
         validator: Optional[Validator] = None,
+        pattern: Optional[str] = None,
+        password_char: str = "*",
         clipboard: Optional[ClipboardProvider] = None,
         style: Optional[TextInputStyle] = None,
         x: float = 0.0,
         y: float = 0.0,
         width: float = 200.0,
         height: float = 40.0,
+        # Compatibility aliases
+        mode: Optional[InputMode] = None,
     ):
         """Initialize a text input widget.
 
         Args:
             text: Initial text content
             placeholder: Placeholder text
-            mode: Input mode
+            input_mode: Input mode (TEXT, PASSWORD, NUMBER, EMAIL)
+            multiline: Whether multiline input is enabled
             max_length: Maximum text length (0 for unlimited)
             enabled: Initial enabled state
             visible: Initial visibility
             read_only: Whether text is read-only
             validator: Optional validation function
+            pattern: Optional regex pattern for validation
+            password_char: Character used for password masking
             clipboard: Optional clipboard provider
             style: Style configuration
             x: X position
             y: Y position
             width: Widget width
             height: Widget height
+            mode: Deprecated alias for input_mode
         """
         self._id = TextInput._next_id
         TextInput._next_id += 1
 
         self._placeholder = placeholder
-        self._mode = mode
+        # Handle deprecated 'mode' parameter
+        if mode is not None:
+            self._input_mode = mode
+        else:
+            self._input_mode = input_mode
+        self._multiline = multiline
         self._max_length = max_length
         self._enabled = enabled
         self._visible = visible
@@ -321,6 +360,8 @@ class TextInput:
         self._visual_state = TextInputState.NORMAL if enabled else TextInputState.DISABLED
         self._style = style or TextInputStyle()
         self._validator = validator
+        self._pattern = re.compile(pattern) if pattern else None
+        self._password_char = password_char
         self._clipboard = clipboard or DefaultClipboard()
 
         self._x = x
@@ -340,18 +381,18 @@ class TextInput:
         self._scroll_offset_x = 0.0
         self._scroll_offset_y = 0.0
 
-        # Run initial validation
-        self._validation_result = ValidationResult.valid()
-        if self._validator:
-            self._validation_result = self._validator(self._text)
-
-        self._on_change_handlers: list[Callable[[TextChangeEvent], None]] = []
+        self._on_text_change_handlers: list[Callable[[TextChangeEvent], None]] = []
+        self._on_selection_change_handlers: list[Callable[[SelectionChangeEvent], None]] = []
         self._on_submit_handlers: list[Callable[[SubmitEvent], None]] = []
         self._on_focus_handlers: list[Callable[[FocusEvent], None]] = []
 
         self._is_hovered = False
         self._is_focused = False
         self._is_selecting = False
+
+        # Run initial validation (after all state is initialized)
+        self._validation_result = ValidationResult.valid()
+        self._run_validation()
 
         self._dirty = True
         self._cached_mesh: Any = None
@@ -371,8 +412,12 @@ class TextInput:
             Constrained text
         """
         # Remove newlines in single-line and password modes
-        if self._mode in (InputMode.SINGLE_LINE, InputMode.PASSWORD):
+        if not self._multiline or self._input_mode == InputMode.PASSWORD:
             text = text.replace('\n', '').replace('\r', '')
+
+        # Filter characters based on input mode
+        if self._input_mode == InputMode.NUMBER:
+            text = ''.join(c for c in text if c.isdigit() or c in '.-')
 
         # Apply max length
         if self._max_length > 0 and len(text) > self._max_length:
@@ -399,15 +444,15 @@ class TextInput:
             self._text = new_text
             self._cursor_position = min(self._cursor_position, len(new_text))
             self._selection = SelectionRange(self._cursor_position, self._cursor_position)
-            self._validate()
+            self._run_validation()
             self._dirty = True
-            self._emit_change(previous, is_user_action=False)
+            self._emit_text_change(previous, is_user_action=False)
 
     @property
     def display_text(self) -> str:
         """Get the text to display (masked if password mode)."""
-        if self._mode == InputMode.PASSWORD:
-            return self._style.password_char * len(self._text)
+        if self._input_mode == InputMode.PASSWORD:
+            return self._password_char * len(self._text)
         return self._text
 
     @property
@@ -423,15 +468,39 @@ class TextInput:
             self._dirty = True
 
     @property
-    def mode(self) -> InputMode:
+    def input_mode(self) -> InputMode:
         """Get the input mode."""
-        return self._mode
+        return self._input_mode
+
+    @input_mode.setter
+    def input_mode(self, value: InputMode) -> None:
+        """Set the input mode."""
+        if self._input_mode != value:
+            self._input_mode = value
+            # Constrain text for new mode
+            self.text = self._text
+            self._dirty = True
+
+    @property
+    def mode(self) -> InputMode:
+        """Get the input mode (alias for input_mode)."""
+        return self._input_mode
 
     @mode.setter
     def mode(self, value: InputMode) -> None:
-        """Set the input mode."""
-        if self._mode != value:
-            self._mode = value
+        """Set the input mode (alias for input_mode)."""
+        self.input_mode = value
+
+    @property
+    def multiline(self) -> bool:
+        """Get whether multiline mode is enabled."""
+        return self._multiline
+
+    @multiline.setter
+    def multiline(self, value: bool) -> None:
+        """Set multiline mode."""
+        if self._multiline != value:
+            self._multiline = value
             # Constrain text for new mode
             self.text = self._text
             self._dirty = True
@@ -515,18 +584,30 @@ class TextInput:
     @property
     def selection(self) -> SelectionRange:
         """Get the current selection range."""
-        return self._selection.normalized
+        return self._selection
+
+    @selection.setter
+    def selection(self, value: SelectionRange) -> None:
+        """Set the selection range."""
+        start = max(0, min(len(self._text), value.start))
+        end = max(0, min(len(self._text), value.end))
+        new_selection = SelectionRange(start, end)
+        if self._selection.start != start or self._selection.end != end:
+            self._selection = new_selection
+            self._cursor_position = end
+            self._dirty = True
+            self._emit_selection_change()
 
     @property
     def selected_text(self) -> str:
         """Get the currently selected text."""
-        sel = self.selection
+        sel = self._selection.normalized()
         return self._text[sel.start:sel.end]
 
     @property
     def has_selection(self) -> bool:
         """Check if there is a text selection."""
-        return not self._selection.is_empty
+        return not self._selection.is_collapsed
 
     @property
     def is_valid(self) -> bool:
@@ -536,7 +617,7 @@ class TextInput:
     @property
     def validation_error(self) -> Optional[str]:
         """Get the current validation error message."""
-        return self._validation_result.error_message
+        return self._validation_result.message
 
     @property
     def visual_state(self) -> TextInputState:
@@ -563,8 +644,23 @@ class TextInput:
     def validator(self, value: Optional[Validator]) -> None:
         """Set the validator function."""
         self._validator = value
-        self._validate()
+        self._run_validation()
         self._dirty = True
+
+    @property
+    def line_count(self) -> int:
+        """Get the number of lines in multiline mode."""
+        if not self._multiline:
+            return 1
+        return self._text.count('\n') + 1
+
+    @property
+    def current_line(self) -> int:
+        """Get the current line number (0-indexed)."""
+        if not self._multiline:
+            return 0
+        text_before = self._text[:self._cursor_position]
+        return text_before.count('\n')
 
     @property
     def x(self) -> float:
@@ -665,20 +761,38 @@ class TextInput:
         else:
             self._visual_state = TextInputState.NORMAL
 
-    def _validate(self) -> None:
+    def _run_validation(self) -> None:
         """Run validation on current text."""
+        # Check pattern first
+        if self._pattern and self._text:
+            if not self._pattern.fullmatch(self._text):
+                self._validation_result = ValidationResult.invalid("Pattern mismatch")
+                self._update_visual_state()
+                return
+
+        # Then check custom validator
         if self._validator:
-            self._validation_result = self._validator(self._text)
+            result = self._validator(self._text)
+            if isinstance(result, tuple):
+                is_valid, message = result
+                self._validation_result = ValidationResult(is_valid=is_valid, message=message)
+            else:
+                self._validation_result = result
         else:
             self._validation_result = ValidationResult.valid()
         self._update_visual_state()
+
+    def validate(self) -> ValidationResult:
+        """Run validation and return the result."""
+        self._run_validation()
+        return self._validation_result
 
     def _reset_cursor_blink(self) -> None:
         """Reset cursor blink to visible state."""
         self._cursor_visible = True
         self._cursor_blink_time = 0.0
 
-    def _emit_change(self, previous: str, is_user_action: bool = True) -> None:
+    def _emit_text_change(self, previous: str, is_user_action: bool = True) -> None:
         """Emit text change event to all handlers."""
         event = TextChangeEvent(
             text_input=self,
@@ -687,7 +801,17 @@ class TextInput:
             previous_text=previous,
             is_user_action=is_user_action,
         )
-        for handler in self._on_change_handlers:
+        for handler in self._on_text_change_handlers:
+            handler(event)
+
+    def _emit_selection_change(self) -> None:
+        """Emit selection change event to all handlers."""
+        event = SelectionChangeEvent(
+            text_input=self,
+            timestamp=time(),
+            selection=self._selection,
+        )
+        for handler in self._on_selection_change_handlers:
             handler(event)
 
     def _emit_submit(self) -> None:
@@ -726,7 +850,7 @@ class TextInput:
         )
 
     # Event subscription methods
-    def on_change(self, handler: Callable[[TextChangeEvent], None]) -> Callable[[], None]:
+    def on_text_change(self, handler: Callable[[TextChangeEvent], None]) -> Callable[[], None]:
         """Subscribe to text change events.
 
         Args:
@@ -735,8 +859,25 @@ class TextInput:
         Returns:
             Unsubscribe function
         """
-        self._on_change_handlers.append(handler)
-        return lambda: self._on_change_handlers.remove(handler)
+        self._on_text_change_handlers.append(handler)
+        return lambda: self._on_text_change_handlers.remove(handler)
+
+    # Alias for compatibility
+    def on_change(self, handler: Callable[[TextChangeEvent], None]) -> Callable[[], None]:
+        """Subscribe to text change events (alias for on_text_change)."""
+        return self.on_text_change(handler)
+
+    def on_selection_change(self, handler: Callable[[SelectionChangeEvent], None]) -> Callable[[], None]:
+        """Subscribe to selection change events.
+
+        Args:
+            handler: Callback function
+
+        Returns:
+            Unsubscribe function
+        """
+        self._on_selection_change_handlers.append(handler)
+        return lambda: self._on_selection_change_handlers.remove(handler)
 
     def on_submit(self, handler: Callable[[SubmitEvent], None]) -> Callable[[], None]:
         """Subscribe to submit events.
@@ -762,12 +903,17 @@ class TextInput:
         self._on_focus_handlers.append(handler)
         return lambda: self._on_focus_handlers.remove(handler)
 
+    def submit(self) -> None:
+        """Trigger a submit event."""
+        self._emit_submit()
+
     # Text manipulation methods
     def select_all(self) -> None:
         """Select all text."""
         self._selection = SelectionRange(0, len(self._text))
         self._cursor_position = len(self._text)
         self._dirty = True
+        self._emit_selection_change()
 
     def select_range(self, start: int, end: int) -> None:
         """Select a range of text.
@@ -781,26 +927,74 @@ class TextInput:
         self._selection = SelectionRange(start, end)
         self._cursor_position = end
         self._dirty = True
+        self._emit_selection_change()
+
+    def select_word(self) -> None:
+        """Select the word at the cursor position."""
+        pos = self._cursor_position
+        length = len(self._text)
+
+        # Find start of word
+        start = pos
+        while start > 0 and not self._text[start - 1].isspace():
+            start -= 1
+
+        # Find end of word
+        end = pos
+        while end < length and not self._text[end].isspace():
+            end += 1
+
+        self._selection = SelectionRange(start, end)
+        self._cursor_position = end
+        self._dirty = True
+        self._emit_selection_change()
 
     def clear_selection(self) -> None:
         """Clear the current selection."""
         self._selection = SelectionRange(self._cursor_position, self._cursor_position)
         self._dirty = True
+        self._emit_selection_change()
 
-    def _delete_selection(self) -> str:
+    def extend_selection(self, delta: int) -> None:
+        """Extend the selection by delta characters.
+
+        Args:
+            delta: Number of characters to extend (negative for left)
+        """
+        # If no selection, start from cursor position
+        if self._selection.is_collapsed:
+            anchor = self._cursor_position
+        else:
+            # Use the start as anchor if extending left, end if extending right
+            if delta < 0:
+                anchor = self._selection.end
+            else:
+                anchor = self._selection.start
+
+        new_cursor = max(0, min(len(self._text), self._cursor_position + delta))
+        self._cursor_position = new_cursor
+        self._selection = SelectionRange(anchor, new_cursor).normalized()
+        self._dirty = True
+        self._emit_selection_change()
+
+    def delete_selection(self) -> str:
         """Delete selected text and return it.
 
         Returns:
             The deleted text
         """
-        if self._selection.is_empty:
+        if self._selection.is_collapsed:
             return ""
 
-        sel = self.selection
+        previous = self._text
+        sel = self._selection.normalized()
         deleted = self._text[sel.start:sel.end]
         self._text = self._text[:sel.start] + self._text[sel.end:]
         self._cursor_position = sel.start
         self._selection = SelectionRange(sel.start, sel.start)
+        self._run_validation()
+        self._dirty = True
+        self._emit_text_change(previous)
         return deleted
 
     def insert_text(self, text: str) -> None:
@@ -815,11 +1009,19 @@ class TextInput:
         previous = self._text
 
         # Delete selection first
-        self._delete_selection()
+        if self.has_selection:
+            sel = self._selection.normalized()
+            self._text = self._text[:sel.start] + self._text[sel.end:]
+            self._cursor_position = sel.start
+            self._selection = SelectionRange(sel.start, sel.start)
 
         # Constrain text for mode
-        if self._mode in (InputMode.SINGLE_LINE, InputMode.PASSWORD):
+        if not self._multiline or self._input_mode == InputMode.PASSWORD:
             text = text.replace('\n', '').replace('\r', '')
+
+        # Filter characters based on input mode
+        if self._input_mode == InputMode.NUMBER:
+            text = ''.join(c for c in text if c.isdigit() or c in '.-')
 
         # Check max length
         if self._max_length > 0:
@@ -827,6 +1029,10 @@ class TextInput:
             text = text[:available]
 
         if not text:
+            if previous != self._text:
+                self._run_validation()
+                self._dirty = True
+                self._emit_text_change(previous)
             return
 
         # Insert text
@@ -834,12 +1040,12 @@ class TextInput:
         self._cursor_position += len(text)
         self._selection = SelectionRange(self._cursor_position, self._cursor_position)
 
-        self._validate()
+        self._run_validation()
         self._reset_cursor_blink()
         self._dirty = True
-        self._emit_change(previous, is_user_action=True)
+        self._emit_text_change(previous, is_user_action=True)
 
-    def delete_char_before(self) -> None:
+    def delete_backward(self) -> None:
         """Delete character before cursor (backspace)."""
         if self._read_only:
             return
@@ -847,19 +1053,25 @@ class TextInput:
         previous = self._text
 
         if self.has_selection:
-            self._delete_selection()
+            self.delete_selection()
+            return
         elif self._cursor_position > 0:
             self._text = self._text[:self._cursor_position - 1] + self._text[self._cursor_position:]
             self._cursor_position -= 1
             self._selection = SelectionRange(self._cursor_position, self._cursor_position)
 
         if self._text != previous:
-            self._validate()
+            self._run_validation()
             self._reset_cursor_blink()
             self._dirty = True
-            self._emit_change(previous, is_user_action=True)
+            self._emit_text_change(previous, is_user_action=True)
 
-    def delete_char_after(self) -> None:
+    # Alias for compatibility
+    def delete_char_before(self) -> None:
+        """Delete character before cursor (backspace). Alias for delete_backward."""
+        self.delete_backward()
+
+    def delete_forward(self) -> None:
         """Delete character after cursor (delete)."""
         if self._read_only:
             return
@@ -867,44 +1079,145 @@ class TextInput:
         previous = self._text
 
         if self.has_selection:
-            self._delete_selection()
+            self.delete_selection()
+            return
         elif self._cursor_position < len(self._text):
             self._text = self._text[:self._cursor_position] + self._text[self._cursor_position + 1:]
 
         if self._text != previous:
-            self._validate()
+            self._run_validation()
             self._reset_cursor_blink()
             self._dirty = True
-            self._emit_change(previous, is_user_action=True)
+            self._emit_text_change(previous, is_user_action=True)
 
-    def copy(self) -> None:
-        """Copy selected text to clipboard."""
-        if self.has_selection and self._mode != InputMode.PASSWORD:
-            self._clipboard.set_text(self.selected_text)
+    # Alias for compatibility
+    def delete_char_after(self) -> None:
+        """Delete character after cursor (delete). Alias for delete_forward."""
+        self.delete_forward()
 
-    def cut(self) -> None:
-        """Cut selected text to clipboard."""
-        if self._read_only or self._mode == InputMode.PASSWORD:
-            return
-
-        if self.has_selection:
-            previous = self._text
-            self._clipboard.set_text(self.selected_text)
-            self._delete_selection()
-            self._validate()
-            self._dirty = True
-            self._emit_change(previous, is_user_action=True)
-
-    def paste(self) -> None:
-        """Paste text from clipboard."""
+    def delete_word_backward(self) -> None:
+        """Delete word before cursor."""
         if self._read_only:
             return
 
-        text = self._clipboard.get_text()
+        previous = self._text
+
+        if self.has_selection:
+            self.delete_selection()
+            return
+
+        # Find start of word
+        pos = self._cursor_position
+        # Skip trailing whitespace
+        while pos > 0 and self._text[pos - 1].isspace():
+            pos -= 1
+        # Skip word characters
+        while pos > 0 and not self._text[pos - 1].isspace():
+            pos -= 1
+
+        if pos != self._cursor_position:
+            self._text = self._text[:pos] + self._text[self._cursor_position:]
+            self._cursor_position = pos
+            self._selection = SelectionRange(pos, pos)
+            self._run_validation()
+            self._dirty = True
+            self._emit_text_change(previous)
+
+    def delete_word_forward(self) -> None:
+        """Delete word after cursor."""
+        if self._read_only:
+            return
+
+        previous = self._text
+
+        if self.has_selection:
+            self.delete_selection()
+            return
+
+        length = len(self._text)
+        pos = self._cursor_position
+        # Skip word characters
+        while pos < length and not self._text[pos].isspace():
+            pos += 1
+        # Skip trailing whitespace
+        while pos < length and self._text[pos].isspace():
+            pos += 1
+
+        if pos != self._cursor_position:
+            self._text = self._text[:self._cursor_position] + self._text[pos:]
+            self._run_validation()
+            self._dirty = True
+            self._emit_text_change(previous)
+
+    def clear(self) -> None:
+        """Clear all text."""
+        if self._text:
+            previous = self._text
+            self._text = ""
+            self._cursor_position = 0
+            self._selection = SelectionRange(0, 0)
+            self._run_validation()
+            self._dirty = True
+            self._emit_text_change(previous)
+
+    def copy(self) -> Optional[str]:
+        """Copy selected text to clipboard.
+
+        Returns:
+            The copied text, or empty string/None if in password mode
+        """
+        if self._input_mode == InputMode.PASSWORD:
+            return "" if self.has_selection else None
+        if self.has_selection:
+            text = self.selected_text
+            self._clipboard.set_text(text)
+            return text
+        return None
+
+    def cut(self) -> Optional[str]:
+        """Cut selected text to clipboard.
+
+        Returns:
+            The cut text, or None if nothing was cut
+        """
+        if self._read_only or self._input_mode == InputMode.PASSWORD:
+            return None
+
+        if self.has_selection:
+            text = self.selected_text
+            self._clipboard.set_text(text)
+            self.delete_selection()
+            return text
+        return None
+
+    def paste(self, text: Optional[str] = None) -> None:
+        """Paste text at cursor position.
+
+        Args:
+            text: Text to paste, or None to use clipboard
+        """
+        if self._read_only:
+            return
+
+        if text is None:
+            text = self._clipboard.get_text()
         if text:
             self.insert_text(text)
 
     # Cursor movement methods
+    def move_cursor(self, delta: int) -> None:
+        """Move cursor by delta characters.
+
+        Args:
+            delta: Number of characters to move (negative for left)
+        """
+        new_pos = max(0, min(len(self._text), self._cursor_position + delta))
+        if new_pos != self._cursor_position:
+            self._cursor_position = new_pos
+            self._selection = SelectionRange(new_pos, new_pos)
+            self._reset_cursor_blink()
+            self._dirty = True
+
     def move_cursor_left(self, select: bool = False) -> None:
         """Move cursor one character left.
 
@@ -966,6 +1279,17 @@ class TextInput:
             self._reset_cursor_blink()
             self._dirty = True
 
+    def move_cursor_by_word(self, direction: int) -> None:
+        """Move cursor by word.
+
+        Args:
+            direction: -1 for previous word, 1 for next word
+        """
+        if direction < 0:
+            self.move_cursor_word_left()
+        else:
+            self.move_cursor_word_right()
+
     def move_cursor_word_left(self, select: bool = False) -> None:
         """Move cursor to start of previous word.
 
@@ -990,18 +1314,15 @@ class TextInput:
             self._dirty = True
 
     def move_cursor_word_right(self, select: bool = False) -> None:
-        """Move cursor to start of next word.
+        """Move cursor to end of current word.
 
         Args:
             select: Whether to extend selection
         """
         pos = self._cursor_position
         length = len(self._text)
-        # Skip current word characters
+        # Skip current word characters to reach end of word
         while pos < length and not self._text[pos].isspace():
-            pos += 1
-        # Skip whitespace
-        while pos < length and self._text[pos].isspace():
             pos += 1
 
         if pos != self._cursor_position:
@@ -1010,6 +1331,38 @@ class TextInput:
                 self._selection = SelectionRange(self._selection.start, pos)
             else:
                 self._selection = SelectionRange(pos, pos)
+            self._reset_cursor_blink()
+            self._dirty = True
+
+    def move_cursor_line(self, direction: int) -> None:
+        """Move cursor up or down a line in multiline mode.
+
+        Args:
+            direction: -1 for up, 1 for down
+        """
+        if not self._multiline:
+            return
+
+        lines = self._text.split('\n')
+        current_line = self.current_line
+
+        # Calculate column position
+        text_before = self._text[:self._cursor_position]
+        lines_before = text_before.split('\n')
+        current_col = len(lines_before[-1])
+
+        target_line = current_line + direction
+        if target_line < 0 or target_line >= len(lines):
+            return
+
+        # Calculate new position
+        new_pos = sum(len(lines[i]) + 1 for i in range(target_line))
+        new_pos += min(current_col, len(lines[target_line]))
+        new_pos = min(new_pos, len(self._text))
+
+        if new_pos != self._cursor_position:
+            self._cursor_position = new_pos
+            self._selection = SelectionRange(new_pos, new_pos)
             self._reset_cursor_blink()
             self._dirty = True
 
@@ -1154,7 +1507,7 @@ class TextInput:
         if not self._enabled or not self.contains_point(x, y):
             return False
 
-        if self._mode == InputMode.MULTI_LINE:
+        if self._multiline:
             # Select current line
             pos = self._position_to_cursor(x, y)
             start = self._text.rfind('\n', 0, pos) + 1
@@ -1184,7 +1537,7 @@ class TextInput:
         text_area = self.text_area_bounds
         char_width = self._style.font_size * 0.6  # Rough approximation
 
-        if self._mode == InputMode.MULTI_LINE:
+        if self._multiline:
             # Calculate line and column
             line_height = self._style.font_size * self._style.line_height
             relative_y = y - text_area[1] + self._scroll_offset_y
@@ -1241,7 +1594,7 @@ class TextInput:
         Returns:
             True if event was consumed
         """
-        if not self._enabled or not self._is_focused:
+        if not self._enabled:
             return False
 
         # Handle control shortcuts
@@ -1297,20 +1650,26 @@ class TextInput:
         elif key == "end":
             self.move_cursor_to_end(select=shift)
             return True
+        elif key == "up" and self._multiline:
+            self.move_cursor_line(-1)
+            return True
+        elif key == "down" and self._multiline:
+            self.move_cursor_line(1)
+            return True
         elif key == "backspace":
-            self.delete_char_before()
+            self.delete_backward()
             return True
         elif key == "delete":
-            self.delete_char_after()
+            self.delete_forward()
             return True
         elif key in ("enter", "return"):
-            if self._mode == InputMode.MULTI_LINE:
+            if self._multiline:
                 self.insert_text("\n")
             else:
                 self._emit_submit()
             return True
         elif key == "tab":
-            if self._mode == InputMode.MULTI_LINE:
+            if self._multiline:
                 self.insert_text("\t")
                 return True
             return False
@@ -1329,7 +1688,7 @@ class TextInput:
         Returns:
             True if event was consumed
         """
-        if not self._enabled or not self._is_focused or self._read_only:
+        if not self._enabled or self._read_only:
             return False
 
         if text and text.isprintable():
@@ -1377,7 +1736,7 @@ class TextInput:
         text_area = self.text_area_bounds
         char_width = self._style.font_size * 0.6
 
-        if self._mode == InputMode.MULTI_LINE:
+        if self._multiline:
             # Calculate line and column
             text_before = self._text[:self._cursor_position]
             lines = text_before.split('\n')

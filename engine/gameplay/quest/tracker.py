@@ -251,9 +251,14 @@ class QuestTracker:
         else:
             quest.state = QuestState.UNAVAILABLE
 
+        # Set quest_id on objectives for event firing
+        obj_list = objectives or []
+        for obj in obj_list:
+            obj.quest_id = quest_def.id
+
         tracked = TrackedQuest(
             quest=quest,
-            objectives=objectives or [],
+            objectives=obj_list,
         )
 
         self._tracked[quest_def.id] = tracked
@@ -358,6 +363,8 @@ class QuestTracker:
         Returns:
             List of rewards claimed
         """
+        from .quest import QuestRewardGranted, fire_quest_event
+
         tracked = self._tracked.get(quest_id)
         if tracked is None:
             return []
@@ -368,6 +375,18 @@ class QuestTracker:
         self._completed_quests.add(quest_id)
 
         rewards = tracked.quest.definition.rewards
+
+        # Fire QuestRewardGranted events for each reward
+        for reward in rewards:
+            reward_type = getattr(reward, "reward_type", "unknown")
+            amount = getattr(reward, "amount", 0)
+            fire_quest_event(QuestRewardGranted(
+                quest_id=quest_id,
+                entity_id=self.player_id,
+                reward_type=reward_type,
+                amount=amount,
+                timestamp=self._current_time,
+            ))
 
         self._emit_event(QuestEvent(
             event_type=QuestEventType.QUEST_TURNED_IN,

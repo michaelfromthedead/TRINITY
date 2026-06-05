@@ -133,6 +133,7 @@ class Tween(Generic[T]):
         self._current_repeat: int = 0
         self._is_reversed: bool = False
         self._current_value: T = from_value
+        self._start_callback_fired: bool = False
 
         # Callbacks
         self._on_start: Optional[TweenCallback] = None
@@ -268,6 +269,7 @@ class Tween(Generic[T]):
         self._delay_elapsed = 0.0
         self._current_repeat = 0
         self._is_reversed = False
+        self._start_callback_fired = False
         self._state = TweenState.PLAYING
         self._current_value = self._from_value
         self._apply_value(self._current_value)
@@ -297,6 +299,7 @@ class Tween(Generic[T]):
         self._delay_elapsed = 0.0
         self._current_repeat = 0
         self._is_reversed = False
+        self._start_callback_fired = False
         if clear_callbacks:
             self._on_start = None
             self._on_update = None
@@ -349,11 +352,17 @@ class Tween(Generic[T]):
             self._delay_elapsed += delta_time
             if self._delay_elapsed >= self._delay:
                 # Delay just completed, fire start callback
-                if self._on_start:
+                if self._on_start and not self._start_callback_fired:
+                    self._start_callback_fired = True
                     self._on_start()
                 delta_time = self._delay_elapsed - self._delay
             else:
                 return True
+        elif not self._start_callback_fired:
+            # No delay, fire start callback on first update
+            self._start_callback_fired = True
+            if self._on_start:
+                self._on_start()
 
         # Update elapsed time
         self._elapsed_time += delta_time
@@ -396,14 +405,14 @@ class Tween(Generic[T]):
         # Handle numeric types
         if isinstance(from_val, (int, float)) and isinstance(to_val, (int, float)):
             result = lerp(float(from_val), float(to_val), t)
-            if isinstance(from_val, int) and isinstance(to_val, int):
-                return round(result)  # type: ignore
+            # Don't round - return float for precise interpolation
             return result  # type: ignore
 
         # Handle tuple/list (for colors, vectors, etc.)
         if isinstance(from_val, (tuple, list)) and isinstance(to_val, (tuple, list)):
+            # Interpolate elements as floats for precision
             interpolated = [
-                self._interpolate(f, t_val, t)
+                lerp(float(f), float(t_val), t)
                 for f, t_val in zip(from_val, to_val)
             ]
             return type(from_val)(interpolated)  # type: ignore

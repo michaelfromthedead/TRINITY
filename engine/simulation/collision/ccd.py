@@ -113,11 +113,6 @@ def linear_sweep_sphere(
             return CCDResult(hit=True, toi=0.0, normal=result.normal, point=result.points[0] if result.points else Vec3())
         return CCDResult()
 
-    # Compute sweep distance
-    start_pos = sphere.center
-    displacement = motion.velocity * dt
-    travel = displacement.length()
-
     # First check if already colliding at start
     result = collide_shapes(sphere, other_shape)
     if result.colliding:
@@ -128,41 +123,50 @@ def linear_sweep_sphere(
             point=result.points[0] if result.points else sphere.center,
         )
 
-    # Sample along the trajectory to find approximate collision region
-    # Use bisection to find first collision
-    t_min = 0.0
-    t_max = 1.0
+    # Adaptive sampling to find collision region
+    # Use enough samples based on travel distance relative to sphere radius
+    travel_distance = speed * dt
+    # At minimum, sample every sphere radius distance to avoid tunneling
+    min_samples = max(20, int(travel_distance / sphere.radius) + 1)
+    num_samples = min(min_samples, 100)  # Cap at 100 samples
 
-    # First, find if there's any collision along the path
-    # Sample at intervals to find a collision
-    num_samples = 10
+    # Sample along trajectory to find first collision
     found_collision_at = -1.0
+    collision_result = None
     for i in range(1, num_samples + 1):
         t = i / num_samples
-        test_center = sphere.center + motion.velocity * (t * dt)
+        offset = motion.velocity * (t * dt)
         test_sphere = Sphere(
-            center=test_center,
+            center=sphere.center + offset,
             radius=sphere.radius,
         )
         sample_result = collide_shapes(test_sphere, other_shape)
         if sample_result.colliding:
             found_collision_at = t
-            t_max = t
+            collision_result = sample_result
             break
 
     if found_collision_at < 0:
         # No collision found along entire path
         return CCDResult()
 
-    # Binary search for exact TOI between t_min and t_max
-    best_result = CCDResult()
+    # Binary search for exact TOI between last non-colliding sample and first colliding sample
+    t_min = (found_collision_at * num_samples - 1) / num_samples if found_collision_at > 1.0 / num_samples else 0.0
+    t_max = found_collision_at
+    best_result = CCDResult(
+        hit=True,
+        toi=found_collision_at,
+        normal=collision_result.normal,
+        point=collision_result.points[0] if collision_result.points else sphere.center + motion.velocity * (found_collision_at * dt),
+        distance_at_toi=0.0,
+    )
 
     for _ in range(max_iterations):
         t_mid = (t_min + t_max) * 0.5
+        offset = motion.velocity * (t_mid * dt)
 
-        # Test sphere at t_mid
         test_sphere = Sphere(
-            center=sphere.center + motion.velocity * (t_mid * dt),
+            center=sphere.center + offset,
             radius=sphere.radius,
         )
 

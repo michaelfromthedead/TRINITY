@@ -367,12 +367,13 @@ class AbilitySystem:
         if ability is None:
             return False
 
-        if not self.can_activate(ability_id, attributes, tags):
-            return False
-
-        # Cancel abilities with cancel tags
+        # Cancel abilities with cancel tags BEFORE checking can_activate
+        # This allows interrupt abilities to work even during GCD
         for tag in ability.spec.cancel_abilities_with_tags:
             self._cancel_abilities_with_tag(attributes, tags, tag)
+
+        if not self.can_activate(ability_id, attributes, tags):
+            return False
 
         # Activate
         if ability.activate(attributes, tags):

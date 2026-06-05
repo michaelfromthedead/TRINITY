@@ -294,9 +294,12 @@ class FOVEffect:
         self.zoom_speed = 5.0
         self._active_effects: List[dict] = []
 
-    def punch(self, amount: float):
+    def punch(self, amount: float, duration: float = 0.0):
         """Apply a punch effect to FOV."""
         self._punch_velocity += amount
+        if duration > 0:
+            # Also add as a timed effect
+            self.add_effect(amount, duration)
 
     def set_target_fov(self, fov: float):
         """Set target FOV for smooth transition."""
@@ -365,6 +368,7 @@ class TiltEffect:
     """Camera tilt/dutch angle effect."""
 
     def __init__(self):
+        self.enabled = False
         self.current_tilt = 0.0
         self.target_tilt = 0.0
         self.max_tilt = 45.0
@@ -373,6 +377,14 @@ class TiltEffect:
         self._oscillation_amplitude = 5.0
         self._oscillation_frequency = 1.0
         self._time = 0.0
+
+    def enable(self):
+        """Enable the tilt effect."""
+        self.enabled = True
+
+    def disable(self):
+        """Disable the tilt effect."""
+        self.enabled = False
 
     def set_tilt(self, angle: float, instant: bool = False):
         """Set target tilt angle."""
@@ -560,6 +572,12 @@ class MotionBlurEffect:
             return self._camera_velocity * scale * self.strength
 
         return self._camera_velocity * self.strength
+
+    def get_blur_amount(self, velocity: Vector3) -> float:
+        """Get blur amount based on velocity vector."""
+        if not self.enabled:
+            return 0.0
+        return velocity.magnitude() * self.strength * self.velocity_scale
 
 
 # =============================================================================

@@ -123,6 +123,17 @@ def get_config() -> AnimationGraphConfig:
     return DEFAULT_CONFIG
 
 
+def reset_config() -> None:
+    """Reset the global configuration to defaults.
+
+    This replaces the global DEFAULT_CONFIG with a fresh instance
+    containing all default values. Useful for testing or resetting
+    to known state.
+    """
+    global DEFAULT_CONFIG
+    DEFAULT_CONFIG = AnimationGraphConfig()
+
+
 __all__ = [
     "TransitionConfig",
     "BlendTreeConfig",
@@ -134,4 +145,5 @@ __all__ = [
     "AnimationGraphConfig",
     "DEFAULT_CONFIG",
     "get_config",
+    "reset_config",
 ]

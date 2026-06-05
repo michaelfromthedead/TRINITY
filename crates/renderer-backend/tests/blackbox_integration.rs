@@ -104,8 +104,8 @@ fn all_passes_survive_compilation() {
     let compiled = CompiledFrameGraph::compile(passes, resources)
         .expect("Cleanroom graph compiles");
 
-    // Dead pass elimination removes P2; 2 passes survive.
-    assert_eq!(compiled.passes.len(), 2, "2 surviving passes (P2 eliminated)");
+    // All passes retained in list, dead pass eliminated from order.
+    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in list");
     assert_eq!(compiled.order.len(), 2, "2 passes in execution order (P2 eliminated)");
 }
 
@@ -227,7 +227,7 @@ fn barrier_entries_have_valid_references() {
     let valid_indices: std::collections::HashSet<PassIndex> =
         (0..3).map(PassIndex).collect();
 
-    for &(from, to, before, after) in &compiled.barriers {
+    for &(from, to, _resource, _edge_type, before, after) in &compiled.barriers {
         assert!(valid_indices.contains(&from),
             "Barrier 'from' {:?} is valid", from);
         assert!(valid_indices.contains(&to),
@@ -509,11 +509,11 @@ fn frame_graph_compiler_is_consistent_with_direct_compile() {
     use renderer_backend::frame_graph::FrameGraphCompiler;
 
     let (passes, resources) = build_cleanroom_graph();
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("FrameGraphCompiler succeeds");
 
-    // Dead pass elimination removes P2; 2 passes survive.
-    assert_eq!(compiled.passes.len(), 2, "2 surviving passes (P2 eliminated)");
+    // All passes retained in list, dead pass eliminated from order.
+    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in list");
     // Verify execution order (P2 eliminated).
     assert_eq!(compiled.order.len(), 2, "2 surviving passes in order");
     // Verify barriers exist.

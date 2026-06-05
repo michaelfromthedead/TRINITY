@@ -37,7 +37,9 @@ class TestTypeMap:
         assert ComponentMeta.TYPE_MAP[bool] == ("u8", 1)
 
     def test_str_mapped_to_string(self):
-        assert ComponentMeta.TYPE_MAP[str] == ("String", 8)
+        # NOTE: str maps to "Str8" (8-byte fixed buffer), not "String" (24-byte Rust String)
+        # See component_meta.py docstring for rationale
+        assert ComponentMeta.TYPE_MAP[str] == ("Str8", 8)
 
     def test_ctypes_c_float_mapped_to_f32(self):
         import ctypes
@@ -194,8 +196,13 @@ class TestBuildRustLayout:
             score: int = 0
             name: str = ""
         fields, total_size = ComponentMeta._build_rust_layout(Mixed)
-        assert fields == [("active", "u8", 0), ("score", "i32", 1), ("name", "String", 5)]
-        assert total_size == 13
+        # Layout with C-style alignment:
+        # - active: u8 at offset 0, size 1
+        # - score: i32 at offset 4 (aligned to 4), size 4
+        # - name: Str8 at offset 8 (aligned to 8), size 8
+        # Total: 16 bytes (padded to 8-byte alignment)
+        assert fields == [("active", "u8", 0), ("score", "i32", 4), ("name", "Str8", 8)]
+        assert total_size == 16
 
     def test_no_fields(self):
         class Empty(metaclass=ComponentMeta): pass
@@ -215,7 +222,8 @@ class TestBuildRustLayout:
         class AnnotatedComp(metaclass=ComponentMeta): player: str
         fields, total_size = ComponentMeta._build_rust_layout(AnnotatedComp)
         assert len(fields) == 1
-        assert fields[0][0] == "player" and fields[0][1] == "String"
+        # NOTE: str maps to "Str8" (8-byte fixed buffer)
+        assert fields[0][0] == "player" and fields[0][1] == "Str8"
         assert total_size == 8
 
     def test_private_fields_skipped(self):
@@ -338,7 +346,9 @@ class TestEdgeCases:
             pos_x: float = 0.0; pos_y: float = 0.0; active: bool = True
         fields, total_size = ComponentMeta._build_rust_layout(SmokeComp)
         assert len(fields) == 3
-        assert total_size == 9
+        # Layout: pos_x=f32@0, pos_y=f32@4, active=u8@8
+        # Total 9 bytes, padded to 4-byte alignment = 12
+        assert total_size == 12
 
     def test_layout_for_single_field_component(self):
         import uuid

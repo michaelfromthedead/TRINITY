@@ -60,23 +60,44 @@ class LFOWaveform(Enum):
     SQUARE = auto()
     SAW_UP = auto()
     SAW_DOWN = auto()
+    SAW = SAW_UP  # Alias for SAW_UP
     RANDOM = auto()
 
 
 class LFO:
     """
     Low Frequency Oscillator for modulation effects.
+
+    Note: The default sample rate is 1000 Hz for standalone LFO use (e.g., testing,
+    non-audio modulation). Audio effects (Chorus, Flanger, etc.) explicitly pass
+    the audio sample rate (e.g., 48000 Hz) when creating their internal LFOs.
     """
+
+    # Default sample rate for standalone LFO (not audio sample rate)
+    # Audio effects pass their own sample rate explicitly
+    LFO_DEFAULT_SAMPLE_RATE = 1000
 
     def __init__(
         self,
         frequency: float = 1.0,
         waveform: LFOWaveform = LFOWaveform.SINE,
-        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        sample_rate: Optional[int] = None,
+        depth: float = 1.0,
+        *,
+        rate_hz: Optional[float] = None,  # Alias for frequency
     ):
+        # Support rate_hz as alias for frequency
+        if rate_hz is not None:
+            frequency = rate_hz
+
+        # Use class default if sample_rate not specified
+        if sample_rate is None:
+            sample_rate = self.LFO_DEFAULT_SAMPLE_RATE
+
         self._frequency = frequency
         self._waveform = waveform
         self._sample_rate = sample_rate
+        self._depth = depth
         self._phase = 0.0
         self._phase_increment = frequency / sample_rate
 
@@ -152,8 +173,26 @@ class LFO:
         """Get a block of LFO values."""
         values = np.empty(num_samples, dtype=np.float32)
         for i in range(num_samples):
-            values[i] = self.tick()
+            values[i] = self.tick() * self._depth
         return values
+
+    def process_block(self, num_samples: int) -> np.ndarray:
+        """Process a block and return LFO values (alias for get_block)."""
+        return self.get_block(num_samples)
+
+    def set_rate(self, rate_hz: float) -> None:
+        """Set the LFO rate in Hz."""
+        self.frequency = rate_hz
+
+    @property
+    def depth(self) -> float:
+        """Get the depth (output scale factor)."""
+        return self._depth
+
+    @depth.setter
+    def depth(self, value: float) -> None:
+        """Set the depth (output scale factor)."""
+        self._depth = max(0.0, min(1.0, value))
 
     def reset(self) -> None:
         """Reset LFO phase."""
@@ -167,13 +206,33 @@ class DelayLine:
 
     def __init__(
         self,
-        max_delay_samples: int,
+        max_delay_samples: int = 0,
         num_channels: int = 1,
         interpolation: int = DEFAULT_INTERPOLATION,
+        *,
+        max_delay_ms: Optional[float] = None,
+        delay_ms: Optional[float] = None,
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
     ):
+        self._sample_rate = sample_rate
+
+        # Support max_delay_ms parameter
+        if max_delay_ms is not None:
+            max_delay_samples = ms_to_samples(max_delay_ms, sample_rate)
+
+        # Ensure minimum buffer size
+        if max_delay_samples < 1:
+            max_delay_samples = ms_to_samples(1000.0, sample_rate)  # Default 1 second
+
         self._max_delay = max_delay_samples
         self._num_channels = num_channels
         self._interpolation = interpolation
+
+        # Default delay time
+        if delay_ms is not None:
+            self._delay_samples = ms_to_samples(delay_ms, sample_rate)
+        else:
+            self._delay_samples = max_delay_samples // 2
 
         # Circular buffer
         self._buffer = np.zeros((num_channels, max_delay_samples), dtype=np.float64)
@@ -234,6 +293,39 @@ class DelayLine:
         self._buffer.fill(0.0)
         self._write_index = 0
 
+    def process_block(self, input_signal: np.ndarray) -> np.ndarray:
+        """
+        Process a block of samples through the delay line.
+
+        Args:
+            input_signal: 1D array of input samples
+
+        Returns:
+            1D array of delayed output samples
+        """
+        num_samples = len(input_signal)
+        output = np.empty(num_samples, dtype=np.float32)
+
+        for i in range(num_samples):
+            # Read delayed sample
+            output[i] = self.read(self._delay_samples, channel=0)
+            # Write new sample
+            self.write(input_signal[i], channel=0)
+            # Advance write pointer
+            self.advance()
+
+        return output
+
+    @property
+    def delay_samples(self) -> float:
+        """Get the current delay in samples."""
+        return self._delay_samples
+
+    @delay_samples.setter
+    def delay_samples(self, value: float) -> None:
+        """Set the delay in samples."""
+        self._delay_samples = max(0.0, min(self._max_delay - 1, value))
+
 
 class Delay(DSPNode):
     """
@@ -251,9 +343,24 @@ class Delay(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        delay_ms: Optional[float] = None,  # Alias for delay_time_ms
+        mix: Optional[float] = None,  # Alias for wet
+        tempo_sync: bool = False,  # Enable tempo sync
+        bpm: float = 120.0,  # Tempo in BPM
     ):
+        # Support delay_ms as alias for delay_time_ms
+        if delay_ms is not None:
+            delay_time_ms = delay_ms
+
+        # Support mix as alias for wet
+        if mix is not None:
+            wet = mix
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._ping_pong = ping_pong
+        self._tempo_sync = tempo_sync
+        self._bpm = bpm
 
         # Delay line - must be before super().__init__()
         max_samples = ms_to_samples(MAX_DELAY_TIME_MS, sample_rate)
@@ -332,9 +439,37 @@ class Delay(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + delayed * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block of samples."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block of samples.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
+
+        # Handle bypass mode
+        if self._state.is_bypassed:
+            np.copyto(output_buffer, input_buffer)
+            if return_output:
+                if was_mono:
+                    return output_buffer[0]
+                return output_buffer
+            return None
 
         for i in range(num_samples):
             delay_samples = ms_to_samples(
@@ -362,6 +497,33 @@ class Delay(DSPNode):
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + delayed * wet
 
             self._delay_line.advance()
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
+
+    def process_stereo(
+        self, left: np.ndarray, right: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Process stereo signal (left and right channels).
+
+        Args:
+            left: Left channel samples
+            right: Right channel samples
+
+        Returns:
+            Tuple of (processed_left, processed_right)
+        """
+        # Stack into 2D array (channels, samples)
+        input_buffer = np.stack([left, right], axis=0)
+        output_buffer = np.empty_like(input_buffer)
+
+        self.process_block(input_buffer, output_buffer)
+
+        return output_buffer[0], output_buffer[1]
 
     def reset(self) -> None:
         """Reset delay state."""
@@ -392,12 +554,21 @@ class MultiTapDelay(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        max_delay_ms: Optional[float] = None,  # Custom max delay time
+        mix: Optional[float] = None,  # Alias for wet
     ):
+        # Support mix as alias for wet
+        if mix is not None:
+            wet = mix
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._tap_times_ms = list(tap_times_ms)
         self._tap_gains = list(tap_gains) if tap_gains else [0.8 ** i for i in range(len(tap_times_ms))]
 
-        max_samples = ms_to_samples(MAX_DELAY_TIME_MS, sample_rate)
+        # Use custom max_delay_ms or default
+        max_ms = max_delay_ms if max_delay_ms is not None else MAX_DELAY_TIME_MS
+        max_samples = ms_to_samples(max_ms, sample_rate)
         self._delay_line = DelayLine(max_samples, num_channels)
         self._feedback_sample = np.zeros(num_channels, dtype=np.float64)
 
@@ -414,8 +585,29 @@ class MultiTapDelay(DSPNode):
             self._tap_times_ms[tap_index] = max(0.0, min(MAX_DELAY_TIME_MS, time_ms))
             self._tap_gains[tap_index] = gain
 
-    def add_tap(self, time_ms: float, gain: float) -> int:
-        """Add a new tap."""
+    def add_tap(
+        self,
+        time_ms: float = 0.0,
+        gain: float = 1.0,
+        *,
+        delay_ms: Optional[float] = None,
+        level: Optional[float] = None,
+    ) -> int:
+        """Add a new tap.
+
+        Args:
+            time_ms: Delay time in milliseconds
+            gain: Tap gain (0-1)
+            delay_ms: Alias for time_ms
+            level: Alias for gain
+
+        Returns:
+            Index of the new tap
+        """
+        if delay_ms is not None:
+            time_ms = delay_ms
+        if level is not None:
+            gain = level
         self._tap_times_ms.append(max(0.0, min(MAX_DELAY_TIME_MS, time_ms)))
         self._tap_gains.append(gain)
         return len(self._tap_times_ms) - 1
@@ -445,9 +637,28 @@ class MultiTapDelay(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + delayed_sum * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
 
         for i in range(num_samples):
             feedback = self._feedback.advance()
@@ -468,6 +679,12 @@ class MultiTapDelay(DSPNode):
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + delayed_sum * wet
 
             self._delay_line.advance()
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
 
     def reset(self) -> None:
         self._delay_line.clear()
@@ -495,7 +712,18 @@ class Chorus(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        rate_hz: Optional[float] = None,  # Alias for rate
+        mix: Optional[float] = None,  # Alias for wet
     ):
+        # Support rate_hz as alias for rate
+        if rate_hz is not None:
+            rate = rate_hz
+
+        # Support mix as alias for wet
+        if mix is not None:
+            wet = mix
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._voices = voices
 
@@ -545,6 +773,28 @@ class Chorus(DSPNode):
     def wet(self, value: float) -> None:
         self._wet.set_value(max(0.0, min(1.0, value)))
 
+    @property
+    def mix(self) -> float:
+        """Alias for wet property."""
+        return self.wet
+
+    @mix.setter
+    def mix(self, value: float) -> None:
+        """Alias for wet property."""
+        self.wet = value
+
+    def set_depth(self, value: float) -> None:
+        """Set the depth parameter."""
+        self.depth = value
+
+    def set_rate(self, value: float) -> None:
+        """Set the rate parameter."""
+        self.rate = value
+
+    def set_mix(self, value: float) -> None:
+        """Set the mix (wet) parameter."""
+        self.wet = value
+
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample."""
         base_delay = ms_to_samples(self._delay_ms.value, self._state.sample_rate)
@@ -569,9 +819,37 @@ class Chorus(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + delayed_sum * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
+
+        # Handle bypass mode
+        if self._state.is_bypassed:
+            np.copyto(output_buffer, input_buffer)
+            if return_output:
+                if was_mono:
+                    return output_buffer[0]
+                return output_buffer
+            return None
 
         for i in range(num_samples):
             base_delay = ms_to_samples(self._delay_ms.advance(), self._state.sample_rate)
@@ -599,6 +877,33 @@ class Chorus(DSPNode):
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + delayed_sum * wet
 
             self._delay_line.advance()
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
+
+    def process_stereo(
+        self, left: np.ndarray, right: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Process stereo signal (left and right channels).
+
+        Args:
+            left: Left channel samples
+            right: Right channel samples
+
+        Returns:
+            Tuple of (processed_left, processed_right)
+        """
+        # Stack into 2D array (channels, samples)
+        input_buffer = np.stack([left, right], axis=0)
+        output_buffer = np.empty_like(input_buffer)
+
+        self.process_block(input_buffer, output_buffer)
+
+        return output_buffer[0], output_buffer[1]
 
     def reset(self) -> None:
         self._delay_line.clear()
@@ -630,7 +935,18 @@ class Flanger(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        rate_hz: Optional[float] = None,  # Alias for rate
+        mix: Optional[float] = None,  # Alias for wet
     ):
+        # Support rate_hz as alias for rate
+        if rate_hz is not None:
+            rate = rate_hz
+
+        # Support mix as alias for wet
+        if mix is not None:
+            wet = mix
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._lfo = LFO(rate, LFOWaveform.SINE, sample_rate)
 
@@ -700,9 +1016,28 @@ class Flanger(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + delayed * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
 
         for i in range(num_samples):
             base_delay = ms_to_samples(self._delay_ms.advance(), self._state.sample_rate)
@@ -725,6 +1060,12 @@ class Flanger(DSPNode):
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + delayed * wet
 
             self._delay_line.advance()
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
 
     def reset(self) -> None:
         self._delay_line.clear()
@@ -757,7 +1098,18 @@ class Phaser(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        rate_hz: Optional[float] = None,  # Alias for rate
+        mix: Optional[float] = None,  # Alias for wet
     ):
+        # Support rate_hz as alias for rate
+        if rate_hz is not None:
+            rate = rate_hz
+
+        # Support mix as alias for wet
+        if mix is not None:
+            wet = mix
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._stages = stages
 
@@ -834,9 +1186,28 @@ class Phaser(DSPNode):
         wet = self._wet.value
         return sample * (1.0 - wet) + x * wet
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
 
         for i in range(num_samples):
             depth = self._depth.advance()
@@ -858,6 +1229,12 @@ class Phaser(DSPNode):
 
                 self._feedback_sample[ch] = x
                 output_buffer[ch, i] = input_buffer[ch, i] * (1.0 - wet) + x * wet
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
 
     def reset(self) -> None:
         self._lfo.reset()
@@ -891,7 +1268,13 @@ class Vibrato(DSPNode):
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
+        *,
+        rate_hz: Optional[float] = None,  # Alias for rate
     ):
+        # Support rate_hz as alias for rate
+        if rate_hz is not None:
+            rate = rate_hz
+
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._lfo = LFO(rate, LFOWaveform.SINE, sample_rate)
 
@@ -944,9 +1327,28 @@ class Vibrato(DSPNode):
 
         return output
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Process a block."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Process a block.
+
+        Args:
+            input_buffer: Input samples, shape (channels, samples) or (samples,) for mono
+            output_buffer: Optional output buffer. If not provided, returns output array.
+
+        Returns:
+            Output array if output_buffer is None, otherwise None.
+        """
+        # Handle mono input
+        was_mono = False
+        if input_buffer.ndim == 1:
+            input_buffer = input_buffer.reshape(1, -1)
+            was_mono = True
+
         num_channels, num_samples = input_buffer.shape
+
+        # Create output buffer if not provided
+        return_output = output_buffer is None
+        if return_output:
+            output_buffer = np.empty_like(input_buffer)
 
         for i in range(num_samples):
             depth = self._depth.advance()
@@ -959,6 +1361,12 @@ class Vibrato(DSPNode):
                 self._delay_line.write(input_buffer[ch, i], ch)
 
             self._delay_line.advance()
+
+        if return_output:
+            if was_mono:
+                return output_buffer[0]
+            return output_buffer
+        return None
 
     def reset(self) -> None:
         self._delay_line.clear()

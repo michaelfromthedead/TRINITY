@@ -121,7 +121,7 @@ impl Renderer {
     ) -> Self {
         // -- Instance ----------------------------------------------------------
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
@@ -608,7 +608,7 @@ mod tests {
     #[test]
     fn test_instance_creation() {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         // Success if we reach here without panicking.
@@ -618,7 +618,7 @@ mod tests {
     #[test]
     fn test_adapter_request() {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 

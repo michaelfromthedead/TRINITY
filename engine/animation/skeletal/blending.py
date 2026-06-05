@@ -921,3 +921,114 @@ class PoseCache:
 
     def __repr__(self) -> str:
         return f"PoseCache(size={len(self._cache)}/{self._capacity})"
+
+
+# =============================================================================
+# PoseBlender class (simple interface for blending two poses)
+# =============================================================================
+
+
+@animation_data
+class PoseBlender:
+    """Simple interface for blending two poses.
+
+    Provides a straightforward API for common pose blending operations.
+    For more complex multi-layer blending, use LayeredBlender.
+    """
+
+    def __init__(self, skeleton: Skeleton | None = None) -> None:
+        """Initialize blender.
+
+        Args:
+            skeleton: Optional skeleton for validation.
+        """
+        self._skeleton = skeleton
+        self._mask: BoneMask | None = None
+        self._mode: BlendMode = BlendMode.OVERRIDE
+
+    @property
+    def skeleton(self) -> Skeleton | None:
+        """Get skeleton."""
+        return self._skeleton
+
+    @skeleton.setter
+    def skeleton(self, value: Skeleton | None) -> None:
+        """Set skeleton."""
+        self._skeleton = value
+
+    @property
+    def mask(self) -> BoneMask | None:
+        """Get bone mask."""
+        return self._mask
+
+    @mask.setter
+    def mask(self, value: BoneMask | None) -> None:
+        """Set bone mask."""
+        self._mask = value
+
+    @property
+    def mode(self) -> BlendMode:
+        """Get blend mode."""
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: BlendMode) -> None:
+        """Set blend mode."""
+        self._mode = value
+
+    def blend(
+        self,
+        pose_a: Pose,
+        pose_b: Pose,
+        alpha: float,
+    ) -> Pose:
+        """Blend two poses.
+
+        Args:
+            pose_a: First pose (base).
+            pose_b: Second pose (to blend in).
+            alpha: Blend factor [0, 1]. 0 = pose_a, 1 = pose_b.
+
+        Returns:
+            Blended pose.
+        """
+        return blend_poses(pose_a, pose_b, alpha, self._mode, self._mask)
+
+    def blend_additive(
+        self,
+        base_pose: Pose,
+        additive_pose: Pose,
+        weight: float = 1.0,
+    ) -> Pose:
+        """Apply additive pose on top of base.
+
+        Args:
+            base_pose: Base pose.
+            additive_pose: Additive delta pose.
+            weight: Weight [0, 1].
+
+        Returns:
+            Resulting pose.
+        """
+        return apply_additive_pose(base_pose, additive_pose, weight, self._mask)
+
+    def blend_multiple(
+        self,
+        poses: List[Pose],
+        weights: List[float],
+        normalize: bool = True,
+    ) -> Pose:
+        """Blend multiple poses with weights.
+
+        Args:
+            poses: List of poses.
+            weights: List of weights.
+            normalize: Whether to normalize weights.
+
+        Returns:
+            Blended pose.
+        """
+        return blend_multiple_poses(poses, weights, self._mode, normalize)
+
+    def __repr__(self) -> str:
+        return f"PoseBlender(mode={self._mode.name}, has_mask={self._mask is not None})"

@@ -62,8 +62,8 @@ fn export_all_returns_exactly_four_top_level_keys() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "output", 1920, 1080)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("minimal graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("minimal graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let obj = json.as_object().expect("top-level value must be a JSON object");
@@ -100,8 +100,8 @@ fn export_all_returns_exactly_four_top_level_keys() {
 fn empty_graph_still_has_all_four_top_level_keys() {
     // An empty graph with no passes and no resources must still produce all
     // four top-level keys (with empty arrays / zeroed stats).
-    let compiler = FrameGraphCompiler::new(vec![], vec![]);
-    let compiled = compiler.compile().expect("empty graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(vec![], vec![]);
+    let compiled = compiler.expect("empty graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let obj = json.as_object().expect("top-level value must be an object");
@@ -134,8 +134,8 @@ fn graph_key_is_a_json_object() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "scene", &[r])];
     let resources = vec![mock_resource_texture(r, "color_rt", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let graph = &json["graph"];
@@ -155,8 +155,8 @@ fn graph_contains_expected_sections() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "target", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let graph = json["graph"].as_object().expect("'graph' must be an object");
@@ -197,8 +197,8 @@ fn graph_pass_count_matches_compiled_order() {
         mock_resource_buffer(r2, "data", 4096),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("three-pass chain compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("three-pass chain compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let graph_passes = json["graph"]["passes"]
@@ -223,8 +223,8 @@ fn graph_passes_contain_required_fields() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "test_pass", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 64, 64)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let graph_passes = json["graph"]["passes"]
@@ -261,8 +261,8 @@ fn graph_resources_contain_required_fields() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "swapchain", 1920, 1080)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let graph_resources = json["graph"]["resources"]
@@ -287,8 +287,8 @@ fn graph_cull_stats_has_expected_fields() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let cs = &json["graph"]["cull_stats"];
@@ -312,8 +312,8 @@ fn graph_barriers_exist_for_dependent_passes() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("dependent passes compile");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("dependent passes compile");
     let json = JsonExporter::export_all(&compiled);
 
     let barriers = json["graph"]["barriers"]
@@ -371,8 +371,8 @@ fn graph_no_barriers_for_independent_passes() {
         mock_resource_texture(r2, "tex_b", 1024, 768),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("independent passes compile");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("independent passes compile");
     let json = JsonExporter::export_all(&compiled);
 
     let barriers = json["graph"]["barriers"]
@@ -394,8 +394,8 @@ fn resources_key_is_a_json_array() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let resources_arr = &json["resources"];
@@ -421,8 +421,8 @@ fn resources_array_length_matches_input_resource_count() {
         mock_resource_buffer(r3, "output", 2048),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let resources_arr = json["resources"]
@@ -448,8 +448,8 @@ fn resources_sorted_by_handle() {
         mock_resource_texture(r_low, "low", 1024, 768),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let resources_arr = json["resources"]
@@ -474,8 +474,8 @@ fn resources_entries_contain_required_fields() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let resources_arr = json["resources"]
@@ -508,8 +508,8 @@ fn resources_texture_entry_includes_format_and_size() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "color", 1920, 1080)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let entry = &json["resources"][0];
@@ -540,8 +540,8 @@ fn resources_buffer_entry_includes_size() {
     let passes = vec![mock_pass_compute(PassIndex(0), "compute", &[], &[r])];
     let resources = vec![mock_resource_buffer(r, "storage_buf", 8192)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let entry = &json["resources"][0];
@@ -575,8 +575,8 @@ fn schedule_key_is_a_json_object() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let schedule = &json["schedule"];
@@ -602,8 +602,8 @@ fn schedule_contains_execution_order() {
         mock_resource_buffer(r2, "data", 4096),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("chain compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("chain compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let exec_order = json["schedule"]["execution_order"]
@@ -628,8 +628,8 @@ fn schedule_contains_barriers_array() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("dependent passes compile");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("dependent passes compile");
     let json = JsonExporter::export_all(&compiled);
 
     let barriers = json["schedule"]["barriers"]
@@ -650,8 +650,8 @@ fn schedule_contains_async_passes_array() {
     ];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let _async_passes = json["schedule"]["async_passes"]
@@ -674,8 +674,8 @@ fn schedule_contains_parallel_regions() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "single", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let _parallel_regions = json["schedule"]["parallel_regions"]
@@ -699,8 +699,8 @@ fn schedule_contains_sync_points() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("dependent passes compile");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("dependent passes compile");
     let json = JsonExporter::export_all(&compiled);
 
     let sync_points = json["schedule"]["sync_points"]
@@ -722,8 +722,8 @@ fn stats_key_is_a_json_object() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = &json["stats"];
@@ -740,8 +740,8 @@ fn stats_contains_all_expected_fields() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = json["stats"]
@@ -782,8 +782,8 @@ fn stats_values_are_non_negative_numbers() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = json["stats"]
@@ -827,8 +827,8 @@ fn stats_values_reflect_compilation_with_dead_passes() {
         mock_resource_buffer(r_dead, "dead_buf", 2048),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("mixed graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("mixed graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = &json["stats"];
@@ -861,8 +861,8 @@ fn stats_values_match_compiled_graph_directly() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = &json["stats"];
@@ -891,8 +891,8 @@ fn stats_values_match_compiled_graph_directly() {
 #[test]
 fn stats_values_are_zero_for_empty_graph() {
     // Empty graph must have all zero stats.
-    let compiler = FrameGraphCompiler::new(vec![], vec![]);
-    let compiled = compiler.compile().expect("empty graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(vec![], vec![]);
+    let compiled = compiler.expect("empty graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let stats = &json["stats"];
@@ -945,8 +945,8 @@ fn diamond_graph_produces_correct_export() {
         mock_resource_buffer(r3, "scratch", 4096),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("diamond graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("diamond graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Verify all four keys exist.
@@ -1022,8 +1022,8 @@ fn sequential_chain_produces_correct_execution_order_in_export() {
         }
     }
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("5-pass chain compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("5-pass chain compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // All 5 passes survive (P4 is a read-only tail, not eliminated).
@@ -1071,18 +1071,16 @@ fn export_all_is_deterministic() {
     ];
 
     // First compilation.
-    let compiled_a = FrameGraphCompiler::new(
+    let compiled_a = FrameGraphCompiler::from_ir(
         passes.clone(),
         resources.clone(),
     )
-    .compile()
     .expect("first compile");
     let json_a = JsonExporter::export_all(&compiled_a);
 
     // Second compilation with identical inputs.
-    let compiled_b = FrameGraphCompiler::new(passes, resources)
-        .compile()
-        .expect("second compile");
+    let compiled_b = FrameGraphCompiler::from_ir(passes, resources)
+    .expect("second compile");
     let json_b = JsonExporter::export_all(&compiled_b);
 
     // Compare graph, resources, schedule (stats.compilation_time_us may differ).
@@ -1132,8 +1130,8 @@ fn multiple_dead_passes_export_correctly() {
         mock_resource_buffer(ResourceHandle(4), "buf_c", 4096),
     ];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("mixed graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("mixed graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Stats.
@@ -1202,8 +1200,8 @@ fn graph_cull_stats_barrier_counts_are_consistent() {
         &[ResourceHandle(2)], &[],
     ));
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("chain compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("chain compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Schedule barrier count should equal or exceed the cull_stats barrier total
@@ -1246,8 +1244,8 @@ fn resources_table_lifetime_fields_populated() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let res_entry = &json["resources"][0];
@@ -1278,8 +1276,8 @@ fn validate_output_can_be_serialized_to_json_string() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // Round-trip through string serialization.
@@ -1310,8 +1308,8 @@ fn pass_with_no_resources_exported_correctly() {
         &[] as &[ResourceHandle],
     )];
 
-    let compiler = FrameGraphCompiler::new(passes, vec![]);
-    let compiled = compiler.compile().expect("no-resource pass compiles");
+    let compiled = FrameGraphCompiler::from_ir(passes, vec![])
+        .expect("no-resource pass compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // All four keys exist.
@@ -1347,8 +1345,8 @@ fn graph_validation_result_present() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let validation = &json["graph"]["validation"];
@@ -1377,8 +1375,8 @@ fn graph_depths_are_present() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "main", &[r])];
     let resources = vec![mock_resource_texture(r, "tex", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     let depths = &json["graph"]["depths"];
@@ -1405,8 +1403,8 @@ fn export_all_fan_in_fan_out_preserves_all_passes() {
     ];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiler = FrameGraphCompiler::new(passes, resources);
-    let compiled = compiler.compile().expect("complex graph compiles");
+    let compiler = FrameGraphCompiler::from_ir(passes, resources);
+    let compiled = compiler.expect("complex graph compiles");
     let json = JsonExporter::export_all(&compiled);
 
     // All 4 passes survive.

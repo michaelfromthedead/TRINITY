@@ -698,9 +698,9 @@ fn non_contiguous_handles() {
 /// Large number of history resources are all tracked correctly.
 #[test]
 fn many_history_resources() {
-    let n = 50;
+    let n = 50u32;
     let resources: Vec<IrResource> = (0..n)
-        .map(|i| history_resource(i, &format!("h{}", i), (i % 16) + 1))
+        .map(|i| history_resource(i, &format!("h{}", i), ((i % 16) + 1) as usize))
         .collect();
     let manager = HistorySlotManager::from_resources(&resources);
 
@@ -711,7 +711,7 @@ fn many_history_resources() {
             "Resource {} must be history",
             i,
         );
-        let expected_len = (i % 16) + 1;
+        let expected_len = ((i % 16) + 1) as usize;
         assert_eq!(
             manager.history_length(h),
             Some(expected_len),

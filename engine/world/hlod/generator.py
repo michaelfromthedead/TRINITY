@@ -7,6 +7,12 @@ proxy mesh generation.
 
 Pipeline: Source Meshes -> Select Method -> Generate HLOD Mesh -> Output
 
+Known Limitations:
+- Impostor capture uses simplified CPU rasterization (not GPU-accelerated)
+- Edge collapse simplification does not preserve UV seams perfectly
+- Very thin or degenerate triangles may cause numerical instability
+- Billboard impostors have limited angular fidelity (depends on view count)
+
 References:
 - WORLD_CONTEXT.md Section 7 HLOD System
 """

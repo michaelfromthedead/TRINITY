@@ -1,4 +1,5 @@
 //! Whitebox tests for PyPassNode to IrPass conversion bridge.
+#![cfg(feature = "pyo3")]
 
 use renderer_backend::frame_graph::{
     InstanceSource, IrPass, PassType, ResourceHandle, ViewType,

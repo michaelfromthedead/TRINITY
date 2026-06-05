@@ -182,6 +182,7 @@ fn multiple_passes_preserves_pass_count() {
         MockPassNode::graphics("GBuffer")
             .color_attachment(albedo.handle())
             .color_attachment(normal.handle())
+            .color_attachment(velocity.handle())
             .build(),
         MockPassNode::compute("Lighting")
             .reads(&[albedo.handle(), normal.handle()])
@@ -196,6 +197,7 @@ fn multiple_passes_preserves_pass_count() {
             .writes(&[final_out.handle()])
             .build(),
         MockPassNode::graphics("UIOverlay")
+            .reads(&[final_out.handle()])
             .color_attachment(final_out.handle())
             .build(),
     ];

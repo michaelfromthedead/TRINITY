@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from engine.world.partition.cell import CellCoord, StreamingCell
 from engine.world.partition.constants import (
@@ -542,7 +542,7 @@ class DataLayerManager:
         """Get the number of layers."""
         return len(self.layers)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator["DataLayer"]:
         """Iterate over layers in priority order."""
         for name in self._layer_order:
             yield self.layers[name]

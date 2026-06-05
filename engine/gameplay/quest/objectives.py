@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import time
 from typing import Any, Callable
 
 from .constants import (
@@ -77,11 +78,12 @@ class Objective(ABC):
 
     id: str
     description: str
-    objective_type: ObjectiveType
+    objective_type: ObjectiveType = ObjectiveType.CUSTOM  # Overridden by subclasses in __post_init__
     state: ObjectiveState = ObjectiveState.INACTIVE
     optional: bool = False  # Optional bonus objective
     hidden: bool = False  # Hidden until certain conditions met
     order: int = 0  # Order for sequential objectives
+    quest_id: str = ""  # Parent quest ID for event firing
 
     # Callbacks
     on_complete: Callable[[Objective], None] | None = None
@@ -131,6 +133,7 @@ class Objective(ABC):
         if self.state not in (ObjectiveState.IN_PROGRESS, ObjectiveState.INACTIVE):
             return False
         self.state = ObjectiveState.COMPLETE
+        self._fire_completed_event()
         if self.on_complete:
             self.on_complete(self)
         return True
@@ -163,9 +166,53 @@ class Objective(ABC):
         ...
 
     def _notify_progress(self) -> None:
-        """Notify progress callback."""
+        """Notify progress callback and fire ObjectiveProgress event."""
         if self.on_progress:
             self.on_progress(self, self.progress)
+        # Fire ObjectiveProgress event
+        self._fire_progress_event()
+
+    def _fire_progress_event(self) -> None:
+        """Fire an ObjectiveProgress event."""
+        from .quest import ObjectiveProgress, fire_quest_event
+
+        # Get current/target for counter-based objectives
+        # Try common attribute names: current/required, times_interacted/times_required, times_used/times_required
+        current = getattr(self, "current", None)
+        target = getattr(self, "required", None)
+
+        # Check for InteractObjective-style attributes
+        if current is None:
+            current = getattr(self, "times_interacted", None)
+        if current is None:
+            current = getattr(self, "times_used", None)
+        if target is None:
+            target = getattr(self, "times_required", None)
+
+        # Fallback: use progress as 0-100 scale
+        if current is None or target is None:
+            current = int(self.progress * 100)
+            target = 100
+
+        event = ObjectiveProgress(
+            quest_id=self.quest_id,
+            objective_id=self.id,
+            current=current,
+            target=target,
+            timestamp=time.time(),
+        )
+        fire_quest_event(event)
+
+    def _fire_completed_event(self) -> None:
+        """Fire an ObjectiveCompleted event."""
+        from .quest import ObjectiveCompleted, fire_quest_event
+
+        event = ObjectiveCompleted(
+            quest_id=self.quest_id,
+            objective_id=self.id,
+            timestamp=time.time(),
+        )
+        fire_quest_event(event)
 
 
 @dataclass
@@ -537,6 +584,9 @@ class InteractObjective(Objective):
 
     @property
     def progress(self) -> float:
+        # If marked as interacted directly, return 1.0
+        if self.interacted:
+            return 1.0
         return min(1.0, self.times_interacted / self.times_required)
 
     @property
@@ -919,12 +969,12 @@ class ObjectiveFactory:
         cls._creators[name] = objective_class
 
     @classmethod
-    def create(cls, objective_type: str, **kwargs: Any) -> Objective:
-        """Create an objective from type string and parameters."""
-        if objective_type not in cls._creators:
-            raise ValueError(f"Unknown objective type: {objective_type}")
+    def create(cls, type_name: str, **kwargs: Any) -> Objective:
+        """Create an objective from type name string and parameters."""
+        if type_name not in cls._creators:
+            raise ValueError(f"Unknown objective type: {type_name}")
 
-        return cls._creators[objective_type](**kwargs)
+        return cls._creators[type_name](**kwargs)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Objective:

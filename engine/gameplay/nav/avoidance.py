@@ -231,7 +231,12 @@ class RVOAvoidance:
         result.nearby_obstacles = len(nearby_obstacles)
 
         if not neighbors and not nearby_obstacles:
-            result.velocity = agent.preferred_velocity
+            # Clamp preferred velocity to max_speed
+            pref_speed = agent.preferred_velocity.length()
+            if pref_speed > agent.max_speed:
+                result.velocity = agent.preferred_velocity * (agent.max_speed / pref_speed)
+            else:
+                result.velocity = agent.preferred_velocity
             return result
 
         # Compute velocity obstacles
@@ -562,7 +567,12 @@ class ORCAAvoidance:
         result.nearby_agents = len(neighbors)
 
         if not neighbors:
-            result.velocity = agent.preferred_velocity
+            # Clamp preferred velocity to max_speed
+            pref_speed = agent.preferred_velocity.length()
+            if pref_speed > agent.max_speed:
+                result.velocity = agent.preferred_velocity * (agent.max_speed / pref_speed)
+            else:
+                result.velocity = agent.preferred_velocity
             return result
 
         # Compute ORCA half-planes

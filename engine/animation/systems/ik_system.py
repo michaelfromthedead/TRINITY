@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence, Optional, List, Dict, Tuple
 
 from engine.core.math import Vec3, Quat, Transform
 from engine.core.ecs import Entity, World
@@ -17,6 +17,7 @@ from engine.animation.config import IK_CONFIG
 
 class IKSolverType(Enum):
     """Type of IK solver to use."""
+    AUTO = auto()  # Auto-select based on chain length
     TWO_BONE = auto()  # Simple two-bone (limb) solver
     FABRIK = auto()  # Forward And Backward Reaching IK
     CCD = auto()  # Cyclic Coordinate Descent
@@ -28,6 +29,9 @@ class IKHintType(Enum):
     NONE = auto()
     POSITION = auto()  # Pole vector as position
     DIRECTION = auto()  # Pole vector as direction
+    POLE_VECTOR = auto()  # Alias for POSITION (pole target for elbow/knee)
+    ROTATION = auto()  # Preferred rotation
+    TWIST = auto()  # Twist limit
 
 
 @dataclass
@@ -46,10 +50,12 @@ class IKGoal:
         position_tolerance: Position error tolerance
         rotation_tolerance: Rotation error tolerance
         max_iterations: Maximum solver iterations
+        priority: Goal priority (higher = processed later, more influence)
+        chain_name: Optional name for lookup
     """
     target_bone: int = -1
-    target_position: Vec3 = field(default_factory=Vec3.zero)
-    target_rotation: Quat | None = None
+    target_position: Optional[Vec3] = None
+    target_rotation: Optional[Quat] = None
     weight: float = 1.0
     chain_length: int = 2
     solver_type: IKSolverType = IKSolverType.TWO_BONE
@@ -59,11 +65,33 @@ class IKGoal:
     rotation_tolerance: float = IK_CONFIG.DEFAULT_ROTATION_TOLERANCE
     max_iterations: int = IK_CONFIG.DEFAULT_MAX_ITERATIONS
     enabled: bool = True
+    priority: int = 0
+    chain_name: Optional[str] = None
 
-    def set_target(self, position: Vec3, rotation: Quat | None = None) -> None:
+    def set_target(self, position: Optional[Vec3] = None, rotation: Optional[Quat] = None) -> None:
         """Set target position and optional rotation."""
-        self.target_position = position
-        self.target_rotation = rotation
+        if position is not None:
+            self.target_position = position
+        if rotation is not None:
+            self.target_rotation = rotation
+
+    def is_valid(self) -> bool:
+        """Check if goal configuration is valid."""
+        if self.target_bone < 0:
+            return False
+        if self.weight < 0.0 or self.weight > 1.0:
+            return False
+        if self.target_position is None and self.target_rotation is None:
+            return False
+        return True
+
+    def has_position_target(self) -> bool:
+        """Check if goal has position target."""
+        return self.target_position is not None
+
+    def has_rotation_target(self) -> bool:
+        """Check if goal has rotation target."""
+        return self.target_rotation is not None
 
 
 @dataclass
@@ -93,7 +121,7 @@ class IKComponent:
         enabled: Whether IK is enabled
         blend_to_animation: Blend factor between IK and animation (0 = full IK, 1 = full anim)
     """
-    goals: list[IKGoal] = field(default_factory=list)
+    goals: List[IKGoal] = field(default_factory=list)
     enabled: bool = True
     blend_to_animation: float = 0.0
 
@@ -109,13 +137,20 @@ class IKComponent:
             return True
         return False
 
-    def get_goal(self, index: int) -> IKGoal | None:
+    def get_goal(self, index: int) -> Optional[IKGoal]:
         """Get goal by index."""
         if 0 <= index < len(self.goals):
             return self.goals[index]
         return None
 
-    def set_goal_target(self, index: int, position: Vec3, rotation: Quat | None = None) -> bool:
+    def get_goal_by_name(self, name: str) -> Optional[IKGoal]:
+        """Get goal by chain name."""
+        for goal in self.goals:
+            if goal.chain_name == name:
+                return goal
+        return None
+
+    def set_goal_target(self, index: int, position: Vec3, rotation: Optional[Quat] = None) -> bool:
         """Set goal target position/rotation."""
         goal = self.get_goal(index)
         if goal:
@@ -123,7 +158,103 @@ class IKComponent:
             return True
         return False
 
+    def set_goal_enabled(self, index: int, enabled: bool) -> bool:
+        """Enable or disable a goal by index."""
+        goal = self.get_goal(index)
+        if goal:
+            goal.enabled = enabled
+            return True
+        return False
 
+    def set_goal_weight(self, index: int, weight: float) -> bool:
+        """Set goal weight, clamped to 0-1."""
+        goal = self.get_goal(index)
+        if goal:
+            goal.weight = max(0.0, min(1.0, weight))
+            return True
+        return False
+
+    def set_all_weights(self, weight: float) -> None:
+        """Set weight for all goals."""
+        clamped = max(0.0, min(1.0, weight))
+        for goal in self.goals:
+            goal.weight = clamped
+
+    def get_enabled_goals_sorted(self) -> List[IKGoal]:
+        """Get enabled goals with non-zero weight, sorted by priority (highest first)."""
+        filtered = [g for g in self.goals if g.enabled and g.weight > 0]
+        return sorted(filtered, key=lambda g: -g.priority)
+
+
+def system(
+    phase: str = "default",
+    order: int = 0,
+    reads: Tuple[str, ...] = (),
+    writes: Tuple[str, ...] = ()
+) -> Callable:
+    """Decorator to mark a class or function as an ECS system.
+
+    Args:
+        phase: System execution phase (e.g., "animation", "physics")
+        order: Order within phase (lower = earlier)
+        reads: Component types this system reads
+        writes: Component types this system writes
+
+    Returns:
+        Decorator function.
+    """
+    def decorator(cls_or_func: Any) -> Any:
+        cls_or_func._is_system = True
+        cls_or_func._system_phase = phase
+        cls_or_func._system_order = order
+        cls_or_func._system_reads = reads
+        cls_or_func._system_writes = writes
+        return cls_or_func
+    return decorator
+
+
+@dataclass
+class IKSystemStats:
+    """Performance and processing statistics for IK system.
+
+    Attributes:
+        entities_processed: Number of entities processed this frame
+        goals_processed: Number of goals processed this frame
+        total_solves: Total solve operations performed
+        two_bone_solves: Number of two-bone solves
+        fabrik_solves: Number of FABRIK solves
+        ccd_solves: Number of CCD solves
+        jacobian_solves: Number of Jacobian solves
+        invalid_goals: Number of invalid goals skipped
+        solve_time_ms: Time spent solving (milliseconds)
+        average_error: Average position error
+    """
+    entities_processed: int = 0
+    goals_processed: int = 0
+    total_solves: int = 0
+    two_bone_solves: int = 0
+    fabrik_solves: int = 0
+    ccd_solves: int = 0
+    jacobian_solves: int = 0
+    invalid_goals: int = 0
+    solve_time_ms: float = 0.0
+    average_error: float = 0.0
+
+    def reset(self) -> None:
+        """Reset all statistics to zero."""
+        self.entities_processed = 0
+        self.goals_processed = 0
+        self.total_solves = 0
+        self.two_bone_solves = 0
+        self.fabrik_solves = 0
+        self.ccd_solves = 0
+        self.jacobian_solves = 0
+        self.invalid_goals = 0
+        self.solve_time_ms = 0.0
+        self.average_error = 0.0
+
+
+@system(phase="animation", order=1, reads=("IKComponent",), writes=("Pose",))
 class IKSystem:
     """ECS system for solving IK.
 
@@ -131,14 +262,19 @@ class IKSystem:
     """
 
     def __init__(self):
-        self._bone_hierarchy: dict[int, int] = {}  # bone -> parent
-        self._bone_lengths: dict[int, float] = {}
-        self._world_transforms: dict[int, Transform] = {}
+        self._bone_hierarchy: Dict[int, int] = {}  # bone -> parent
+        self._bone_lengths: Dict[int, float] = {}
+        self._world_transforms: Dict[int, Transform] = {}
+        self._stats = IKSystemStats()
+        # Solver caches for performance
+        self._two_bone_solvers: Dict[Tuple[int, int, int], Any] = {}
+        self._fabrik_solvers: Dict[Tuple[int, ...], Any] = {}
+        self._ccd_solvers: Dict[Tuple[int, ...], Any] = {}
 
     def set_skeleton_data(
         self,
-        hierarchy: dict[int, int],
-        bone_lengths: dict[int, float]
+        hierarchy: Dict[int, int],
+        bone_lengths: Dict[int, float]
     ) -> None:
         """Set skeleton data for IK solving.
 
@@ -148,36 +284,78 @@ class IKSystem:
         """
         self._bone_hierarchy = hierarchy
         self._bone_lengths = bone_lengths
+        # Clear solver caches when skeleton changes
+        self._two_bone_solvers.clear()
+        self._fabrik_solvers.clear()
+        self._ccd_solvers.clear()
+
+    def get_stats(self) -> IKSystemStats:
+        """Get statistics from last update.
+
+        Returns:
+            Copy of current statistics.
+        """
+        return IKSystemStats(
+            entities_processed=self._stats.entities_processed,
+            goals_processed=self._stats.goals_processed,
+            total_solves=self._stats.total_solves,
+            two_bone_solves=self._stats.two_bone_solves,
+            fabrik_solves=self._stats.fabrik_solves,
+            ccd_solves=self._stats.ccd_solves,
+            jacobian_solves=self._stats.jacobian_solves,
+            invalid_goals=self._stats.invalid_goals,
+            solve_time_ms=self._stats.solve_time_ms,
+            average_error=self._stats.average_error,
+        )
 
     def update(
         self,
         world: World,
-        entity_components: list[tuple[Entity, IKComponent]],
-        pose_data: dict[Entity, dict[int, Transform]]
-    ) -> dict[Entity, dict[int, Transform]]:
+        entity_components: List[Tuple[Entity, IKComponent]],
+        pose_data: Dict[Entity, Dict[int, Transform]],
+        dt: float = 1/60
+    ) -> Dict[Entity, Dict[int, Transform]]:
         """Update all IK components.
 
         Args:
             world: ECS world
             entity_components: List of (entity, component) tuples
             pose_data: Current poses for entities (entity -> bone transforms)
+            dt: Delta time in seconds
 
         Returns:
             Updated pose data with IK applied
         """
+        import time
+        start_time = time.perf_counter()
+
+        # Reset stats for this frame
+        self._stats.reset()
+
         result = {}
 
         for entity, component in entity_components:
+            self._stats.entities_processed += 1
+
             if not component.enabled:
                 result[entity] = pose_data.get(entity, {})
                 continue
 
-            entity_pose = pose_data.get(entity, {})
+            # Copy pose data to avoid modifying original
+            entity_pose = {k: Transform(v.translation, v.rotation, v.scale)
+                          for k, v in pose_data.get(entity, {}).items()}
             self._world_transforms = self._compute_world_transforms(entity_pose)
 
-            for goal in component.goals:
-                if not goal.enabled or goal.weight <= 0:
+            # Get sorted goals by priority (highest first, processed in order)
+            sorted_goals = component.get_enabled_goals_sorted()
+
+            for goal in sorted_goals:
+                # Validate goal
+                if not goal.is_valid():
+                    self._stats.invalid_goals += 1
                     continue
+
+                self._stats.goals_processed += 1
 
                 solve_result = self._solve_goal(goal, entity_pose)
 
@@ -190,15 +368,37 @@ class IKSystem:
 
             result[entity] = entity_pose
 
+        elapsed = time.perf_counter() - start_time
+        self._stats.solve_time_ms = elapsed * 1000.0
+
         return result
 
-    def _solve_goal(self, goal: IKGoal, pose: dict[int, Transform]) -> IKSolveResult:
+    def _solve_goal(self, goal: IKGoal, pose: Dict[int, Transform]) -> IKSolveResult:
         """Solve single IK goal."""
-        if goal.solver_type == IKSolverType.TWO_BONE:
+        self._stats.total_solves += 1
+
+        # Determine solver type (auto-select based on chain length)
+        solver_type = goal.solver_type
+        if solver_type == IKSolverType.AUTO:
+            if goal.chain_length <= 2:
+                solver_type = IKSolverType.TWO_BONE
+            elif goal.chain_length <= 6:
+                solver_type = IKSolverType.FABRIK
+            else:
+                solver_type = IKSolverType.CCD
+
+        if solver_type == IKSolverType.TWO_BONE:
+            self._stats.two_bone_solves += 1
             return self._solve_two_bone(goal, pose)
-        elif goal.solver_type == IKSolverType.FABRIK:
+        elif solver_type == IKSolverType.FABRIK:
+            self._stats.fabrik_solves += 1
             return self._solve_fabrik(goal, pose)
-        elif goal.solver_type == IKSolverType.CCD:
+        elif solver_type == IKSolverType.CCD:
+            self._stats.ccd_solves += 1
+            return self._solve_ccd(goal, pose)
+        elif solver_type == IKSolverType.JACOBIAN:
+            self._stats.jacobian_solves += 1
+            # Fallback to CCD for now
             return self._solve_ccd(goal, pose)
         else:
             return IKSolveResult()
@@ -206,6 +406,10 @@ class IKSystem:
     def _solve_two_bone(self, goal: IKGoal, pose: dict[int, Transform]) -> IKSolveResult:
         """Solve two-bone IK (e.g., arm, leg)."""
         result = IKSolveResult()
+
+        # Check for valid target
+        if goal.target_position is None:
+            return result
 
         # Get chain bones
         chain = self._get_chain(goal.target_bone, 2)
@@ -229,6 +433,10 @@ class IKSystem:
         lower_length = mid_pos.distance(end_pos)
         total_length = upper_length + lower_length
 
+        # Handle zero-length bones
+        if upper_length < 0.0001 or lower_length < 0.0001 or total_length < 0.0001:
+            return result
+
         # Vector from root to target
         to_target = target - root_pos
         target_dist = to_target.length()
@@ -242,7 +450,10 @@ class IKSystem:
 
         # Calculate joint angle using law of cosines
         # cos(angle) = (a^2 + b^2 - c^2) / (2ab)
-        cos_angle = (upper_length**2 + lower_length**2 - target_dist**2) / (2 * upper_length * lower_length)
+        denominator = 2 * upper_length * lower_length
+        if denominator < 0.0001:
+            return result
+        cos_angle = (upper_length**2 + lower_length**2 - target_dist**2) / denominator
         cos_angle = max(-1.0, min(1.0, cos_angle))
         joint_angle = math.acos(cos_angle)
 
@@ -313,9 +524,13 @@ class IKSystem:
 
         return result
 
-    def _solve_fabrik(self, goal: IKGoal, pose: dict[int, Transform]) -> IKSolveResult:
+    def _solve_fabrik(self, goal: IKGoal, pose: Dict[int, Transform]) -> IKSolveResult:
         """Solve IK using FABRIK algorithm."""
         result = IKSolveResult()
+
+        # Check for valid target
+        if goal.target_position is None:
+            return result
 
         chain = self._get_chain(goal.target_bone, goal.chain_length)
         if not chain:
@@ -377,9 +592,13 @@ class IKSystem:
 
         return result
 
-    def _solve_ccd(self, goal: IKGoal, pose: dict[int, Transform]) -> IKSolveResult:
+    def _solve_ccd(self, goal: IKGoal, pose: Dict[int, Transform]) -> IKSolveResult:
         """Solve IK using CCD algorithm."""
         result = IKSolveResult()
+
+        # Check for valid target
+        if goal.target_position is None:
+            return result
 
         chain = self._get_chain(goal.target_bone, goal.chain_length)
         if not chain:
@@ -501,3 +720,5 @@ class IKSystem:
         angle = math.acos(max(-1.0, min(1.0, dot)))
 
         return Quat.from_axis_angle(axis, angle) * base_rotation
+
+

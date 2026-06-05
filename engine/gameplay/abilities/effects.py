@@ -243,12 +243,12 @@ class InstantEffect(GameplayEffect):
         context: Optional[EffectContext] = None,
     ) -> bool:
         """Apply instant effect."""
-        if tags and not self.can_apply(tags, context):
+        if tags is not None and not self.can_apply(tags, context):
             return False
 
         self._active_handles = self._apply_modifiers(attributes, context)
 
-        if tags:
+        if tags is not None:
             self._apply_tags(tags)
 
         self._is_active = True
@@ -265,7 +265,7 @@ class InstantEffect(GameplayEffect):
 
         self._remove_modifiers(attributes)
 
-        if tags:
+        if tags is not None:
             self._remove_tags(tags)
 
         self._is_active = False
@@ -320,7 +320,7 @@ class DurationEffect(GameplayEffect):
         context: Optional[EffectContext] = None,
     ) -> bool:
         """Apply duration effect."""
-        if tags and not self.can_apply(tags, context):
+        if tags is not None and not self.can_apply(tags, context):
             return False
 
         duration_mult = context.duration_multiplier if context else 1.0
@@ -329,7 +329,7 @@ class DurationEffect(GameplayEffect):
 
         self._active_handles = self._apply_modifiers(attributes, context)
 
-        if tags:
+        if tags is not None:
             self._apply_tags(tags)
 
         self._is_active = True
@@ -346,7 +346,7 @@ class DurationEffect(GameplayEffect):
 
         self._remove_modifiers(attributes)
 
-        if tags:
+        if tags is not None:
             self._remove_tags(tags)
 
         self._is_active = False
@@ -397,12 +397,12 @@ class InfiniteEffect(GameplayEffect):
         context: Optional[EffectContext] = None,
     ) -> bool:
         """Apply infinite effect."""
-        if tags and not self.can_apply(tags, context):
+        if tags is not None and not self.can_apply(tags, context):
             return False
 
         self._active_handles = self._apply_modifiers(attributes, context)
 
-        if tags:
+        if tags is not None:
             self._apply_tags(tags)
 
         self._is_active = True
@@ -419,7 +419,7 @@ class InfiniteEffect(GameplayEffect):
 
         self._remove_modifiers(attributes)
 
-        if tags:
+        if tags is not None:
             self._remove_tags(tags)
 
         self._is_active = False
@@ -478,7 +478,7 @@ class PeriodicEffect(GameplayEffect):
         context: Optional[EffectContext] = None,
     ) -> bool:
         """Apply periodic effect."""
-        if tags and not self.can_apply(tags, context):
+        if tags is not None and not self.can_apply(tags, context):
             return False
 
         duration_mult = context.duration_multiplier if context else 1.0
@@ -489,7 +489,7 @@ class PeriodicEffect(GameplayEffect):
         # Store context for tick applications
         self._context = context
 
-        if tags:
+        if tags is not None:
             self._apply_tags(tags)
 
         self._is_active = True
@@ -513,7 +513,7 @@ class PeriodicEffect(GameplayEffect):
         if self.execute_on_remove:
             self._execute_tick(attributes)
 
-        if tags:
+        if tags is not None:
             self._remove_tags(tags)
 
         self._is_active = False
@@ -586,7 +586,7 @@ class EffectContainer:
         tags: Optional[GameplayTagContainer] = None,
     ) -> None:
         self._attributes = attributes
-        self._tags = tags or GameplayTagContainer()
+        self._tags = tags if tags is not None else GameplayTagContainer()
         self._effects: Dict[UUID, GameplayEffect] = {}
         self._by_name: Dict[str, Set[UUID]] = {}
 

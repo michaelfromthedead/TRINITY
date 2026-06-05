@@ -348,7 +348,7 @@ class ContactManifold:
         """
         Refresh contacts using current body transforms.
 
-        Removes contacts that have separated.
+        Removes contacts that have separated beyond tolerance.
 
         Args:
             transform_a: Transform for body A (local to world)
@@ -364,17 +364,30 @@ class ContactManifold:
             world_a = transform_a(contact.local_position_a)
             world_b = transform_b(contact.local_position_b)
 
-            # Check separation
-            separation = (world_b - world_a).dot(contact.normal)
+            # Calculate how far the contact points have moved apart
+            # We compare to the original position to detect if bodies have separated
+            diff = world_b - world_a
 
-            if separation > CONTACT_TOLERANCE:
+            # Project the difference onto the normal to get separation along contact direction
+            separation_along_normal = diff.dot(contact.normal)
+
+            # Calculate lateral movement (perpendicular to normal)
+            lateral_diff = diff - contact.normal * separation_along_normal
+            lateral_distance = lateral_diff.length()
+
+            # Contact is invalid if:
+            # 1. Separation along normal exceeds depth + tolerance (bodies moved apart)
+            # 2. Lateral drift exceeds tolerance (contact point slid away)
+            depth_threshold = contact.depth + CONTACT_TOLERANCE
+
+            if separation_along_normal > depth_threshold or lateral_distance > CONTACT_TOLERANCE:
                 # Contact has separated
                 self._contacts.remove(contact)
                 removed.append(contact)
             else:
                 # Update contact
                 contact.position = (world_a + world_b) * 0.5
-                contact.depth = -separation
+                contact.depth = -separation_along_normal
 
         return removed
 

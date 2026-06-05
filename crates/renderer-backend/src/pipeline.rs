@@ -353,7 +353,7 @@ mod tests {
     fn test_shader_cache_get_or_compile_dedup() {
         // Requires a GPU device.
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let adapter = pollster::block_on(instance.request_adapter(
@@ -430,7 +430,7 @@ mod tests {
     /// is available.
     fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let adapter = pollster::block_on(instance.request_adapter(
@@ -702,5 +702,755 @@ mod tests {
 
         // Both pipelines should have the same shader hash.
         assert_eq!(table.get(1).unwrap().shader_hash, table.get(2).unwrap().shader_hash);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Content Hashing and Diffing
+// ---------------------------------------------------------------------------
+
+/// SHA-256 based content hash for content-addressable storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ContentHash(pub [u8; 32]);
+
+impl ContentHash {
+    /// Creates a content hash from raw bytes.
+    pub fn new(hash: [u8; 32]) -> Self {
+        Self(hash)
+    }
+
+    /// Creates a content hash from a byte slice.
+    pub fn from_bytes(data: &[u8]) -> Self {
+        Self::compute(data)
+    }
+
+    /// Computes the content hash of the given data.
+    pub fn compute(data: &[u8]) -> Self {
+        Self(sha256(data))
+    }
+
+    /// Returns the hash as a hex string.
+    pub fn to_hex(&self) -> String {
+        self.0.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    /// Returns the raw hash bytes.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// Returns a zero hash (all bytes zero).
+    pub fn zero() -> Self {
+        Self([0u8; 32])
+    }
+
+    /// Returns true if this hash is all zeros.
+    pub fn is_zero(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
+}
+
+impl std::fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_hex())
+    }
+}
+
+/// A delta representing differences between content.
+#[derive(Clone, Debug)]
+pub enum Delta {
+    /// Binary diff with compressed patch data.
+    Binary {
+        /// The compressed patch data.
+        data: Vec<u8>,
+    },
+    /// Tree diff with structural changes.
+    TreeDiff {
+        /// List of tree changes.
+        changes: Vec<TreeDiffEntry>,
+    },
+}
+
+impl Delta {
+    /// Creates a binary delta from patch data.
+    pub fn binary(data: Vec<u8>) -> Self {
+        Delta::Binary { data }
+    }
+
+    /// Creates a tree delta from changes.
+    pub fn tree_diff(changes: Vec<TreeDiffEntry>) -> Self {
+        Delta::TreeDiff { changes }
+    }
+
+    /// Returns the size of the delta in bytes.
+    pub fn size(&self) -> usize {
+        match self {
+            Delta::Binary { data } => data.len(),
+            Delta::TreeDiff { changes } => changes.len() * std::mem::size_of::<TreeDiffEntry>(),
+        }
+    }
+
+    /// Alias for size() - returns the size in bytes.
+    pub fn size_bytes(&self) -> usize {
+        self.size()
+    }
+
+    /// Returns the patch data for binary deltas.
+    pub fn data(&self) -> Option<&[u8]> {
+        match self {
+            Delta::Binary { data } => Some(data),
+            Delta::TreeDiff { .. } => None,
+        }
+    }
+}
+
+/// Binary diffing algorithm using simple copy/insert encoding.
+#[derive(Clone, Debug, Default)]
+pub struct BinaryDiffer;
+
+impl BinaryDiffer {
+    /// Creates a new binary differ.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Computes a delta between old and new byte sequences.
+    pub fn diff(&self, old: &[u8], new: &[u8]) -> Result<Delta, String> {
+        // Simple delta encoding: store changed bytes with their positions
+        let mut delta_data = Vec::new();
+
+        // Find matching and differing regions
+        let mut i = 0;
+        while i < new.len() {
+            if i < old.len() && old[i] == new[i] {
+                // Skip matching bytes
+                i += 1;
+            } else {
+                // Record position and new value
+                delta_data.extend_from_slice(&(i as u32).to_le_bytes());
+                delta_data.push(new.get(i).copied().unwrap_or(0));
+                i += 1;
+            }
+        }
+
+        Ok(Delta::Binary { data: delta_data })
+    }
+
+    /// Applies a delta to reconstruct the new data.
+    pub fn apply(&self, old: &[u8], delta: &Delta) -> Result<Vec<u8>, String> {
+        let delta_data = match delta {
+            Delta::Binary { data } => data,
+            Delta::TreeDiff { .. } => return Err("Cannot apply tree diff as binary".into()),
+        };
+
+        let mut result = old.to_vec();
+
+        // Parse and apply delta operations
+        let mut i = 0;
+        while i + 4 < delta_data.len() {
+            let pos = u32::from_le_bytes([
+                delta_data[i], delta_data[i+1], delta_data[i+2], delta_data[i+3]
+            ]) as usize;
+            let value = delta_data[i + 4];
+
+            if pos < result.len() {
+                result[pos] = value;
+            } else if pos == result.len() {
+                result.push(value);
+            }
+
+            i += 5;
+        }
+
+        Ok(result)
+    }
+}
+
+/// A tree entry for hierarchical content addressing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeEntry {
+    /// Entry name/path.
+    pub name: String,
+    /// Content hash of this entry.
+    pub hash: ContentHash,
+    /// Whether this is a directory (contains children).
+    pub is_dir: bool,
+}
+
+impl TreeEntry {
+    /// Creates a blob (file) entry.
+    pub fn blob(name: impl Into<String>, hash: ContentHash) -> Self {
+        Self {
+            name: name.into(),
+            hash,
+            is_dir: false,
+        }
+    }
+
+    /// Creates a tree (directory) entry.
+    pub fn tree(name: impl Into<String>, hash: ContentHash) -> Self {
+        Self {
+            name: name.into(),
+            hash,
+            is_dir: true,
+        }
+    }
+}
+
+/// A tree of content-addressed entries.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContentTree {
+    /// Root entries in this tree.
+    entries_vec: Vec<TreeEntry>,
+}
+
+impl ContentTree {
+    /// Creates an empty content tree.
+    pub fn new() -> Self {
+        Self { entries_vec: Vec::new() }
+    }
+
+    /// Creates a content tree from a list of entries.
+    pub fn from_entries(entries: Vec<TreeEntry>) -> Self {
+        Self { entries_vec: entries }
+    }
+
+    /// Adds an entry to the tree.
+    pub fn add(&mut self, entry: TreeEntry) {
+        self.entries_vec.push(entry);
+    }
+
+    /// Returns the entries as a vector reference.
+    pub fn entries(&self) -> &Vec<TreeEntry> {
+        &self.entries_vec
+    }
+
+    /// Returns the entries as a slice.
+    pub fn as_slice(&self) -> &[TreeEntry] {
+        &self.entries_vec
+    }
+
+    /// Serializes the tree to bytes (simple format).
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+        for entry in &self.entries_vec {
+            data.extend_from_slice(entry.name.as_bytes());
+            data.push(0); // null separator
+            data.extend_from_slice(entry.hash.as_bytes());
+            data.push(if entry.is_dir { 1 } else { 0 });
+        }
+        data
+    }
+
+    /// Deserializes a tree from bytes.
+    pub fn deserialize(data: &[u8]) -> Result<Self, String> {
+        let mut entries = Vec::new();
+        let mut i = 0;
+
+        while i < data.len() {
+            // Read name until null
+            let name_end = data[i..].iter().position(|&b| b == 0)
+                .ok_or("Invalid format: missing name terminator")?;
+            let name = String::from_utf8(data[i..i+name_end].to_vec())
+                .map_err(|e| format!("Invalid name: {}", e))?;
+            i += name_end + 1;
+
+            // Read hash (32 bytes)
+            if i + 33 > data.len() {
+                return Err("Invalid format: truncated entry".into());
+            }
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&data[i..i+32]);
+            i += 32;
+
+            // Read is_dir flag
+            let is_dir = data[i] != 0;
+            i += 1;
+
+            entries.push(TreeEntry {
+                name,
+                hash: ContentHash(hash),
+                is_dir,
+            });
+        }
+
+        Ok(Self::from_entries(entries))
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.entries_vec.len()
+    }
+
+    /// Returns true if empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries_vec.is_empty()
+    }
+}
+
+/// Describes a difference in a tree structure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TreeDiffEntry {
+    /// Entry was added.
+    Added(TreeEntry),
+    /// Entry was removed/deleted.
+    Deleted(TreeEntry),
+    /// Entry was modified.
+    Modified { old: TreeEntry, new: TreeEntry },
+}
+
+impl TreeDiffEntry {
+    /// Returns the name of the affected entry.
+    pub fn name(&self) -> &str {
+        match self {
+            TreeDiffEntry::Added(e) => &e.name,
+            TreeDiffEntry::Deleted(e) => &e.name,
+            TreeDiffEntry::Modified { new, .. } => &new.name,
+        }
+    }
+
+    /// Returns the entry (or new entry for modifications).
+    pub fn entry(&self) -> &TreeEntry {
+        match self {
+            TreeDiffEntry::Added(e) => e,
+            TreeDiffEntry::Deleted(e) => e,
+            TreeDiffEntry::Modified { new, .. } => new,
+        }
+    }
+}
+
+/// Tree-based diffing for hierarchical content.
+#[derive(Clone, Debug, Default)]
+pub struct TreeDiffer;
+
+impl TreeDiffer {
+    /// Creates a new tree differ.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Computes differences between two trees as a list.
+    pub fn diff(&self, old: &ContentTree, new: &ContentTree) -> Vec<TreeDiffEntry> {
+        self.diff_entries(old, new)
+    }
+
+    /// Computes differences between two trees and returns a Delta.
+    pub fn diff_trees(&self, old: &ContentTree, new: &ContentTree) -> Delta {
+        Delta::TreeDiff { changes: self.diff_entries(old, new) }
+    }
+
+    /// Computes differences between two trees (internal helper).
+    fn diff_entries(&self, old: &ContentTree, new: &ContentTree) -> Vec<TreeDiffEntry> {
+        use std::collections::HashMap;
+
+        let old_map: HashMap<&str, &TreeEntry> = old.entries().iter()
+            .map(|e| (e.name.as_str(), e))
+            .collect();
+        let new_map: HashMap<&str, &TreeEntry> = new.entries().iter()
+            .map(|e| (e.name.as_str(), e))
+            .collect();
+
+        let mut diffs = Vec::new();
+
+        // Find added and modified entries
+        for entry in new.entries() {
+            match old_map.get(entry.name.as_str()) {
+                Some(old_entry) if old_entry.hash != entry.hash => {
+                    diffs.push(TreeDiffEntry::Modified {
+                        old: (*old_entry).clone(),
+                        new: entry.clone(),
+                    });
+                }
+                None => {
+                    diffs.push(TreeDiffEntry::Added(entry.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        // Find removed entries
+        for entry in old.entries() {
+            if !new_map.contains_key(entry.name.as_str()) {
+                diffs.push(TreeDiffEntry::Deleted(entry.clone()));
+            }
+        }
+
+        diffs
+    }
+
+    /// Applies tree diff (Delta) to reconstruct a new tree.
+    pub fn apply(&self, base: &ContentTree, delta: &Delta) -> Result<ContentTree, String> {
+        self.apply_to_tree(base, delta)
+    }
+
+    /// Applies tree diff (Delta) to reconstruct a new tree.
+    pub fn apply_to_tree(&self, base: &ContentTree, delta: &Delta) -> Result<ContentTree, String> {
+        let diffs = match delta {
+            Delta::TreeDiff { changes } => changes,
+            Delta::Binary { .. } => return Err("Cannot apply binary delta to tree".into()),
+        };
+
+        use std::collections::HashMap;
+
+        let mut result_map: HashMap<String, TreeEntry> = base.entries().iter()
+            .map(|e| (e.name.clone(), e.clone()))
+            .collect();
+
+        for diff in diffs {
+            match diff {
+                TreeDiffEntry::Added(entry) => {
+                    result_map.insert(entry.name.clone(), entry.clone());
+                }
+                TreeDiffEntry::Deleted(entry) => {
+                    result_map.remove(&entry.name);
+                }
+                TreeDiffEntry::Modified { new, .. } => {
+                    result_map.insert(new.name.clone(), new.clone());
+                }
+            }
+        }
+
+        Ok(ContentTree::from_entries(result_map.into_values().collect()))
+    }
+}
+
+/// Trait for content diffing implementations.
+pub trait ContentDiffer {
+    /// Computes a delta between old and new content.
+    fn diff(&self, old: &[u8], new: &[u8]) -> Result<Delta, String>;
+
+    /// Applies a delta to reconstruct content.
+    fn apply(&self, old: &[u8], delta: &Delta) -> Result<Vec<u8>, String>;
+}
+
+impl ContentDiffer for BinaryDiffer {
+    fn diff(&self, old: &[u8], new: &[u8]) -> Result<Delta, String> {
+        BinaryDiffer::diff(self, old, new)
+    }
+
+    fn apply(&self, old: &[u8], delta: &Delta) -> Result<Vec<u8>, String> {
+        BinaryDiffer::apply(self, old, delta)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Content-Addressable File Storage
+// ---------------------------------------------------------------------------
+
+/// A chunk of content with streaming support.
+#[derive(Clone, Debug)]
+pub struct ChunkedContent {
+    /// The content data.
+    pub data: Vec<u8>,
+    /// Whether this is the final chunk.
+    pub is_final: bool,
+}
+
+impl ChunkedContent {
+    /// Creates a new content chunk.
+    pub fn new(data: Vec<u8>, is_final: bool) -> Self {
+        Self { data, is_final }
+    }
+
+    /// Creates a complete (single-chunk) content.
+    pub fn complete(data: Vec<u8>) -> Self {
+        Self { data, is_final: true }
+    }
+}
+
+impl std::io::Read for ChunkedContent {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let len = std::cmp::min(buf.len(), self.data.len());
+        buf[..len].copy_from_slice(&self.data[..len]);
+        self.data.drain(..len);
+        Ok(len)
+    }
+}
+
+/// File-based content-addressable storage backend.
+///
+/// Stores content using SHA-256 hash as the key, with a git-style
+/// directory layout (ab/cdef...) for efficient filesystem access.
+#[derive(Debug)]
+pub struct FileBackend {
+    /// Root directory for storage.
+    root: std::path::PathBuf,
+    /// Streaming threshold in bytes.
+    streaming_threshold: usize,
+}
+
+impl FileBackend {
+    /// Creates a new file backend at the given path.
+    pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            streaming_threshold: 1024 * 1024, // 1MB default
+        }
+    }
+
+    /// Sets the streaming threshold.
+    pub fn with_streaming_threshold(mut self, threshold: usize) -> Self {
+        self.streaming_threshold = threshold;
+        self
+    }
+
+    /// Returns the path for a given hash.
+    fn path_for_hash(&self, hash: &ContentHash) -> std::path::PathBuf {
+        let hex = hash.to_hex();
+        self.root.join(&hex[..2]).join(&hex[2..])
+    }
+
+    /// Stores content and returns its hash.
+    pub fn put(&self, data: &[u8]) -> std::io::Result<ContentHash> {
+        let hash = ContentHash::compute(data);
+        let path = self.path_for_hash(&hash);
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        if !path.exists() {
+            std::fs::write(&path, data)?;
+        }
+
+        Ok(hash)
+    }
+
+    /// Retrieves content by hash.
+    pub fn get(&self, hash: &ContentHash) -> std::io::Result<Vec<u8>> {
+        let path = self.path_for_hash(hash);
+        std::fs::read(path)
+    }
+
+    /// Retrieves content as a chunked reader.
+    pub fn get_chunked(&self, hash: &ContentHash) -> std::io::Result<ChunkedContent> {
+        let data = self.get(hash)?;
+        Ok(ChunkedContent::complete(data))
+    }
+
+    /// Checks if content exists.
+    pub fn has(&self, hash: &ContentHash) -> bool {
+        self.path_for_hash(hash).exists()
+    }
+
+    /// Deletes content by hash.
+    pub fn delete(&self, hash: &ContentHash) -> std::io::Result<()> {
+        let path = self.path_for_hash(hash);
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provenance Chain — Content history tracking
+// ---------------------------------------------------------------------------
+
+/// Strategy for pruning old entries from a provenance chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PruningStrategy {
+    /// Keep all entries (no pruning).
+    KeepAll,
+    /// Keep only the last N entries (plus origin).
+    KeepLastN(usize),
+    /// Keep entries newer than the given timestamp.
+    KeepNewerThan(u64),
+    /// Keep entries with age less than the given duration in seconds.
+    MaxAge(u64),
+    /// Combined strategy: keep last N and within max age.
+    Combined {
+        keep_last_n: usize,
+        max_age_secs: u64,
+    },
+}
+
+impl Default for PruningStrategy {
+    fn default() -> Self {
+        Self::KeepAll
+    }
+}
+
+/// A single entry in a provenance chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvenanceEntry {
+    /// Content hash of this entry.
+    pub hash: ContentHash,
+    /// Timestamp when this entry was created.
+    pub timestamp: u64,
+    /// Optional human-readable message/description.
+    pub message: Option<String>,
+    /// Hash of the parent entry (None for origin).
+    pub parent: Option<ContentHash>,
+}
+
+impl ProvenanceEntry {
+    /// Creates an origin entry (no parent).
+    pub fn origin(hash: ContentHash, timestamp: u64, message: Option<String>) -> Self {
+        Self {
+            hash,
+            timestamp,
+            message,
+            parent: None,
+        }
+    }
+
+    /// Creates an entry with a parent.
+    pub fn with_parent(
+        hash: ContentHash,
+        timestamp: u64,
+        message: Option<String>,
+        parent: ContentHash,
+    ) -> Self {
+        Self {
+            hash,
+            timestamp,
+            message,
+            parent: Some(parent),
+        }
+    }
+
+    /// Returns true if this is an origin entry.
+    pub fn is_origin(&self) -> bool {
+        self.parent.is_none()
+    }
+}
+
+/// A chain of provenance entries tracking content history.
+#[derive(Clone, Debug, Default)]
+pub struct ProvenanceChain {
+    entries: Vec<ProvenanceEntry>,
+    strategy: PruningStrategy,
+}
+
+impl ProvenanceChain {
+    /// Creates an empty provenance chain with the given strategy.
+    pub fn new(strategy: PruningStrategy) -> Self {
+        Self {
+            entries: Vec::new(),
+            strategy,
+        }
+    }
+
+    /// Creates an empty provenance chain with KeepAll strategy.
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+            strategy: PruningStrategy::KeepAll,
+        }
+    }
+
+    /// Creates a chain with an origin entry and pruning strategy.
+    pub fn with_origin(origin: ProvenanceEntry, strategy: PruningStrategy) -> Self {
+        Self {
+            entries: vec![origin],
+            strategy,
+        }
+    }
+
+    /// Pushes a new entry and applies pruning strategy.
+    pub fn push(&mut self, entry: ProvenanceEntry) {
+        self.entries.push(entry);
+        self.apply_pruning();
+    }
+
+    /// Returns the origin entry if present.
+    pub fn origin(&self) -> Option<&ProvenanceEntry> {
+        self.entries.first()
+    }
+
+    /// Returns the current (most recent) entry.
+    pub fn current(&self) -> Option<&ProvenanceEntry> {
+        self.entries.last()
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if the chain is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns an iterator over entries.
+    pub fn iter(&self) -> impl Iterator<Item = &ProvenanceEntry> {
+        self.entries.iter()
+    }
+
+    /// Returns the entries as a vector reference.
+    pub fn entries(&self) -> &Vec<ProvenanceEntry> {
+        &self.entries
+    }
+
+    /// Applies the pruning strategy to maintain size constraints.
+    fn apply_pruning(&mut self) {
+        match &self.strategy {
+            PruningStrategy::KeepAll => {}
+            PruningStrategy::KeepLastN(n) => {
+                // Minimum of 2 entries (origin + current)
+                let effective_n = (*n).max(2);
+                if self.entries.len() > effective_n {
+                    // Keep origin (first) and last (n-1) entries
+                    let origin = self.entries.remove(0);
+                    let keep_count = effective_n - 1;
+                    if self.entries.len() > keep_count {
+                        let start = self.entries.len() - keep_count;
+                        self.entries = self.entries.drain(start..).collect();
+                    }
+                    self.entries.insert(0, origin);
+                }
+            }
+            PruningStrategy::KeepNewerThan(timestamp) => {
+                // Keep origin and entries newer than timestamp
+                if let Some(origin) = self.entries.first().cloned() {
+                    self.entries.retain(|e| e.timestamp >= *timestamp || e.is_origin());
+                    if self.entries.is_empty() {
+                        self.entries.push(origin);
+                    }
+                }
+            }
+            PruningStrategy::MaxAge(max_age) => {
+                // Keep entries within max_age seconds of the newest
+                if let Some(newest) = self.entries.last().map(|e| e.timestamp) {
+                    let cutoff = newest.saturating_sub(*max_age);
+                    if let Some(origin) = self.entries.first().cloned() {
+                        self.entries.retain(|e| e.timestamp >= cutoff || e.is_origin());
+                        if self.entries.is_empty() {
+                            self.entries.push(origin);
+                        }
+                    }
+                }
+            }
+            PruningStrategy::Combined { keep_last_n, max_age_secs } => {
+                // Apply both constraints: keep last N AND within max age
+                if let Some(newest) = self.entries.last().map(|e| e.timestamp) {
+                    let cutoff = newest.saturating_sub(*max_age_secs);
+                    // First filter by age
+                    if let Some(origin) = self.entries.first().cloned() {
+                        self.entries.retain(|e| e.timestamp >= cutoff || e.is_origin());
+                        // Then apply keep_last_n
+                        if self.entries.len() > *keep_last_n && *keep_last_n > 0 {
+                            let origin = self.entries.remove(0);
+                            let keep_count = keep_last_n - 1;
+                            if self.entries.len() > keep_count {
+                                let start = self.entries.len() - keep_count;
+                                self.entries = self.entries.drain(start..).collect();
+                            }
+                            self.entries.insert(0, origin);
+                        }
+                        if self.entries.is_empty() {
+                            self.entries.push(origin);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns the chain as a slice.
+    pub fn as_slice(&self) -> &[ProvenanceEntry] {
+        &self.entries
     }
 }

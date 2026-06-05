@@ -535,7 +535,7 @@ class TestRuntimeRebinding:
         sys = RebindingSystem()
         sys.register_action("jump", ["space"])
         sys.register_action("crouch", ["ctrl"])
-        sys.register_action("move_up", ["w"])
+        sys.register_action("move_up", ["up"])
         return sys
 
     def test_rebind_action(self, system):
@@ -1091,7 +1091,7 @@ class TestRebindingIntegration:
 
     def test_controller_preset_workflow(self):
         """Simulate controller preset selection."""
-        system = RebindingSystem()
+        system = RebindingSystem(ConflictResolution.SWAP)
 
         system.register_action("jump", ["button_a"])
         system.register_action("attack", ["button_b"])

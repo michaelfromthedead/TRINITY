@@ -95,6 +95,10 @@ class InstanceBuffer:
 
     Contains packed instance data ready for GPU upload.
     Uses configurable sizes and validates against maximum capacity.
+
+    Args:
+        max_instances: Maximum number of instances this buffer can hold.
+                       Defaults to MAX_INSTANCES_PER_BATCH * 10 (10,000).
     """
     # Per-instance data packed for GPU
     transform_data: list[float] = field(default_factory=list)  # 4x4 matrices
@@ -103,8 +107,20 @@ class InstanceBuffer:
 
     instance_count: int = 0
     capacity: int = 0
-    max_capacity: int = field(default_factory=lambda: CROWD_RENDERER_CONFIG.MAX_INSTANCES_PER_BATCH * 10)
+    max_instances: int = field(default_factory=lambda: CROWD_RENDERER_CONFIG.MAX_INSTANCES_PER_BATCH * 10)
     dirty: bool = True
+
+    # Byte sizes per instance component (float32 = 4 bytes)
+    BYTES_PER_FLOAT: int = field(default=4, repr=False)
+    TRANSFORM_BYTES: int = field(default=64, repr=False)  # 16 floats * 4 bytes
+    ANIMATION_BYTES: int = field(default=16, repr=False)  # 4 floats * 4 bytes
+    COLOR_BYTES: int = field(default=16, repr=False)      # 4 floats * 4 bytes
+    BYTES_PER_INSTANCE: int = field(default=96, repr=False)  # Total: 64 + 16 + 16
+
+    @property
+    def max_capacity(self) -> int:
+        """Alias for max_instances for backward compatibility."""
+        return self.max_instances
 
     def clear(self) -> None:
         """Clear all instance data."""
@@ -123,9 +139,9 @@ class InstanceBuffer:
         Raises:
             InstanceBufferOverflowError: If count exceeds maximum capacity
         """
-        if count > self.max_capacity:
+        if count > self.max_instances:
             raise InstanceBufferOverflowError(
-                f"Cannot reserve {count} instances, maximum is {self.max_capacity}"
+                f"Cannot reserve {count} instances, maximum is {self.max_instances}"
             )
         self.capacity = count
         # Pre-allocate arrays with GPU alignment consideration
@@ -140,12 +156,13 @@ class InstanceBuffer:
         Raises:
             InstanceBufferOverflowError: If buffer at maximum capacity
         """
-        if self.instance_count >= self.capacity > 0:
-            # Need to grow
-            if self.capacity >= self.max_capacity:
-                raise InstanceBufferOverflowError(
-                    f"Instance buffer at maximum capacity ({self.max_capacity})"
-                )
+        # Check max capacity FIRST (independent of current capacity)
+        if self.instance_count >= self.max_instances:
+            raise InstanceBufferOverflowError(
+                f"Instance buffer at maximum capacity ({self.max_instances})"
+            )
+        # Then check if growth is needed
+        if self.instance_count >= self.capacity:
             self._grow()
 
         idx = self.instance_count
@@ -220,7 +237,7 @@ class InstanceBuffer:
             CROWD_RENDERER_CONFIG.DEFAULT_BUFFER_CAPACITY
         )
         # Clamp to maximum
-        new_capacity = min(new_capacity, self.max_capacity)
+        new_capacity = min(new_capacity, self.max_instances)
 
         growth = new_capacity - self.capacity
         if growth > 0:
@@ -230,9 +247,26 @@ class InstanceBuffer:
             self.capacity = new_capacity
 
     def get_memory_size_bytes(self) -> int:
-        """Calculate memory size in bytes."""
+        """Calculate total memory size in bytes for all allocated buffer space."""
         # Assuming float32 (4 bytes per float)
-        return (len(self.transform_data) + len(self.animation_data) + len(self.color_data)) * 4
+        return (len(self.transform_data) + len(self.animation_data) + len(self.color_data)) * self.BYTES_PER_FLOAT
+
+    def get_byte_size(self) -> int:
+        """Get the total byte size of all instances in the buffer.
+
+        Returns the total memory footprint of all instances:
+        - Per instance: 96 bytes (64 transform + 16 animation + 16 color)
+        - Total: instance_count * 96 bytes
+
+        Returns:
+            Total bytes used by all instances in the buffer.
+            Returns 0 for empty buffer.
+        """
+        return self.instance_count * self.BYTES_PER_INSTANCE
+
+    def get_used_memory_bytes(self) -> int:
+        """Calculate memory size in bytes for currently used instances only."""
+        return self.instance_count * self.BYTES_PER_INSTANCE
 
 
 @dataclass
@@ -249,6 +283,11 @@ class CrowdRenderBatch:
 
     visible: bool = True
     priority: RenderPriority = RenderPriority.NORMAL
+
+    @property
+    def instance_count(self) -> int:
+        """Number of instances in this batch."""
+        return len(self.instances)
 
     def add_instance(self, instance: CrowdInstance) -> int:
         """Add instance to batch."""
@@ -314,6 +353,16 @@ class CrowdRenderer:
     def batch_count(self) -> int:
         """Number of render batches."""
         return len(self._batches)
+
+    @property
+    def batches(self) -> dict[tuple[int, int], CrowdRenderBatch]:
+        """Dictionary of batches keyed by (mesh_id, material_id).
+
+        Provides direct access to batches for inspection and testing.
+        Instances are grouped by their mesh and material combination,
+        enabling efficient instanced rendering.
+        """
+        return self._batches
 
     def register_animation_atlas(self, name: str, atlas: AnimationTextureAtlas) -> None:
         """Register an animation texture atlas."""

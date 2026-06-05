@@ -68,7 +68,7 @@ struct TestVertex {
 /// Create a wgpu instance with all backends enabled.
 fn create_instance() -> wgpu::Instance {
     wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
+        backends: wgpu::Backends::VULKAN,
         ..Default::default()
     })
 }

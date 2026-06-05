@@ -73,32 +73,46 @@
 
 ---
 
-### T-IK-3.5: Two-Bone Soft IK
+### T-IK-3.5: Two-Bone Soft IK ✅ COMPLETE (2026-06-04)
 
 **Priority**: P1 (High)
 **Estimate**: 2 hours
 **Dependencies**: T-IK-3.4
+**Tests Added**: 20 new tests
 
 **Acceptance Criteria:**
-- [ ] SoftIKConfig dataclass
-- [ ] Exponential falloff implementation
-- [ ] `d_soft = d_start + (d_max - d_start) * (1 - e^(-k * overshoot))`
-- [ ] Smooth blending between hard and soft limits
-- [ ] Handle unreachable targets gracefully
+- [x] SoftIKConfig dataclass
+- [x] Exponential falloff implementation
+- [x] `d_soft = d_start + (d_max - d_start) * (1 - e^(-k * overshoot))`
+- [x] Smooth blending between hard and soft limits
+- [x] Handle unreachable targets gracefully
+
+**Implementation Notes:**
+- Added `SoftIkConfig` struct with `enabled`, `soft_start_ratio`, `falloff_rate` fields
+- Integrated into `TwoBoneIkParams` with builder methods
+- Modified `solve_two_bone_ik_world()` to use soft IK for unreachable targets
+- Added dependency: `glam = { version = "0.29", features = ["serde"] }`
 
 ---
 
-### T-IK-3.6: Two-Bone Pole Vector
+### T-IK-3.6: Two-Bone Pole Vector ✅ COMPLETE (2026-06-04)
 
 **Priority**: P1 (High)
 **Estimate**: 2 hours
 **Dependencies**: T-IK-3.4
+**Tests Added**: 7 new twist tests
 
 **Acceptance Criteria:**
-- [ ] Pole vector positioning
-- [ ] Plane projection for elbow/knee direction
-- [ ] Twist control
-- [ ] Handle pole vector at singular positions
+- [x] Pole vector positioning (pre-existing)
+- [x] Plane projection for elbow/knee direction (pre-existing)
+- [x] Twist control (NEW: `twist_angle` field, `with_twist()` builder)
+- [x] Handle pole vector at singular positions (fallback to perpendicular)
+
+**Implementation Notes:**
+- Added `twist_angle` field to `TwoBoneIkParams`
+- Added `with_twist()` and `with_twist_degrees()` builder methods
+- Twist rotates the IK plane around root-to-target axis
+- Improved singular pole vector handling with graceful fallback
 
 ---
 

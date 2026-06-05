@@ -1142,6 +1142,55 @@ class CombatAI:
         self._current_target = None
 
 
+# Import decorators and registry functions from submodules
+from .behavior_tree import behavior_tree
+from .ai_registry import bt_node, goap_action, consideration
+from .blackboard import blackboard as blackboard_decorator
+from .utility_ai import utility_ai
+
+
+def perception(
+    sense: Optional[str] = None,
+    name: Optional[str] = None,
+    sight_range: float = 50.0,
+    hearing_range: float = 30.0,
+):
+    """Decorator to register a perception configuration."""
+    def decorator(cls):
+        cls._perception = True
+        cls._perception_name = name or cls.__name__
+        cls._perception_sense = sense
+        cls._perception_sight_range = sight_range
+        cls._perception_hearing_range = hearing_range
+        return cls
+    return decorator
+
+
+def sense(
+    sense_type: str,
+    range: float = 50.0,
+):
+    """Decorator to register a sense configuration."""
+    def decorator(cls):
+        cls._sense = True
+        cls._sense_type = sense_type
+        cls._sense_range = range
+        return cls
+    return decorator
+
+
+def ai_debug(
+    enabled: bool = True,
+    log_decisions: bool = False,
+):
+    """Decorator to enable AI debugging on a class."""
+    def decorator(cls):
+        cls._ai_debug = enabled
+        cls._ai_debug_log_decisions = log_decisions
+        return cls
+    return decorator
+
+
 __all__ = [
     # Blackboard
     "BlackboardKey",
@@ -1181,4 +1230,14 @@ __all__ = [
     "CombatBehavior",
     "ThreatAssessment",
     "CombatAI",
+    # Decorators
+    "behavior_tree",
+    "bt_node",
+    "blackboard_decorator",
+    "goap_action",
+    "consideration",
+    "utility_ai",
+    "perception",
+    "sense",
+    "ai_debug",
 ]

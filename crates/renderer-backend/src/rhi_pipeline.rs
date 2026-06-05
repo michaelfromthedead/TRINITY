@@ -30,6 +30,18 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 }
 
 // ---------------------------------------------------------------------------
+// WGSL Validation (pre-validate before wgpu to avoid abort on invalid WGSL)
+// ---------------------------------------------------------------------------
+
+/// Validate WGSL source using naga. Returns Ok(()) if valid, Err(message) if invalid.
+/// This prevents wgpu from aborting the process on invalid shaders.
+fn validate_wgsl(source: &str) -> Result<(), String> {
+    naga::front::wgsl::parse_str(source)
+        .map(|_| ())
+        .map_err(|e| format!("WGSL parse error: {e}"))
+}
+
+// ---------------------------------------------------------------------------
 // VertexAttribute
 // ---------------------------------------------------------------------------
 
@@ -385,6 +397,10 @@ pub fn create_render_pipeline(
     depth: Option<DepthStencilState>,
     color_format: wgpu::TextureFormat,
 ) -> Result<RhiRenderPipeline, String> {
+    // -- Validate WGSL before passing to wgpu (prevents abort on invalid WGSL) --
+    validate_wgsl(vs_src).map_err(|e| format!("Vertex shader: {e}"))?;
+    validate_wgsl(fs_src).map_err(|e| format!("Fragment shader: {e}"))?;
+
     // -- Shader modules ----------------------------------------------------
     let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("RHI render vs"),
@@ -523,6 +539,9 @@ pub fn create_compute_pipeline(
     cs_src: &str,
     entry_point: &str,
 ) -> Result<RhiComputePipeline, String> {
+    // -- Validate WGSL before passing to wgpu (prevents abort on invalid WGSL) --
+    validate_wgsl(cs_src).map_err(|e| format!("Compute shader: {e}"))?;
+
     // -- Shader module -----------------------------------------------------
     let cs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("RHI compute cs"),
@@ -708,7 +727,7 @@ mod tests {
     /// is available.
     fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
         let adapter = pollster::block_on(instance.request_adapter(
@@ -862,7 +881,6 @@ mod tests {
     // Test disabled: wgpu 22 aborts on invalid WGSL instead of panicking,
     // so catch_unwind cannot catch the error.
     #[test]
-    #[ignore = "wgpu 22 aborts on invalid WGSL"]
     fn test_create_render_pipeline_invalid_wgsl() {
         let (device, _queue) = match create_test_device() {
             Some(d) => d,
@@ -1018,7 +1036,6 @@ mod tests {
     // Test disabled: wgpu 22 aborts on invalid WGSL instead of panicking,
     // so catch_unwind cannot catch the error.
     #[test]
-    #[ignore = "wgpu 22 aborts on invalid WGSL"]
     fn test_create_compute_pipeline_invalid_wgsl() {
         let (device, _queue) = match create_test_device() {
             Some(d) => d,

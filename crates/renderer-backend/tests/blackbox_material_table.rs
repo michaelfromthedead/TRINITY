@@ -68,6 +68,7 @@ fn default_pbr() -> MaterialTableEntry {
         emissive_texture_id: u32::MAX,
         flags: MATERIAL_FLAG_VISIBLE,
         alpha_cutoff: 0.5,
+        _pad: [0, 0],
     }
 }
 
@@ -179,6 +180,7 @@ fn entry_retrievable_by_index_with_all_pbr_fields() {
         emissive_texture_id: 15,
         flags: MATERIAL_FLAG_VISIBLE | MATERIAL_FLAG_DIRTY,
         alpha_cutoff: 0.45,
+        _pad: [0, 0],
     };
 
     let idx = table.add(entry);

@@ -190,6 +190,11 @@ class HoldTrigger(TriggerEvaluator):
                 self._state = TriggerState.STARTED
                 self._hold_time = 0.0
                 self._triggered = False
+                # Return STARTED on the first frame the input becomes active
+                return TriggerResult(
+                    TriggerState.STARTED, value,
+                    elapsed_time=0.0, progress=0.0
+                )
 
             self._hold_time += delta_time
             progress = min(1.0, self._hold_time / self._hold_duration)

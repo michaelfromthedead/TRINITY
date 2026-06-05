@@ -148,12 +148,18 @@ class MotionConfig:
     min_duration_multiplier: float = MIN_DURATION_MULTIPLIER
     max_duration_multiplier: float = MAX_DURATION_MULTIPLIER
 
+    # Reduced duration multiplier (applied when reduced motion is enabled)
+    reduced_duration_multiplier: float = 0.0
+
     # Category toggles
     enable_decorative: bool = True
     enable_parallax: bool = True
     enable_background: bool = True
     enable_hover: bool = True
     enable_attention: bool = True
+
+    # Essential animations control
+    allow_essential_animations: bool = True
 
     # Transition settings
     instant_transitions: bool = False  # Skip all transitions
@@ -218,33 +224,33 @@ class MotionChangeEvent:
 
 class MotionManager:
     """
-    Singleton manager for motion preferences.
+    Manager for motion preferences.
 
     Coordinates animation settings, system preference detection,
     and motion reduction across the UI system.
+
+    Supports both the test-expected interface (preference, prefers_reduced_motion,
+    animations_allowed, etc.) and internal interfaces.
     """
 
-    _instance: Optional["MotionManager"] = None
-
-    def __new__(cls) -> "MotionManager":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
-    def __init__(self) -> None:
-        if self._initialized:
-            return
-
-        self._initialized = True
-
+    def __init__(
+        self,
+        preference: Optional[MotionPreference] = None,
+        config: Optional[MotionConfig] = None,
+    ) -> None:
         # Configuration
-        self._config = MotionConfig()
+        self._config = config if config is not None else MotionConfig()
+
+        # Motion preference (simplified interface for tests)
+        self._preference = preference if preference is not None else MotionPreference.NO_PREFERENCE
 
         # Animation preferences registry
         self._animations: dict[str, AnimationPreference] = {}
 
-        # Callbacks
+        # Callbacks for preference changes (test interface: (old_pref, new_pref))
+        self._preference_callbacks: list[Callable[[MotionPreference, MotionPreference], None]] = []
+
+        # Callbacks for motion changes (internal interface)
         self._motion_callbacks: list[Callable[[MotionChangeEvent], None]] = []
 
         # Enabled state
@@ -253,10 +259,8 @@ class MotionManager:
         # System preference cache
         self._system_reduced_motion: bool = False
 
-    @classmethod
-    def reset_instance(cls) -> None:
-        """Reset the singleton instance (for testing)."""
-        cls._instance = None
+        # Flash warning state
+        self._flash_warning_enabled: bool = False
 
     @property
     def enabled(self) -> bool:
@@ -274,6 +278,67 @@ class MotionManager:
         return self._config
 
     @property
+    def preference(self) -> MotionPreference:
+        """Get the current motion preference."""
+        return self._preference
+
+    @preference.setter
+    def preference(self, value: MotionPreference) -> None:
+        """Set the motion preference."""
+        old_preference = self._preference
+        if old_preference == value:
+            return
+        self._preference = value
+        # Fire preference change callbacks
+        for callback in self._preference_callbacks:
+            callback(old_preference, value)
+
+    @property
+    def prefers_reduced_motion(self) -> bool:
+        """Check if user prefers reduced motion."""
+        return self._preference == MotionPreference.REDUCE
+
+    @property
+    def animations_allowed(self) -> bool:
+        """Check if animations are allowed."""
+        return self._preference == MotionPreference.NO_PREFERENCE
+
+    @property
+    def essential_animations_allowed(self) -> bool:
+        """Check if essential animations are allowed (always True unless explicitly disabled)."""
+        return self._config.allow_essential_animations
+
+    @property
+    def transitions_allowed(self) -> bool:
+        """Check if transitions are allowed."""
+        return self._preference == MotionPreference.NO_PREFERENCE
+
+    @property
+    def parallax_allowed(self) -> bool:
+        """Check if parallax effects are allowed."""
+        return self._preference == MotionPreference.NO_PREFERENCE
+
+    @property
+    def autoplay_allowed(self) -> bool:
+        """Check if video autoplay is allowed."""
+        return self._preference == MotionPreference.NO_PREFERENCE
+
+    @property
+    def blinking_allowed(self) -> bool:
+        """Check if blinking/flashing content is allowed."""
+        return self._preference == MotionPreference.NO_PREFERENCE
+
+    @property
+    def flash_warning_enabled(self) -> bool:
+        """Check if flash warning is enabled."""
+        return self._flash_warning_enabled
+
+    @flash_warning_enabled.setter
+    def flash_warning_enabled(self, value: bool) -> None:
+        """Enable or disable flash warning."""
+        self._flash_warning_enabled = value
+
+    @property
     def motion_level(self) -> ReducedMotionLevel:
         """Get the current motion reduction level."""
         return self._config.motion_level
@@ -286,7 +351,7 @@ class MotionManager:
     @property
     def is_reduced(self) -> bool:
         """Check if motion is currently reduced."""
-        return self._config.motion_level != ReducedMotionLevel.OFF
+        return self._preference != MotionPreference.NO_PREFERENCE
 
     @property
     def is_static(self) -> bool:
@@ -642,12 +707,86 @@ class MotionManager:
         for callback in self._motion_callbacks:
             callback(event)
 
+    # Test-expected interface methods
+    def get_animation_duration(self, base_duration: float) -> float:
+        """
+        Get the effective animation duration based on motion preference.
+
+        Args:
+            base_duration: The base duration in seconds
+
+        Returns:
+            The effective duration in seconds. Returns 0.0 when reduced motion
+            is enabled (unless a custom reduced_duration_multiplier is set).
+        """
+        if self._preference == MotionPreference.REDUCE:
+            return base_duration * self._config.reduced_duration_multiplier
+        return base_duration
+
+    def get_transition_duration(self, base_duration: float) -> float:
+        """
+        Get the effective transition duration based on motion preference.
+
+        Args:
+            base_duration: The base duration in seconds
+
+        Returns:
+            The effective duration in seconds. Returns 0.0 when reduced motion
+            is enabled (instant transitions).
+        """
+        if self._preference == MotionPreference.REDUCE:
+            return base_duration * self._config.reduced_duration_multiplier
+        return base_duration
+
+    def get_parallax_factor(self, base_factor: float) -> float:
+        """
+        Get the effective parallax factor based on motion preference.
+
+        Args:
+            base_factor: The base parallax factor
+
+        Returns:
+            The effective factor. Returns 0.0 when reduced motion is enabled.
+        """
+        if self._preference == MotionPreference.REDUCE:
+            return 0.0
+        return base_factor
+
+    def on_preference_changed(
+        self,
+        callback: Callable[[MotionPreference, MotionPreference], None],
+    ) -> None:
+        """
+        Add a callback for preference changes.
+
+        Args:
+            callback: Function called with (old_preference, new_preference)
+        """
+        self._preference_callbacks.append(callback)
+
+    def remove_preference_callback(
+        self,
+        callback: Callable[[MotionPreference, MotionPreference], None],
+    ) -> None:
+        """
+        Remove a preference change callback.
+
+        Args:
+            callback: The callback to remove
+        """
+        if callback in self._preference_callbacks:
+            self._preference_callbacks.remove(callback)
+
     # Utility
     def reset(self) -> None:
         """Reset all motion settings to defaults."""
         old_level = self._config.motion_level
         old_multiplier = self._config.duration_multiplier
 
+        # Reset preference to default
+        self._preference = MotionPreference.NO_PREFERENCE
+
+        # Reset config (preserve any essential settings)
         self._config = MotionConfig()
 
         self._fire_motion_change(

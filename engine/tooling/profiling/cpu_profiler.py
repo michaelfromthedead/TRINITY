@@ -440,6 +440,9 @@ class CPUProfiler:
         root = CallTreeNode(name="[root]", depth=-1)
         samples = self.get_samples(thread_id=thread_id)
 
+        # Sort samples by start_time to ensure parents are processed before children
+        samples = sorted(samples, key=lambda s: s.start_time)
+
         # Build parent-child relationships
         sample_map: Dict[int, CPUProfileSample] = {}
         for sample in samples:

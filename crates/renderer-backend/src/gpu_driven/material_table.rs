@@ -104,7 +104,7 @@ pub const MATERIAL_FLAG_VISIBLE: u32 = 0x0000_0001;
 /// texture bound." This is consistent with WGSL's `arrayLength` behaviour:
 /// an out-of-bounds index is never dereferenced -- shader helpers such as
 /// `material_has_albedo_texture` check the sentinel first.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C, align(16))]
 pub struct MaterialTableEntry {
     /// RGBA base colour (linear space).
@@ -131,9 +131,17 @@ pub struct MaterialTableEntry {
     pub flags: u32,
     /// Alpha-mask cutoff threshold (used when alpha-testing is enabled).
     pub alpha_cutoff: f32,
+    /// Explicit padding for 16-byte alignment (required for Pod).
+    pub _pad: [u32; 2],
 }
 
+/// Sentinel value for "no texture bound".
+pub const NO_TEXTURE: u32 = u32::MAX;
+
 impl MaterialTableEntry {
+    /// Sentinel value for "no texture bound".
+    pub const NO_TEXTURE: u32 = u32::MAX;
+
     /// Returns a zeroed material entry.
     ///
     /// All texture IDs are `u32::MAX` (no texture), the entry is marked
@@ -153,6 +161,41 @@ impl MaterialTableEntry {
             emissive_texture_id: u32::MAX,
             flags: 0,
             alpha_cutoff: 0.0,
+            _pad: [0; 2],
+        }
+    }
+
+    /// Create a new default material entry (visible, white base color).
+    pub fn new() -> Self {
+        Self {
+            base_color: [1.0, 1.0, 1.0, 1.0],
+            flags: MATERIAL_FLAG_VISIBLE,
+            ..Self::zeroed()
+        }
+    }
+
+    /// Create a new material entry with the given base color.
+    pub fn with_base_color_init(base_color: [f32; 4]) -> Self {
+        Self {
+            base_color,
+            flags: MATERIAL_FLAG_VISIBLE,
+            ..Self::zeroed()
+        }
+    }
+
+    /// Create an opaque material with the given base color.
+    pub fn opaque(base_color: [f32; 4]) -> Self {
+        Self::with_base_color_init(base_color)
+    }
+
+    /// Create a metallic material with the given base color and metallic value.
+    pub fn metallic(base_color: [f32; 4], metallic: f32) -> Self {
+        Self {
+            base_color,
+            metallic,
+            roughness: 0.5,
+            flags: MATERIAL_FLAG_VISIBLE,
+            ..Self::zeroed()
         }
     }
 
@@ -209,6 +252,244 @@ impl core::fmt::Display for MaterialTableEntry {
             self.flags,
             self.alpha_cutoff,
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility aliases (old field names)
+// ---------------------------------------------------------------------------
+
+impl MaterialTableEntry {
+    /// Alias for `albedo_texture_id` (old name: base_color_texture).
+    pub fn base_color_texture(&self) -> u32 {
+        self.albedo_texture_id
+    }
+
+    /// Alias for `normal_texture_id` (old name: normal_texture).
+    pub fn normal_texture(&self) -> u32 {
+        self.normal_texture_id
+    }
+
+    /// Alias for `metallic_roughness_texture_id` (old name: metallic_roughness_texture).
+    pub fn metallic_roughness_texture(&self) -> u32 {
+        self.metallic_roughness_texture_id
+    }
+
+    /// Alias for `emissive_texture_id` (old name: emissive_texture).
+    pub fn emissive_texture(&self) -> u32 {
+        self.emissive_texture_id
+    }
+
+    /// Alias for `base_color` (old name: base_color_factor).
+    pub fn base_color_factor(&self) -> [f32; 4] {
+        self.base_color
+    }
+
+    /// Alias for `metallic` (old name: metallic_factor).
+    pub fn metallic_factor(&self) -> f32 {
+        self.metallic
+    }
+
+    /// Alias for `roughness` (old name: roughness_factor).
+    pub fn roughness_factor(&self) -> f32 {
+        self.roughness
+    }
+
+    /// Alias for `emissive` (old name: emissive_factor).
+    pub fn emissive_factor(&self) -> [f32; 4] {
+        self.emissive
+    }
+
+    // -------------------------------------------------------------------------
+    // Builder methods for test compatibility
+    // -------------------------------------------------------------------------
+
+    /// Builder: set albedo texture ID.
+    pub fn with_albedo_texture_id(mut self, id: u32) -> Self {
+        self.albedo_texture_id = id;
+        self
+    }
+
+    /// Builder: set albedo texture ID (old name).
+    pub fn with_base_color_texture(self, id: u32) -> Self {
+        self.with_albedo_texture_id(id)
+    }
+
+    /// Builder: set normal texture ID.
+    pub fn with_normal_texture_id(mut self, id: u32) -> Self {
+        self.normal_texture_id = id;
+        self
+    }
+
+    /// Builder: set normal texture ID (old name).
+    pub fn with_normal_texture(self, id: u32) -> Self {
+        self.with_normal_texture_id(id)
+    }
+
+    /// Builder: set metallic-roughness texture ID.
+    pub fn with_metallic_roughness_texture_id(mut self, id: u32) -> Self {
+        self.metallic_roughness_texture_id = id;
+        self
+    }
+
+    /// Builder: set metallic-roughness texture ID (old name).
+    pub fn with_metallic_roughness_texture(self, id: u32) -> Self {
+        self.with_metallic_roughness_texture_id(id)
+    }
+
+    /// Builder: set emissive texture ID.
+    pub fn with_emissive_texture_id(mut self, id: u32) -> Self {
+        self.emissive_texture_id = id;
+        self
+    }
+
+    /// Builder: set emissive texture ID (old name).
+    pub fn with_emissive_texture(self, id: u32) -> Self {
+        self.with_emissive_texture_id(id)
+    }
+
+    /// Builder: set base color.
+    pub fn with_base_color(mut self, color: [f32; 4]) -> Self {
+        self.base_color = color;
+        self
+    }
+
+    /// Builder: set metallic value.
+    pub fn with_metallic(mut self, value: f32) -> Self {
+        self.metallic = value;
+        self
+    }
+
+    /// Builder: set roughness value.
+    pub fn with_roughness(mut self, value: f32) -> Self {
+        self.roughness = value;
+        self
+    }
+
+    /// Builder: set emissive color.
+    pub fn with_emissive(mut self, color: [f32; 4]) -> Self {
+        self.emissive = color;
+        self
+    }
+
+    /// Builder: set alpha cutoff.
+    pub fn with_alpha_cutoff(mut self, value: f32) -> Self {
+        self.alpha_cutoff = value;
+        self
+    }
+
+    /// Builder: set flags.
+    pub fn with_flags(mut self, flags: u32) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    /// Builder: mark as double-sided.
+    pub fn with_double_sided(mut self, double_sided: bool) -> Self {
+        if double_sided {
+            self.flags |= 0x0000_0002; // MATERIAL_DESC_FLAG_DOUBLE_SIDED
+        } else {
+            self.flags &= !0x0000_0002;
+        }
+        self
+    }
+
+    /// Builder: set alpha mask mode with cutoff value.
+    pub fn with_alpha_mask(mut self, cutoff: f32) -> Self {
+        self.flags |= 0x0000_0004; // MATERIAL_DESC_FLAG_ALPHA_MASK
+        self.flags &= !0x0000_0008; // Clear alpha blend (mutually exclusive)
+        self.alpha_cutoff = cutoff;
+        self
+    }
+
+    // -------------------------------------------------------------------------
+    // Texture presence checks
+    // -------------------------------------------------------------------------
+
+    /// Returns true if an albedo texture is bound.
+    pub fn has_albedo_texture(&self) -> bool {
+        self.albedo_texture_id != u32::MAX
+    }
+
+    /// Returns true if an albedo texture is bound (old name).
+    pub fn has_base_color_texture(&self) -> bool {
+        self.has_albedo_texture()
+    }
+
+    /// Returns true if a normal texture is bound.
+    pub fn has_normal_texture(&self) -> bool {
+        self.normal_texture_id != u32::MAX
+    }
+
+    /// Returns true if a metallic-roughness texture is bound.
+    pub fn has_metallic_roughness_texture(&self) -> bool {
+        self.metallic_roughness_texture_id != u32::MAX
+    }
+
+    /// Returns true if an emissive texture is bound.
+    pub fn has_emissive_texture(&self) -> bool {
+        self.emissive_texture_id != u32::MAX
+    }
+
+    /// Alias for has_albedo_texture (with _id suffix).
+    pub fn has_albedo_texture_id(&self) -> bool {
+        self.has_albedo_texture()
+    }
+
+    /// Alias for has_normal_texture (with _id suffix).
+    pub fn has_normal_texture_id(&self) -> bool {
+        self.has_normal_texture()
+    }
+
+    /// Alias for has_metallic_roughness_texture (with _id suffix).
+    pub fn has_metallic_roughness_texture_id(&self) -> bool {
+        self.has_metallic_roughness_texture()
+    }
+
+    /// Alias for has_emissive_texture (with _id suffix).
+    pub fn has_emissive_texture_id(&self) -> bool {
+        self.has_emissive_texture()
+    }
+
+    // -------------------------------------------------------------------------
+    // Flag query methods
+    // -------------------------------------------------------------------------
+
+    /// Returns true if double-sided rendering is enabled.
+    pub fn is_double_sided(&self) -> bool {
+        (self.flags & 0x0000_0002) != 0
+    }
+
+    /// Returns true if alpha mask mode is enabled.
+    pub fn is_alpha_mask(&self) -> bool {
+        (self.flags & 0x0000_0004) != 0
+    }
+
+    /// Returns true if alpha blend mode is enabled.
+    pub fn is_alpha_blend(&self) -> bool {
+        (self.flags & 0x0000_0008) != 0
+    }
+
+    /// Returns true if unlit mode is enabled.
+    pub fn is_unlit(&self) -> bool {
+        (self.flags & 0x0000_0010) != 0
+    }
+
+    /// Builder: set alpha blend mode.
+    pub fn with_alpha_blend(mut self) -> Self {
+        self.flags |= 0x0000_0008; // MATERIAL_DESC_FLAG_ALPHA_BLEND
+        self.flags &= !0x0000_0004; // Clear alpha mask (mutually exclusive)
+        self
+    }
+
+    /// Builder: set unlit mode.
+    pub fn with_unlit(mut self, unlit: bool) -> Self {
+        if unlit {
+            self.flags |= 0x0000_0010;
+        } else {
+            self.flags &= !0x0000_0010;
+        }
+        self
     }
 }
 
@@ -642,6 +923,7 @@ mod tests {
             emissive_texture_id: 16,
             flags: 0x8000_0001,
             alpha_cutoff: 0.5,
+            _pad: [0; 2],
         };
         let bytes = unsafe {
             core::slice::from_raw_parts(
@@ -722,6 +1004,7 @@ mod tests {
             emissive_texture_id: !0,
             flags: 0x8000_0001,
             alpha_cutoff: 0.5,
+            _pad: [0; 2],
         };
         let display = format!("{}", entry);
         assert!(display.contains("0.50"));
@@ -779,6 +1062,7 @@ mod tests {
             emissive_texture_id: 4,
             flags: 0x8000_0001,
             alpha_cutoff: 0.45,
+            _pad: [0; 2],
         });
         let entry = table.get(idx).unwrap();
         assert_eq!(entry.base_color, [0.1, 0.2, 0.3, 0.4]);
@@ -1240,6 +1524,7 @@ mod tests {
             emissive_texture_id: 3,
             flags: 0x8000_0001,
             alpha_cutoff: 0.5,
+            _pad: [0; 2],
         });
         let entry = table.get(idx).unwrap();
         assert_eq!(entry.metallic, 0.5);

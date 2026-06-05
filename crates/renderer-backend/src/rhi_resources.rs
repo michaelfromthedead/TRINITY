@@ -488,7 +488,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -507,7 +507,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -525,7 +525,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -543,7 +543,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -561,7 +561,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -587,7 +587,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -616,7 +616,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -644,7 +644,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -670,7 +670,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -697,7 +697,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -726,7 +726,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -744,7 +744,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -762,7 +762,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -782,7 +782,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -800,7 +800,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -825,7 +825,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -845,7 +845,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: true,
+                    force_fallback_adapter: false,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);

@@ -12,6 +12,12 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple
+from typing import runtime_checkable
+
+from engine.world.terrain.constants import (
+    DEFAULT_RESOLUTION,
+    HEIGHT_EPSILON,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -114,6 +120,7 @@ class BoundingBox:
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
+@runtime_checkable
 class Frustum(Protocol):
     """Protocol for view frustum used in culling."""
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from engine.audio.spatial.config import (
     DOPPLER_FACTOR,
@@ -23,11 +23,22 @@ from engine.audio.spatial.config import (
 from engine.core.math.vec import Vec3
 
 
+# Type alias for vector-like inputs (tuple or Vec3)
+VectorLike = Union[Vec3, Tuple[float, float, float]]
+
+
+def _to_vec3(v: VectorLike) -> Vec3:
+    """Convert a tuple or Vec3 to Vec3."""
+    if isinstance(v, Vec3):
+        return v
+    return Vec3(v[0], v[1], v[2])
+
+
 def calculate_doppler_shift(
-    source_pos: Vec3,
-    source_velocity: Vec3,
-    listener_pos: Vec3,
-    listener_velocity: Vec3,
+    source_pos: VectorLike,
+    source_velocity: VectorLike,
+    listener_pos: VectorLike,
+    listener_velocity: VectorLike,
     doppler_factor: float = DOPPLER_FACTOR,
     speed_of_sound: float = SPEED_OF_SOUND
 ) -> float:
@@ -40,18 +51,24 @@ def calculate_doppler_shift(
     Positive velocity = moving towards listener, negative = moving away.
 
     Args:
-        source_pos: Source position.
-        source_velocity: Source velocity vector.
-        listener_pos: Listener position.
-        listener_velocity: Listener velocity vector.
+        source_pos: Source position (Vec3 or tuple).
+        source_velocity: Source velocity vector (Vec3 or tuple).
+        listener_pos: Listener position (Vec3 or tuple).
+        listener_velocity: Listener velocity vector (Vec3 or tuple).
         doppler_factor: Exaggeration factor (1.0 = realistic).
         speed_of_sound: Speed of sound in units/second.
 
     Returns:
         Pitch multiplier (1.0 = no change, >1 = higher pitch, <1 = lower pitch).
     """
+    # Convert inputs to Vec3
+    src_pos = _to_vec3(source_pos)
+    src_vel = _to_vec3(source_velocity)
+    lst_pos = _to_vec3(listener_pos)
+    lst_vel = _to_vec3(listener_velocity)
+
     # Direction from source to listener
-    direction = listener_pos - source_pos
+    direction = lst_pos - src_pos
     distance = direction.length()
 
     if distance < 0.0001:
@@ -59,27 +76,90 @@ def calculate_doppler_shift(
 
     direction = direction / distance
 
-    # Project velocities onto the direction axis
-    # Positive = approaching, negative = receding
-    source_approach = -source_velocity.dot(direction)  # Negative because moving towards listener
-    listener_approach = listener_velocity.dot(direction)
+    # Project velocities onto the direction axis (source-to-listener direction)
+    # direction points from source toward listener
+    #
+    # For source velocity dotted with direction:
+    #   - If source moves TOWARD listener (approaching), velocity is opposite to direction
+    #     so dot product is NEGATIVE
+    #   - If source moves AWAY from listener (receding), velocity is same as direction
+    #     so dot product is POSITIVE
+    #
+    # For listener velocity dotted with direction:
+    #   - If listener moves TOWARD source (approaching), velocity is opposite to direction
+    #     so dot product is NEGATIVE
+    #   - If listener moves AWAY from source (receding), velocity is same as direction
+    #     so dot product is POSITIVE
+    #
+    # Classical Doppler formula: f' = f * (c + v_l) / (c - v_s)
+    # where v_s is positive when source approaches, v_l positive when listener approaches
+    #
+    # With our sign convention:
+    #   source_radial_vel > 0 means receding (should DECREASE pitch)
+    #   source_radial_vel < 0 means approaching (should INCREASE pitch)
+    #   listener_radial_vel > 0 means receding from source (should DECREASE pitch)
+    #   listener_radial_vel < 0 means approaching source (should INCREASE pitch)
+    source_radial_vel = src_vel.dot(direction)
+    listener_radial_vel = lst_vel.dot(direction)
 
     # Check velocity threshold
-    relative_velocity = abs(source_approach - listener_approach)
+    relative_velocity = abs(source_radial_vel - listener_radial_vel)
     if relative_velocity < DOPPLER_VELOCITY_THRESHOLD:
         return 1.0
 
     # Apply Doppler formula with factor
     # Scale velocities by Doppler factor for exaggeration
-    source_v = source_approach * doppler_factor
-    listener_v = listener_approach * doppler_factor
+    source_v = source_radial_vel * doppler_factor
+    listener_v = listener_radial_vel * doppler_factor
 
-    # Prevent division by zero or negative speed of sound
-    effective_source_speed = speed_of_sound + source_v
+    # Apply Doppler formula:
+    # f' = f * (c - v_listener) / (c - v_source)
+    #
+    # When source approaches (source_v < 0): denominator decreases -> pitch increases
+    # When source recedes (source_v > 0): denominator increases -> pitch decreases
+    # When listener approaches (listener_v < 0): numerator decreases -> pitch decreases (WRONG!)
+    #
+    # Actually, let's re-derive:
+    # - Listener moving toward source should INCREASE perceived frequency
+    # - With direction pointing from source to listener:
+    #   - listener_radial_vel < 0 means listener moving toward source
+    #
+    # Correct formula: f' = f * (c - listener_v) / (c - source_v)
+    # - source approaching (source_v < 0): c - source_v > c, denominator increases? NO
+    #
+    # Let's think again with concrete example:
+    # Source at (100,0,0), listener at (0,0,0), direction = (-1,0,0)
+    # Source velocity (-50,0,0) = moving toward listener
+    # source_radial_vel = (-50,0,0).dot((-1,0,0)) = 50
+    #
+    # Wait, that's positive! Let me recalculate:
+    # direction = listener_pos - source_pos = (0,0,0) - (100,0,0) = (-100,0,0)
+    # normalized = (-1,0,0)
+    # source_velocity = (-50,0,0) - this is moving in NEGATIVE x direction (toward origin/listener)
+    # source_radial_vel = (-50)*(-1) + 0 + 0 = 50 (POSITIVE)
+    #
+    # So source approaching = positive radial velocity!
+    #
+    # Correct formula: f' = f * (c + listener_v) / (c - source_v)
+    # When source approaches (source_v > 0): c - source_v < c, denominator decreases -> pitch UP
+    # When listener approaches (listener_v < 0): c + listener_v < c, numerator decreases -> pitch DOWN
+    # That's wrong for listener...
+    #
+    # Let's check listener approaching:
+    # Listener at (0,0,0), source at (100,0,0), direction = (-1,0,0)
+    # Listener velocity = (50,0,0) - moving toward source
+    # listener_radial_vel = (50)*(-1) + 0 + 0 = -50 (NEGATIVE)
+    #
+    # OK so listener approaching = negative radial velocity
+    #
+    # Final formula: f' = f * (c - listener_v) / (c - source_v)
+    # Source approaching (source_v > 0): c - source_v < c -> pitch UP (correct)
+    # Listener approaching (listener_v < 0): c - listener_v > c -> pitch UP (correct)
+    effective_source_speed = speed_of_sound - source_v
     if effective_source_speed <= 0.0:
         effective_source_speed = 0.01 * speed_of_sound
 
-    effective_listener_speed = speed_of_sound + listener_v
+    effective_listener_speed = speed_of_sound - listener_v
 
     # Calculate pitch shift
     shift = effective_listener_speed / effective_source_speed
@@ -139,11 +219,18 @@ class DopplerProcessor:
         self,
         doppler_factor: float = DOPPLER_FACTOR,
         speed_of_sound: float = SPEED_OF_SOUND,
-        smoothing_time: float = DOPPLER_SMOOTHING_TIME
+        smoothing_time: float = DOPPLER_SMOOTHING_TIME,
+        config: Optional["DopplerConfig"] = None
     ) -> None:
-        self._doppler_factor = doppler_factor
-        self._speed_of_sound = speed_of_sound
-        self._smoothing_time = smoothing_time
+        # If config is provided, use its values
+        if config is not None:
+            self._doppler_factor = config.factor
+            self._speed_of_sound = config.speed_of_sound
+            self._smoothing_time = config.smoothing_time
+        else:
+            self._doppler_factor = doppler_factor
+            self._speed_of_sound = speed_of_sound
+            self._smoothing_time = smoothing_time
         self._states: dict[int, DopplerState] = {}
 
     @property
@@ -259,6 +346,39 @@ class DopplerProcessor:
         """Get current pitch shift for a source without updating."""
         state = self._states.get(source_id)
         return state.current_shift if state else 1.0
+
+    def process(
+        self,
+        source_pos: VectorLike,
+        source_velocity: VectorLike,
+        listener_pos: VectorLike,
+        listener_velocity: VectorLike
+    ) -> float:
+        """Process Doppler effect for a single source (stateless convenience method).
+
+        This is a convenience method that directly computes the Doppler shift
+        without tracking state. For stateful processing with smoothing, use
+        the update() method.
+
+        Args:
+            source_pos: Source position (Vec3 or tuple).
+            source_velocity: Source velocity vector (Vec3 or tuple).
+            listener_pos: Listener position (Vec3 or tuple).
+            listener_velocity: Listener velocity vector (Vec3 or tuple).
+
+        Returns:
+            Pitch multiplier (1.0 = no change, >1 = higher pitch, <1 = lower pitch).
+        """
+        return calculate_doppler_shift(
+            source_pos, source_velocity,
+            listener_pos, listener_velocity,
+            self._doppler_factor,
+            self._speed_of_sound
+        )
+
+    def reset(self) -> None:
+        """Reset all processor state."""
+        self.clear_states()
 
 
 def estimate_arrival_time(

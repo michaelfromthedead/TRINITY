@@ -17,7 +17,7 @@
 // GAP: T-FG-9.3 GAP 2 -- FrameGraphStress
 
 use renderer_backend::frame_graph::{
-    build_dag, CompiledFrameGraph, CompilerStats, DispatchSource, EdgeType, InstanceSource, IrPass,
+    build_dag, CompiledFrameGraph, CompilerStats, DispatchSource, EdgeType, EmptyView, InstanceSource, IrPass,
     IrResource, PassIndex, PassType, PerfCounters, ResourceAccessSet, ResourceDesc, ResourceHandle,
     ResourceLifetime, ResourceState, ViewType,
 };
@@ -285,6 +285,8 @@ fn make_compute_pass(
         }),
         view_type: ViewType::Storage,
         tags: Vec::new(),
+        feature_flags: 0,
+        view: std::sync::Arc::new(EmptyView { name: name.to_string() }),
     }
 }
 
@@ -457,7 +459,7 @@ fn frame_graph_stress_1000_pass_full_compile() {
     verify_topological_order(&compiled.order, &compiled.passes, &compiled.edges);
 
     // CompilerStats must be populated.
-    let stats: CompilerStats = compiled.stats().clone();
+    let stats: CompilerStats = compiled.compiler_stats().clone();
     assert!(
         stats.passes_total > 0,
         "CompilerStats.passes_total should be > 0"

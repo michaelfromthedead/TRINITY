@@ -7,7 +7,7 @@
 // `renderer_backend::frame_graph` -- no internal fields, no private methods.
 //
 // Acceptance criterion (T-FG-3.3):
-//   greedy_color_resources(interference, resources) -> HashMap<ResourceHandle, usize>
+//   greedy_color_resources(interference, resources) -> HashMap<ResourceHandle, u32>
 //     assigns colours to resources using greedy largest-first graph colouring:
 //     resources are sorted by estimated byte size descending, then each is
 //     assigned the smallest non-negative integer colour not used by any
@@ -49,12 +49,11 @@
 //  15.  Resource not in any pass has no lifetime, is absent from colour map
 
 use renderer_backend::frame_graph::{
-    BufferDesc, DispatchSource, InstanceSource, InterferenceGraph, IrPass, IrResource,
+    BufferDesc, DispatchSource, EmptyView, InstanceSource, InterferenceGraph, IrPass, IrResource,
     PassIndex, PassType, ResourceAccessSet, ResourceDesc, ResourceHandle, ResourceLifetime,
     ResourceState, TextureDesc, ViewType,
     compute_lifetimes, greedy_color_resources, num_colors,
 };
-use std::collections::HashMap;
 use std::collections::HashMap;
 
 // =============================================================================
@@ -126,6 +125,7 @@ fn compute_pass(idx: usize, reads: &[ResourceHandle], writes: &[ResourceHandle])
         view_type: ViewType::Storage,
         tags: Vec::new(),
         feature_flags: 0,
+        view: std::sync::Arc::new(EmptyView { name: format!("pass{}", idx) }),
     }
 }
 
@@ -152,6 +152,7 @@ fn copy_pass(idx: usize, src: ResourceHandle, dst: ResourceHandle) -> IrPass {
         view_type: ViewType::StorageBuffer,
         tags: Vec::new(),
         feature_flags: 0,
+        view: std::sync::Arc::new(EmptyView { name: format!("copy{}", idx) }),
     }
 }
 
@@ -168,10 +169,10 @@ fn build_interference(
 fn run_greedy(
     resources: &[IrResource],
     passes: &[IrPass],
-) -> HashMap<ResourceHandle, usize> {
+) -> HashMap<ResourceHandle, u32> {
     let lifetimes = compute_lifetimes(passes, &[], resources);
     let ig = InterferenceGraph::build(resources, &lifetimes);
-    greedy_color_resources(&ig, resources, &lifetimes)
+    greedy_color_resources(&ig, resources)
 }
 
 // =============================================================================
@@ -196,7 +197,7 @@ fn empty_input_produces_empty_colour_map() {
 /// num_colours on an empty map returns 0.
 #[test]
 fn num_colors_empty_map_is_zero() {
-    let map: HashMap<ResourceHandle, usize> = HashMap::new();
+    let map: HashMap<ResourceHandle, u32> = HashMap::new();
     assert_eq!(num_colors(&map), 0, "Empty map has 0 colours");
 }
 
@@ -226,7 +227,7 @@ fn single_resource_gets_colour_zero() {
 #[test]
 fn num_colors_single_entry() {
     let mut map = HashMap::new();
-    map.insert(ResourceHandle(0), 0usize);
+    map.insert(ResourceHandle(0), 0u32);
     assert_eq!(num_colors(&map), 1);
 }
 
@@ -311,7 +312,7 @@ fn interfering_buffers_get_distinct_colours() {
     );
 
     // Colours should be 0 and 1 (smallest available).
-    let mut vals: Vec<usize> = colours.values().copied().collect();
+    let mut vals: Vec<u32> = colours.values().copied().collect();
     vals.sort();
     assert_eq!(vals, vec![0, 1], "Colours are 0 and 1");
     assert_eq!(num_colors(&colours), 2, "Two distinct colours");
@@ -506,7 +507,7 @@ fn complete_graph_k5_all_distinct() {
     assert_eq!(num_colors(&colours), 5, "Five distinct colours required");
 
     // Colours should be exactly {0, 1, 2, 3, 4}.
-    let mut vals: Vec<usize> = colours.values().copied().collect();
+    let mut vals: Vec<u32> = colours.values().copied().collect();
     vals.sort();
     assert_eq!(vals, vec![0, 1, 2, 3, 4], "Colours 0..4 assigned");
 }
@@ -799,7 +800,7 @@ fn num_colors_with_reused_colours() {
 fn num_colors_single_colour_many_handles() {
     let mut map = HashMap::new();
     for i in 0..100 {
-        map.insert(ResourceHandle(i), 0usize);
+        map.insert(ResourceHandle(i), 0u32);
     }
     assert_eq!(num_colors(&map), 1, "All resources share colour 0");
 }
@@ -877,7 +878,7 @@ fn resource_without_lifetime_still_gets_colour() {
 
     let lifetimes = compute_lifetimes(&passes, &[], &resources);
     let ig = InterferenceGraph::build(&resources, &lifetimes);
-    let colours = greedy_color_resources(&ig, &resources, &lifetimes);
+    let colours = greedy_color_resources(&ig, &resources);
 
     assert_eq!(
         colours.len(),
@@ -886,7 +887,7 @@ fn resource_without_lifetime_still_gets_colour() {
     );
     assert_eq!(
         *colours.get(&r0).unwrap(),
-        0,
+        0u32,
         "R0 gets colour 0",
     );
     assert_eq!(
@@ -934,8 +935,8 @@ fn interference_graph_reflects_read_write_lifetimes() {
     assert!(ig.interfere(r1, r2), "R1 and R2 interfere");
 
     // Greedy coloring gives all three distinct colours.
-    let lifetimes = compute_lifetimes(&passes, &[], &resources);
-    let colours = greedy_color_resources(&ig, &resources, &lifetimes);
+    let _lifetimes = compute_lifetimes(&passes, &[], &resources);
+    let colours = greedy_color_resources(&ig, &resources);
     assert_eq!(num_colors(&colours), 3);
 }
 
@@ -983,13 +984,13 @@ fn copy_pass_lifetimes_in_interference_graph() {
 fn many_non_interfering_resources_single_colour() {
     let n: usize = 50;
     let resources: Vec<IrResource> = (0..n)
-        .map(|i| buf(i as usize, &format!("res_{}", i), 1024))
+        .map(|i| buf(i as u32, &format!("res_{}", i), 1024))
         .collect();
-    let handles: Vec<ResourceHandle> = (0..n).map(|i| ResourceHandle(i as usize)).collect();
+    let handles: Vec<ResourceHandle> = (0..n).map(|i| ResourceHandle(i as u32)).collect();
 
     // Each resource used in its own dedicated pass -> no interference.
     let passes: Vec<IrPass> = (0..n)
-        .map(|i| compute_pass(i, &[ResourceHandle(i as usize)], &[]))
+        .map(|i| compute_pass(i, &[ResourceHandle(i as u32)], &[]))
         .collect();
 
     let colours = run_greedy(&resources, &passes);
@@ -1024,12 +1025,12 @@ fn colours_are_sequential_without_gaps() {
 
     let colours = run_greedy(&resources, &passes);
 
-    assert_eq!(num_colors(&colours), n as usize, "{} distinct colours", n);
+    assert_eq!(num_colors(&colours), n as u32, "{} distinct colours", n);
 
     // Colours should be exactly {0, 1, ..., n-1}.
-    let mut vals: Vec<usize> = colours.values().copied().collect();
+    let mut vals: Vec<u32> = colours.values().copied().collect();
     vals.sort();
-    let expected: Vec<usize> = (0..n as usize).collect();
+    let expected: Vec<u32> = (0..n as u32).collect();
     assert_eq!(vals, expected, "Colours are 0..{} without gaps", n - 1);
 }
 

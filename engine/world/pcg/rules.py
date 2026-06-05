@@ -21,6 +21,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from engine.world.pcg.constants import (
+    DEFAULT_NOISE_FREQUENCY,
+    DEFAULT_NOISE_THRESHOLD,
+)
 from engine.world.pcg.noise import NoiseGenerator, NoiseSettings, create_noise_generator, NoiseType
 
 

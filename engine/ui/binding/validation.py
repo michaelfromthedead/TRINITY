@@ -132,7 +132,7 @@ class RequiredValidator(IValidator[Any]):
         self,
         message: str = "This field is required",
         allow_whitespace: bool = False,
-        trigger: ValidationTrigger = ValidationTrigger.ON_BLUR,
+        trigger: ValidationTrigger = ValidationTrigger.ON_CHANGE,
     ):
         self._message = message
         self._allow_whitespace = allow_whitespace

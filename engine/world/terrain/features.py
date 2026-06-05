@@ -12,11 +12,18 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Protocol, Tuple
+from typing import runtime_checkable
+
+from engine.world.terrain.constants import (
+    DEFAULT_HOLE_RADIUS,
+    DEFAULT_SPLINE_SEGMENT_LENGTH,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
 
 
+@runtime_checkable
 class Heightfield(Protocol):
     """Protocol for heightfield data structures."""
 
@@ -52,6 +59,7 @@ class Heightfield(Protocol):
         ...
 
 
+@runtime_checkable
 class WeightMap(Protocol):
     """Protocol for terrain material weight maps."""
 

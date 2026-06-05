@@ -39,6 +39,8 @@ __all__ = [
     "FIXED32_SCALE",
     "Fixed16",
     "Fixed32",
+    "PCG64",
+    "QualityTier",
     "SystemPhase",
     "PoolConfig",
     "NetworkConfig",
@@ -493,6 +495,203 @@ class Fixed32:
 
     def __float__(self) -> float:
         return self.as_float
+
+
+# =============================================================================
+# QUALITY TIER ENUM
+# =============================================================================
+
+
+class QualityTier(IntEnum):
+    """Quality tier levels for graphics/performance settings."""
+
+    LOW = 0
+    MEDIUM = 1
+    HIGH = 2
+    ULTRA = 3
+
+    @property
+    def score(self) -> float:
+        """Get normalized score [0.0, 1.0] for this tier."""
+        if self.value == 0:
+            return 0.0
+        if self.value == 3:
+            return 1.0
+        return self.value / 3.0
+
+    @classmethod
+    def from_score(cls, score: float) -> "QualityTier":
+        """Create QualityTier from a normalized score [0.0, 1.0]."""
+        if score < 0.25:
+            return cls.LOW
+        if score < 0.5:
+            return cls.MEDIUM
+        if score < 0.75:
+            return cls.HIGH
+        return cls.ULTRA
+
+    def meets_requirement(self, required: "QualityTier") -> bool:
+        """Check if this tier meets the required tier level."""
+        return self.value >= required.value
+
+
+# =============================================================================
+# PCG64 RANDOM NUMBER GENERATOR
+# =============================================================================
+
+
+class PCG64:
+    """
+    PCG64 deterministic random number generator.
+
+    Implements PCG-XSH-RR with 64-bit state for deterministic
+    random number generation across platforms.
+    """
+
+    __slots__ = ("_state", "_inc")
+
+    # PCG multiplier and default increment
+    _MULTIPLIER = 6364136223846793005
+    _DEFAULT_INC = 1442695040888963407
+    _MASK64 = 0xFFFFFFFFFFFFFFFF
+    _MASK32 = 0xFFFFFFFF
+
+    def __init__(self, seed: int = 0, stream: int = 0):
+        """Initialize PCG64 with seed and optional stream."""
+        # Each stream gets a unique increment (must be odd)
+        self._inc = ((stream << 1) | 1) & self._MASK64
+        if self._inc == 0:
+            self._inc = self._DEFAULT_INC
+
+        # Initialize state
+        self._state = 0
+        self._advance()
+        self._state = (self._state + seed) & self._MASK64
+        self._advance()
+
+    def _advance(self) -> None:
+        """Advance internal state."""
+        self._state = (
+            (self._state * self._MULTIPLIER + self._inc) & self._MASK64
+        )
+
+    def _output(self, state: int) -> int:
+        """Generate output from state using XSH-RR."""
+        # PCG XSH-RR output function
+        xorshifted = (((state >> 18) ^ state) >> 27) & self._MASK32
+        rot = (state >> 59) & 31
+        return ((xorshifted >> rot) | (xorshifted << (32 - rot))) & self._MASK32
+
+    @classmethod
+    def from_seeds(cls, *seeds: int) -> "PCG64":
+        """Create PCG64 from multiple seeds combined via hashing."""
+        combined = 0
+        for i, seed in enumerate(seeds):
+            # Simple hash combining
+            combined ^= (seed + 0x9E3779B9 + (i << 6) + (i >> 2)) & cls._MASK64
+        return cls(seed=combined)
+
+    @classmethod
+    def from_state(cls, state: tuple[int, int]) -> "PCG64":
+        """Create PCG64 from saved state."""
+        rng = cls.__new__(cls)
+        rng._state = state[0]
+        rng._inc = state[1]
+        return rng
+
+    @property
+    def state(self) -> tuple[int, int]:
+        """Get current state as a tuple (state, inc)."""
+        return (self._state, self._inc)
+
+    def next_u32(self) -> int:
+        """Generate next 32-bit unsigned integer."""
+        old_state = self._state
+        self._advance()
+        return self._output(old_state)
+
+    def next_u64(self) -> int:
+        """Generate next 64-bit unsigned integer."""
+        high = self.next_u32()
+        low = self.next_u32()
+        return (high << 32) | low
+
+    def next_float(self) -> float:
+        """Generate next float in [0, 1)."""
+        return self.next_u32() / (self._MASK32 + 1)
+
+    def next_float64(self) -> float:
+        """Generate next double-precision float in [0, 1)."""
+        return self.next_u64() / (self._MASK64 + 1)
+
+    def next_int(self, low: int, high: int) -> int:
+        """Generate random integer in [low, high] inclusive."""
+        if low > high:
+            raise ValueError(f"low ({low}) must be <= high ({high})")
+        if low == high:
+            return low
+        range_size = high - low + 1
+        return low + (self.next_u32() % range_size)
+
+    def next_bool(self) -> bool:
+        """Generate random boolean."""
+        return (self.next_u32() & 1) == 1
+
+    def next_fixed16(self) -> "Fixed16":
+        """Generate random Fixed16 in [0, 1)."""
+        # Use lower 8 bits as fractional part
+        raw = self.next_u32() & 0xFF
+        return Fixed16.from_raw(raw)
+
+    def next_fixed32(self) -> "Fixed32":
+        """Generate random Fixed32 in [0, 1)."""
+        # Use lower 16 bits as fractional part
+        raw = self.next_u32() & 0xFFFF
+        return Fixed32.from_raw(raw)
+
+    def shuffle(self, items: list) -> None:
+        """Shuffle list in-place using Fisher-Yates."""
+        n = len(items)
+        for i in range(n - 1, 0, -1):
+            j = self.next_u32() % (i + 1)
+            items[i], items[j] = items[j], items[i]
+
+    def choice(self, items: list) -> Any:
+        """Choose random element from non-empty list."""
+        if not items:
+            raise ValueError("Cannot choose from empty list")
+        return items[self.next_u32() % len(items)]
+
+    def fork(self, fork_id: int) -> "PCG64":
+        """Create a new RNG with different stream derived from this one."""
+        # Combine current state with fork_id to create unique seed
+        child_seed = self._state ^ ((fork_id + 1) * 0x9E3779B97F4A7C15)
+        child_stream = (self._inc >> 1) ^ fork_id
+        return PCG64(seed=child_seed & self._MASK64, stream=child_stream)
+
+    def jump(self, steps: int) -> None:
+        """Advance state by specified number of steps."""
+        # Use fast exponentiation for jumping
+        if steps == 0:
+            return
+
+        cur_mult = self._MULTIPLIER
+        cur_plus = self._inc
+        acc_mult = 1
+        acc_plus = 0
+
+        while steps > 0:
+            if steps & 1:
+                acc_mult = (acc_mult * cur_mult) & self._MASK64
+                acc_plus = (acc_plus * cur_mult + cur_plus) & self._MASK64
+            cur_plus = ((cur_mult + 1) * cur_plus) & self._MASK64
+            cur_mult = (cur_mult * cur_mult) & self._MASK64
+            steps >>= 1
+
+        self._state = (acc_mult * self._state + acc_plus) & self._MASK64
+
+    def __repr__(self) -> str:
+        return f"PCG64(state=0x{self._state:016X}, inc=0x{self._inc:016X})"
 
 
 # =============================================================================

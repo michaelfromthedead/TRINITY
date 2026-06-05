@@ -5,7 +5,7 @@
 // no private methods, no implementation details.
 //
 // Contract:
-//   FrameGraphCompiler::new(passes, resources) creates a compiler with an
+//   FrameGraphCompiler::from_ir(passes, resources) creates a compiler with an
 //   unprocessed pass/resource list.  .compile() runs the full pipeline
 //   (build_dag -> topological_sort -> compute_lifetimes -> compute_barriers
 //   -> async_schedule -> eliminate_dead_passes) and returns
@@ -41,7 +41,7 @@
 //  17.  Compilation is idempotent (multiple compile() calls)
 //  18.  Resource lifetimes computed passed through correctly
 //
-use renderer_backend::frame_graph::{
+use renderer_backend::frame_graph::{EdgeType, 
     mock_pass_compute, mock_pass_graphics, mock_resource_buffer, mock_resource_texture,
     CompiledFrameGraph, CullStats, FrameGraphCompiler, IrEdge, IrPass, IrResource, PassIndex,
     ResourceHandle, ResourceState,
@@ -55,7 +55,7 @@ use renderer_backend::frame_graph::{
 fn new_with_empty_inputs_produces_empty_graph() {
     // FrameGraphCompiler::new with no passes and no resources.
     // compile() should succeed and return an empty CompiledFrameGraph.
-    let compiled = FrameGraphCompiler::new(vec![], vec![])
+    let compiled = FrameGraphCompiler::from_ir(vec![], vec![])
         .expect("empty graph compiles");
 
     assert!(
@@ -96,7 +96,7 @@ fn new_single_graphics_pass_compiles_with_correct_order() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "render", &[r])];
     let resources = vec![mock_resource_texture(r, "swapchain", 1920, 1080)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("single pass compiles");
 
     // Exactly one pass in output, one resource.
@@ -137,7 +137,7 @@ fn two_pass_chain_produces_correct_topological_order() {
     ];
     let resources = vec![mock_resource_texture(r, "albedo", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("two-pass chain compiles");
 
     // Two passes, correct order.
@@ -176,7 +176,7 @@ fn three_pass_sequential_chain() {
         mock_resource_buffer(r1, "intermediate", 4096),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("three-pass chain compiles");
 
     assert_eq!(
@@ -218,7 +218,7 @@ fn fan_in_two_producers_one_consumer() {
         mock_resource_buffer(r_buf, "sim_data", 8192),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("fan-in compiles");
 
     // P2 must be last in order (depends on both P0 and P1).
@@ -253,7 +253,7 @@ fn fan_out_one_producer_two_consumers() {
     ];
     let resources = vec![mock_resource_texture(r, "shadow_tex", 1024, 1024)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("fan-out compiles");
 
     // P0 must be first (producer). P1 and P2 come after.
@@ -285,13 +285,13 @@ fn dead_compute_pass_eliminated_in_compiled_output() {
     let passes = vec![mock_pass_compute(PassIndex(0), "orphan_writer", &[], &[r])];
     let resources = vec![mock_resource_buffer(r, "unused", 2048)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("dead pass compiles");
 
-    // The dead pass should be eliminated from the output passes.
-    assert!(
-        compiled.passes.is_empty(),
-        "dead pass eliminated from passes",
+    // The dead pass is retained in passes but eliminated from the execution order.
+    assert_eq!(
+        compiled.passes.len(), 1,
+        "pass retained in passes list",
     );
     assert!(compiled.order.is_empty(), "dead pass eliminated from order",);
     assert_eq!(
@@ -316,7 +316,7 @@ fn graphics_pass_never_eliminated_alone() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "unused_output", &[r])];
     let resources = vec![mock_resource_texture(r, "orphan_rt", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("graphics pass alone compiles");
 
     assert_eq!(
@@ -353,11 +353,12 @@ fn multiple_dead_compute_passes_all_eliminated() {
         mock_resource_buffer(ResourceHandle(4), "r4", 512),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("all-dead compiles");
 
-    // All passes eliminated.
-    assert!(compiled.passes.is_empty(), "no surviving passes");
+    // All passes eliminated from execution order but retained in passes list.
+    assert_eq!(compiled.passes.len(), 4, "all passes retained in list");
+    assert!(compiled.order.is_empty(), "no surviving passes in order");
     assert_eq!(
         compiled.eliminated_passes.len(),
         4,
@@ -393,7 +394,7 @@ fn dead_pass_with_large_texture_bytes_accounted() {
         2160,
     )];
 
-    let compiled = FrameGraphCompiler::new(vec![p], resources)
+    let compiled = FrameGraphCompiler::from_ir(vec![p], resources)
         .expect("large texture dead pass compiles");
 
     let stats = &compiled.cull_stats;
@@ -416,7 +417,7 @@ fn live_compute_pass_read_by_downstream_not_eliminated() {
     ];
     let resources = vec![mock_resource_buffer(r, "data", 1024)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("live compute chain compiles");
 
     // Both passes survive.
@@ -438,13 +439,12 @@ fn mixed_live_dead_passes() {
         mock_resource_buffer(ResourceHandle(2), "orphan_buf", 4096),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("mixed live/dead compiles");
 
-    // One pass survives (the other is eliminated -- which one depends on
-    // the compiler's Hash-based evaluation order, so we only verify counts).
-    assert_eq!(compiled.passes.len(), 1, "one surviving pass");
-    assert_eq!(compiled.order.len(), 1, "one entry in order");
+    // Both passes retained in list, but only one in execution order.
+    assert_eq!(compiled.passes.len(), 2, "both passes retained in list");
+    assert_eq!(compiled.order.len(), 1, "one entry in execution order");
     assert_eq!(
         compiled.eliminated_passes.len(), 1,
         "P1 eliminated",
@@ -488,7 +488,7 @@ fn cycle_detected_returns_err() {
         mock_resource_buffer(r2, "buf_b", 64),
     ];
 
-    let result = FrameGraphCompiler::new(passes, resources);
+    let result = FrameGraphCompiler::from_ir(passes, resources);
     // The compiler may not detect cycles formed solely by read->write
     // access patterns across two passes; verify compilation succeeds.
     assert!(result.is_ok(), "compiler accepts non-cyclic dependency pattern",);
@@ -507,7 +507,7 @@ fn self_referencing_pass_allowed() {
     }];
     let resources = vec![mock_resource_buffer(r, "self_buf", 128)];
 
-    let result = FrameGraphCompiler::new(passes, resources);
+    let result = FrameGraphCompiler::from_ir(passes, resources);
     assert!(
         result.is_ok(),
         "self-referencing pass (read+write same resource) compiles successfully",
@@ -529,7 +529,7 @@ fn compiled_graph_preserves_pass_count_and_order() {
     ];
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("pass preservation compiles");
 
     // Both passes survive in the output.
@@ -563,7 +563,7 @@ fn compiled_graph_preserves_resources() {
         mock_resource_buffer(r_dead, "orphan", 2048),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("resource preservation compiles");
 
     // Both resources survive in the output (resources are always preserved).
@@ -585,7 +585,7 @@ fn barriers_generated_between_dependent_passes() {
     ];
     let resources = vec![mock_resource_texture(r, "albedo", 1920, 1080)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("barrier generation compiles");
 
     // There should be at least one barrier command.
@@ -614,7 +614,7 @@ fn no_barriers_for_independent_passes() {
         mock_resource_texture(ResourceHandle(2), "ui_tex", 800, 600),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("independent passes compile");
 
     // Two passes, each uses its own resource, no edges, no barriers.
@@ -639,7 +639,7 @@ fn async_passes_field_present() {
     ];
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("async field present compiles");
 
     // The async_passes field must exist and be a Vec.
@@ -687,12 +687,12 @@ fn max_sequential_chain_depth() {
         ));
     }
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("10-pass chain compiles");
 
-    // 9 passes survive (P9 eliminated as dead -- its output R9 has no consumer).
-    assert_eq!(compiled.passes.len(), 9, "9 passes survive (P9 eliminated)");
-    assert_eq!(compiled.order.len(), 9, "9 entries in order");
+    // All passes retained, 9 in execution order (P9 eliminated as dead).
+    assert_eq!(compiled.passes.len(), 10, "all 10 passes retained in list");
+    assert_eq!(compiled.order.len(), 9, "9 entries in order (P9 eliminated)");
 
     // Order must be sequential: P0, P1, ..., P8.
     let expected_order: Vec<PassIndex> = (0..9).map(PassIndex).collect();
@@ -715,7 +715,7 @@ fn duplicate_resource_edges_not_duplicated() {
     }];
     let resources = vec![mock_resource_texture(r, "shared", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("dedup compiles");
 
     // Edges for (P0, P1, r) should appear exactly once.
@@ -742,7 +742,7 @@ fn pass_index_order_preserved() {
     ];
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("contiguous indices compile");
 
     // Both passes survive.
@@ -760,11 +760,11 @@ fn compile_called_multiple_times_is_idempotent() {
     let resources = vec![mock_resource_texture(r, "color", 800, 600)];
 
     // First compilation.
-    let compiled_a = FrameGraphCompiler::new(passes.clone(), resources.clone())
+    let compiled_a = FrameGraphCompiler::from_ir(passes.clone(), resources.clone())
         .expect("first compile");
 
     // Second compilation with identical inputs.
-    let compiled_b = FrameGraphCompiler::new(passes, resources)
+    let compiled_b = FrameGraphCompiler::from_ir(passes, resources)
         .expect("second compile");
 
     // Both produce the same number of passes and same order.
@@ -798,7 +798,7 @@ fn cull_stats_zero_on_all_live_graph() {
         mock_resource_buffer(r2, "data", 4096),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("all-live compiles");
 
     let stats = &compiled.cull_stats;
@@ -823,7 +823,7 @@ fn cull_stats_pre_elimination_total_includes_dead_passes() {
         mock_resource_buffer(ResourceHandle(3), "buf_b", 2048),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("mixed compiles");
 
     let stats = &compiled.cull_stats;
@@ -832,8 +832,9 @@ fn cull_stats_pre_elimination_total_includes_dead_passes() {
     assert_eq!(stats.passes_eliminated, 2, "two compute passes eliminated",);
     assert_eq!(stats.resources_freed, 2, "two unique resources freed");
     assert_eq!(stats.bytes_saved, 1024 + 2048, "both buffer sizes summed");
-    // Surviving passes: only the graphics pass.
-    assert_eq!(compiled.passes.len(), 1, "only graphics pass survives");
+    // All passes retained, only graphics pass in execution order.
+    assert_eq!(compiled.passes.len(), 3, "all passes retained in list");
+    assert_eq!(compiled.order.len(), 1, "only graphics pass in order");
 }
 
 #[test]
@@ -847,7 +848,7 @@ fn cull_stats_reports_resource_deduplication() {
     ];
     let resources = vec![mock_resource_buffer(r, "shared_buf", 4096)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("dedup resource compiles");
 
     let stats = &compiled.cull_stats;
@@ -877,7 +878,7 @@ fn pass_with_no_resources_compiles() {
         &[] as &[ResourceHandle],
     )];
 
-    let compiled = FrameGraphCompiler::new(passes, vec![])
+    let compiled = FrameGraphCompiler::from_ir(passes, vec![])
         .expect("no-resource pass compiles");
 
     // Pass survives (no writes = nothing to be unread = alive).
@@ -896,7 +897,7 @@ fn multiple_passes_no_resources_no_edges() {
         mock_pass_compute(PassIndex(2), "c", &[], &[]),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, vec![])
+    let compiled = FrameGraphCompiler::from_ir(passes, vec![])
         .expect("no-resource passes compile");
 
     assert_eq!(compiled.passes.len(), 3, "all three survive");
@@ -924,7 +925,7 @@ fn compiled_graph_fields_are_accessible() {
     let passes = vec![mock_pass_graphics(PassIndex(0), "test", &[r])];
     let resources = vec![mock_resource_texture(r, "color", 64, 64)];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("compiles for field access");
 
     // passes: Vec<IrPass>
@@ -935,8 +936,8 @@ fn compiled_graph_fields_are_accessible() {
     let _edges: &Vec<IrEdge> = &compiled.edges;
     // order: Vec<PassIndex>
     let _order: &Vec<PassIndex> = &compiled.order;
-    // barriers: Vec<(PassIndex, PassIndex, ResourceState, ResourceState)>
-    let _barriers: &Vec<(PassIndex, PassIndex, ResourceState, ResourceState)> = &compiled.barriers;
+    // barriers: Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)>
+    let _barriers: &Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)> = &compiled.barriers;
     // async_passes: Vec<(PassIndex, String)>
     let _async: &Vec<(PassIndex, String)> = &compiled.async_passes;
     // eliminated_passes: Vec<PassIndex>
@@ -975,7 +976,7 @@ fn barrier_tuple_fields_verify_shape() {
         mock_resource_buffer(r_buf, "data_buf", 4096),
     ];
 
-    let compiled = FrameGraphCompiler::new(passes, resources)
+    let compiled = FrameGraphCompiler::from_ir(passes, resources)
         .expect("barrier shape compiles");
 
     // Barriers are 4-tuples (from, to, before, after).
@@ -984,9 +985,11 @@ fn barrier_tuple_fields_verify_shape() {
         for cmd in &compiled.barriers {
             let _from: PassIndex = cmd.0;
             let _to: PassIndex = cmd.1;
-            let _before: ResourceState = cmd.2;
-            let _after: ResourceState = cmd.3;
-            let _ = (_from, _to, _before, _after);
+            let _resource: ResourceHandle = cmd.2;
+            let _edge_type: EdgeType = cmd.3;
+            let _before: ResourceState = cmd.4;
+            let _after: ResourceState = cmd.5;
+            let _ = (_from, _to, _resource, _edge_type, _before, _after);
         }
     }
 }

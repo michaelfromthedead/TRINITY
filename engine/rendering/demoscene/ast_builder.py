@@ -2,7 +2,7 @@ from __future__ import annotations
 import ast, inspect, textwrap
 from typing import Any, Callable, Optional, Sequence, Union
 from .ast_nodes import (
-    Axis, BendNode, BoxNode, CellIdNode, CombineNode, CompensationNode,
+    Axis, BendNode, BoxNode, CapsuleNode, CellIdNode, CombineNode, CompensationNode,
     ConeNode, CylinderNode, DomainOpNode, ExprNode, FloatNode,
     IntersectionNode, KifsNode, MirrorNode, PlaneNode,
     PositionNode, RepeatNode, SceneGraph, SdfPrimitiveNode, SphereNode,
@@ -45,6 +45,7 @@ _PRIMITIVE_DISPATCH = {
     "sdCylinder": lambda p, h=2.0, r=1.0: CylinderNode(PositionNode() if isinstance(p, PositionNode) else p, _to_float(h), _to_float(r)),
     "sdCone": lambda p, h=2.0, r1=0.0, r2=1.0: ConeNode(PositionNode() if isinstance(p, PositionNode) else p, _to_float(h), _to_float(r1), _to_float(r2)),
     "sdPlane": lambda p, nx=0.0, ny=1.0, nz=0.0, d=0.0: PlaneNode(PositionNode() if isinstance(p, PositionNode) else p, Vec3Node(_to_float(nx).value, _to_float(ny).value, _to_float(nz).value), _to_float(d)),
+    "sdCapsule": lambda p, a=(0.0, -1.0, 0.0), b=(0.0, 1.0, 0.0), r=0.5: CapsuleNode(PositionNode() if isinstance(p, PositionNode) else p, _to_vec3(a), _to_vec3(b), _to_float(r)),
 }
 
 _MARKER_DISPATCH = {
@@ -61,6 +62,7 @@ _MARKER_DISPATCH = {
     "cylinder": lambda **kw: CylinderNode(kw.get("position", PositionNode()), _to_float(kw.get("height", 2.0)), _to_float(kw.get("radius", 1.0))),
     "cone": lambda **kw: ConeNode(kw.get("position", PositionNode()), _to_float(kw.get("height", 2.0)), _to_float(kw.get("radius_top", 0.0)), _to_float(kw.get("radius_bottom", 1.0))),
     "plane": lambda **kw: PlaneNode(kw.get("position", PositionNode()), _to_vec3(kw.get("normal", (0,1,0))), _to_float(kw.get("distance", 0.0))),
+    "capsule": lambda **kw: CapsuleNode(kw.get("position", PositionNode()), _to_vec3(kw.get("endpoint_a", (0,-1,0))), _to_vec3(kw.get("endpoint_b", (0,1,0))), _to_float(kw.get("radius", 0.5))),
 }
 
 _COMPOSITE_DISPATCH = {**_COMPOSITION_DISPATCH, **_PRIMITIVE_DISPATCH}

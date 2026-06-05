@@ -392,10 +392,10 @@ class EventTrigger(TriggerBase):
 
         if self._auto_reset:
             if self._reset_delay > 0:
+                # Schedule reset but keep ACTIVE state during delay
                 self._pending_reset = True
                 self._reset_timer = self._reset_delay
-                # Use PENDING state to indicate waiting for reset
-                self._set_state(TriggerState.PENDING)
+                # Stay ACTIVE during the delay period
             else:
                 self._set_state(TriggerState.INACTIVE)
                 self._event_fired = False
@@ -550,7 +550,12 @@ class DataTrigger(TriggerBase, Generic[T]):
         Returns:
             Self for chaining
         """
-        self._data_source = ref(source)
+        try:
+            self._data_source = ref(source)
+        except TypeError:
+            # Some objects (like dicts) can't be weakly referenced
+            # Store a direct reference in that case
+            self._data_source = lambda: source  # type: ignore
         return self
 
     def unbind(self) -> DataTrigger[T]:

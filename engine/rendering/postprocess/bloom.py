@@ -782,6 +782,10 @@ class BloomEffect(PostProcessEffect[BloomSettings]):
 
         color_input = inputs.get("color")
 
+        # Early exit if no valid input buffer - skip expensive CPU operations
+        if color_input is None:
+            return
+
         for i in range(self._downsample.mip_count):
             source = self._bright_pass_buffer if i == 0 else self._downsample.get_mip_buffer(i - 1)
             self._downsample.downsample(source, i)

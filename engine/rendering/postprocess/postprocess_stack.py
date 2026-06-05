@@ -38,15 +38,6 @@ if TYPE_CHECKING:
     from engine.rendering.framegraph.pass_node import PassNode
 
 
-class BlendMode(Enum):
-    """Blend modes for effect parameter interpolation."""
-
-    LERP = auto()  # Linear interpolation
-    OVERRIDE = auto()  # Complete override
-    ADDITIVE = auto()  # Additive blend
-    MULTIPLY = auto()  # Multiplicative blend
-
-
 class EffectPriority(Enum):
     """Priority levels for effect execution order."""
 
@@ -882,6 +873,9 @@ class PostProcessStack:
         self._quality: EffectQuality = quality
         self._quality_preset: QualityPreset = QUALITY_PRESETS[quality]
         self._frame_index: int = 0
+        self._intermediate_mgr: IntermediateTargetManager = IntermediateTargetManager(
+            format=self._config.intermediate_format,
+        )
 
     @property
     def config(self) -> PostProcessStackConfig:
@@ -1095,44 +1089,62 @@ class PostProcessStack:
         effect as input to the next. Skips effects filtered by
         quality preset or individual state.
 
+        Volume blending temporarily modifies effect settings during
+        execution, then restores them afterward to preserve the
+        original settings.
+
         Args:
             hdr_input: HDR scene color input.
             output: Final output resource.
             context: PostProcessContext with per-frame state.
         """
+        # Save original settings before volume blending
+        saved_settings: Dict[str, Any] = {}
         if context.camera_position and self._volumes:
+            for effect in self._effects:
+                if effect.settings is not None:
+                    # Deep copy the settings to preserve original state
+                    import copy
+                    saved_settings[effect.name] = copy.deepcopy(effect.settings)
             self._apply_volume_blending(context.camera_position)
 
-        current_input = hdr_input
-        candidate_effects = self.get_active_effects()
+        try:
+            current_input = hdr_input
+            candidate_effects = self.get_active_effects()
 
-        for i, effect in enumerate(candidate_effects):
-            if not effect.should_execute(context, self._quality_preset):
-                continue
+            for i, effect in enumerate(candidate_effects):
+                if not effect.should_execute(context, self._quality_preset):
+                    continue
 
-            is_last = i == len(candidate_effects) - 1
-            current_output = output if is_last else self._get_intermediate_target(i)
+                is_last = i == len(candidate_effects) - 1
+                current_output = output if is_last else self._get_intermediate_target(i)
 
-            inputs = {"color": current_input}
-            outputs = {"color": current_output}
+                inputs = {"color": current_input}
+                outputs = {"color": current_output}
 
-            if context.rhi_command_list is not None:
-                effect.execute_on_rhi(
-                    context.rhi_command_list,
-                    inputs,
-                    outputs,
-                    context,
-                )
-            else:
-                effect.execute_with_context(inputs, outputs, context)
+                if context.rhi_command_list is not None:
+                    effect.execute_on_rhi(
+                        context.rhi_command_list,
+                        inputs,
+                        outputs,
+                        context,
+                    )
+                else:
+                    effect.execute_with_context(inputs, outputs, context)
 
-            current_input = current_output
+                current_input = current_output
 
-        self._frame_index += 1
+            self._frame_index += 1
 
-        self._current_history_index = (
-            self._current_history_index + 1
-        ) % self._config.history_buffer_count
+            self._current_history_index = (
+                self._current_history_index + 1
+            ) % self._config.history_buffer_count
+        finally:
+            # Restore original settings after execution
+            for effect_name, original_settings in saved_settings.items():
+                effect = self._effect_map.get(effect_name)
+                if effect is not None:
+                    effect._settings = original_settings
 
     def _get_intermediate_target(self, index: int) -> Any:
         """Get an intermediate render target for ping-pong rendering.
@@ -1748,7 +1760,6 @@ class PostProcessVolume:
 
 
 __all__ = [
-    "BlendMode",
     "EffectPriority",
     "EffectQuality",
     "ExecutionFlags",

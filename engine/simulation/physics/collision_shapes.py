@@ -1030,6 +1030,207 @@ class CylinderShape(CollisionShape):
         return f"CylinderShape(radius={self._radius:.3f}, height={self._height:.3f})"
 
 
+class ConeShape(CollisionShape):
+    """
+    Cone collision shape.
+
+    A cone aligned along the Y axis with apex at the top (positive Y)
+    and base at the bottom (negative Y).
+    """
+
+    def __init__(
+        self,
+        radius: float = 0.5,
+        height: float = 1.0,
+        local_offset: Vector3 = (0.0, 0.0, 0.0),
+        local_rotation: Quaternion = (0.0, 0.0, 0.0, 1.0),
+        is_trigger: bool = False,
+    ):
+        """
+        Initialize cone shape.
+
+        Args:
+            radius: Base radius of the cone
+            height: Total height of the cone
+            local_offset: Position offset from body center
+            local_rotation: Rotation offset as quaternion
+            is_trigger: If True, shape doesn't generate physics response
+        """
+        super().__init__(
+            local_offset=local_offset,
+            local_rotation=local_rotation,
+            is_trigger=is_trigger
+        )
+        self._radius = max(MIN_SHAPE_RADIUS, radius)
+        self._height = max(MIN_SHAPE_DIMENSION, height)
+
+    @property
+    def shape_type(self) -> ShapeType:
+        return ShapeType.CONE
+
+    @property
+    def radius(self) -> float:
+        """Get cone base radius."""
+        return self._radius
+
+    @radius.setter
+    def radius(self, value: float) -> None:
+        """Set cone base radius."""
+        self._radius = max(0.001, value)
+        self._invalidate_cache()
+
+    @property
+    def height(self) -> float:
+        """Get cone height."""
+        return self._height
+
+    @height.setter
+    def height(self, value: float) -> None:
+        """Set cone height."""
+        self._height = max(0.001, value)
+        self._invalidate_cache()
+
+    @property
+    def half_height(self) -> float:
+        """Get half height."""
+        return self._height * 0.5
+
+    def compute_aabb(
+        self,
+        position: Vector3 = (0.0, 0.0, 0.0),
+        rotation: Quaternion = (0.0, 0.0, 0.0, 1.0)
+    ) -> AABB:
+        hh = self._height * 0.5
+        r = self._radius
+
+        # Sample points: apex and base circle
+        points = [(0.0, hh, 0.0)]  # apex
+        for angle in range(8):
+            a = angle * math.pi / 4
+            x = r * math.cos(a)
+            z = r * math.sin(a)
+            points.append((x, -hh, z))  # base circle
+
+        # Transform all points
+        min_x = min_y = min_z = float('inf')
+        max_x = max_y = max_z = float('-inf')
+
+        for p in points:
+            # Apply local rotation
+            rotated = _rotate_vector(p, self._local_rotation)
+            local_point = _vector_add(rotated, self._local_offset)
+            # Apply body rotation
+            world_rotated = _rotate_vector(local_point, rotation)
+            world_point = _vector_add(world_rotated, position)
+
+            min_x = min(min_x, world_point[0])
+            min_y = min(min_y, world_point[1])
+            min_z = min(min_z, world_point[2])
+            max_x = max(max_x, world_point[0])
+            max_y = max(max_y, world_point[1])
+            max_z = max(max_z, world_point[2])
+
+        m = self._margin
+        return AABB(
+            min_point=(min_x - m, min_y - m, min_z - m),
+            max_point=(max_x + m, max_y + m, max_z + m),
+        )
+
+    def compute_mass_properties(self, density: float = 1000.0) -> MassProperties:
+        r = self._radius
+        h = self._height
+
+        # Cone volume: (1/3) * pi * r^2 * h
+        volume = (1.0 / 3.0) * math.pi * r * r * h
+        mass = volume * density
+
+        # Cone inertia about apex-to-base axis (Y):
+        # Iyy = (3/10) * m * r^2
+        iyy = (3.0 / 10.0) * mass * r * r
+
+        # Cone inertia about perpendicular axes through center of mass:
+        # Ixx = Izz = (3/80) * m * (4 * r^2 + h^2)
+        # But we compute inertia about the geometric center (origin at center of height)
+        # Center of mass is at h/4 from base = -h/4 from center
+        # For a cone with apex at +h/2 and base at -h/2:
+        # COM is at y = -h/4 from center (3/4 * h from apex, 1/4 * h from base)
+
+        # Inertia about COM:
+        # Ixx = Izz = (3/80) * m * (4*r^2 + h^2)
+        ixx = (3.0 / 80.0) * mass * (4 * r * r + h * h)
+        izz = ixx
+
+        # Center of mass is at 1/4 height from base, or -h/4 from geometric center
+        com_y = -h / 4.0
+        center_of_mass = _vector_add(self._local_offset, (0.0, com_y, 0.0))
+
+        return MassProperties(
+            mass=mass,
+            center_of_mass=center_of_mass,
+            inertia_tensor=(
+                (ixx, 0.0, 0.0),
+                (0.0, iyy, 0.0),
+                (0.0, 0.0, izz),
+            ),
+        )
+
+    def get_support_point(self, direction: Vector3) -> Vector3:
+        d = _vector_normalize(direction)
+        hh = self._height * 0.5
+
+        # Check if apex is the support point
+        # The cone surface normal makes angle arctan(r/h) with Y axis
+        # If direction.y > cos(angle) * |direction|, apex is support
+        slant_angle = math.atan2(self._radius, self._height)
+        cos_angle = math.cos(slant_angle)
+
+        if d[1] > cos_angle:
+            # Apex is support point
+            return _vector_add(self._local_offset, (0.0, hh, 0.0))
+        else:
+            # Base circle is support - find point on base furthest in direction
+            radial_len = math.sqrt(d[0] * d[0] + d[2] * d[2])
+            if radial_len > FLOAT_COMPARISON_EPSILON:
+                x = self._radius * d[0] / radial_len
+                z = self._radius * d[2] / radial_len
+            else:
+                x = z = 0.0
+            return _vector_add(self._local_offset, (x, -hh, z))
+
+    def contains_point(self, point: Vector3) -> bool:
+        local = _vector_sub(point, self._local_offset)
+        hh = self._height * 0.5
+
+        # Check height bounds
+        if local[1] > hh or local[1] < -hh:
+            return False
+
+        # Radius at this height (linearly interpolates from r at base to 0 at apex)
+        t = (local[1] + hh) / self._height  # 0 at base, 1 at apex
+        radius_at_height = self._radius * (1.0 - t)
+
+        dist_sq = local[0] * local[0] + local[2] * local[2]
+        return dist_sq <= radius_at_height * radius_at_height
+
+    def copy(self) -> 'ConeShape':
+        return ConeShape(
+            radius=self._radius,
+            height=self._height,
+            local_offset=self._local_offset,
+            local_rotation=self._local_rotation,
+            is_trigger=self._is_trigger,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = super().to_dict()
+        d['radius'] = self._radius
+        d['height'] = self._height
+        return d
+
+    def __repr__(self) -> str:
+        return f"ConeShape(radius={self._radius:.3f}, height={self._height:.3f})"
+
+
 class ConvexHullShape(CollisionShape):
     """
     Convex hull collision shape.
@@ -1592,6 +1793,14 @@ def create_shape(shape_type: ShapeType, **kwargs) -> CollisionShape:
         )
     elif shape_type == ShapeType.CYLINDER:
         return CylinderShape(
+            radius=kwargs.get('radius', 0.5),
+            height=kwargs.get('height', 1.0),
+            local_offset=kwargs.get('local_offset', (0.0, 0.0, 0.0)),
+            local_rotation=kwargs.get('local_rotation', (0.0, 0.0, 0.0, 1.0)),
+            is_trigger=kwargs.get('is_trigger', False),
+        )
+    elif shape_type == ShapeType.CONE:
+        return ConeShape(
             radius=kwargs.get('radius', 0.5),
             height=kwargs.get('height', 1.0),
             local_offset=kwargs.get('local_offset', (0.0, 0.0, 0.0)),

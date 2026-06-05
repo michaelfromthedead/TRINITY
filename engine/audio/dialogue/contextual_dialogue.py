@@ -340,7 +340,7 @@ class ContextualDialogueManager:
         """Add a line to an existing pool."""
         with self._lock:
             pool = self._pools.get(pool_id)
-            if pool:
+            if pool is not None:
                 pool.add_line(line)
                 return True
             return False

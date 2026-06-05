@@ -18,7 +18,20 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
+
+from engine.world.pcg.constants import (
+    DEFAULT_NOISE_FREQUENCY,
+    DEFAULT_NOISE_OCTAVES,
+    DEFAULT_NOISE_LACUNARITY,
+    DEFAULT_NOISE_PERSISTENCE,
+    DEFAULT_NOISE_AMPLITUDE,
+    PERLIN_PERMUTATION_SIZE,
+    SIMPLEX_F2,
+    SIMPLEX_G2,
+    SIMPLEX_F3,
+    SIMPLEX_G3,
+)
 
 
 class NoiseType(Enum):
@@ -911,21 +924,30 @@ class FractalNoise:
             y: Y coordinate
 
         Returns:
-            Noise value in range [-1, 1] (approximate)
+            Noise value (approximate range depends on parameters)
         """
         total = 0.0
         frequency = 1.0
         amplitude = 1.0
-        max_amplitude = 0.0
 
-        for _ in range(self._octaves):
-            total += self._base_noise.sample(x * frequency, y * frequency) * amplitude
-            max_amplitude += amplitude
+        for i in range(self._octaves):
+            # Per-octave offset to decorrelate octaves.
+            # Octave 0 has no offset to preserve "1 octave = base noise" identity.
+            # Moderate offsets decorrelate without breaking variance properties.
+            offset_x = i * 7.31831  # Irrational for good distribution
+            offset_y = i * 5.22474  # Different irrational
+            total += self._base_noise.sample(
+                x * frequency + offset_x,
+                y * frequency + offset_y
+            ) * amplitude
             amplitude *= self._persistence
             frequency *= self._lacunarity
 
-        # Normalize
-        return total / max_amplitude
+        # Standard fBm without forced normalization.
+        # With persistence < 1, the sum of amplitudes is bounded:
+        # 1 + p + p^2 + ... = 1/(1-p) for p < 1
+        # For p = 0.5, max sum ~ 2, so output is roughly in [-2, 2]
+        return total
 
     def sample_3d(self, x: float, y: float, z: float) -> float:
         """
@@ -937,22 +959,26 @@ class FractalNoise:
             z: Z coordinate
 
         Returns:
-            Noise value in range [-1, 1] (approximate)
+            Noise value (approximate range depends on parameters)
         """
         total = 0.0
         frequency = 1.0
         amplitude = 1.0
-        max_amplitude = 0.0
 
-        for _ in range(self._octaves):
+        for i in range(self._octaves):
+            # Per-octave offset to decorrelate octaves (same as 2D)
+            offset_x = i * 7.31831
+            offset_y = i * 5.22474
+            offset_z = i * 3.14159
             total += self._base_noise.sample_3d(
-                x * frequency, y * frequency, z * frequency
+                x * frequency + offset_x,
+                y * frequency + offset_y,
+                z * frequency + offset_z
             ) * amplitude
-            max_amplitude += amplitude
             amplitude *= self._persistence
             frequency *= self._lacunarity
 
-        return total / max_amplitude
+        return total
 
 
 class NoiseMap:
@@ -1162,7 +1188,7 @@ def create_noise_generator(
     noise_type: NoiseType,
     seed: int = 0,
     settings: Optional[NoiseSettings] = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> NoiseGenerator:
     """
     Factory function to create noise generators.
