@@ -4,12 +4,52 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.4
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.5
 
-**Task:** Rust parser  
-**Branch:** `task/T-HARNESS-1.4`  
+**Task:** Python parser  
+**Branch:** `task/T-HARNESS-1.5`  
 **Phase:** 1 — Infrastructure  
 **Status:** IN_PROGRESS
+
+### Deliverables
+- [ ] Implement `PythonParser` with rustpython_parser + tree-sitter
+- [ ] Extract: functions, classes, methods, imports
+- [ ] Compute hashes
+- [ ] Return `Vec<PythonUnit>`
+
+### Pipeline
+- [ ] DEV
+- [ ] WHITEBOX ∥ BLACKBOX
+- [ ] JUNIOR_QA → SANITY → FINAL
+- [ ] VERDICT
+
+### Worker Log
+
+**DEV** (fdbd2565) — COMPLETE
+- Added blake3 hashing for functions, async functions, classes
+- LineIndex for byte-to-line conversion
+
+**WHITEBOX** — COMPLETE
+- 26 new tests (37 total)
+- Hash computation, line numbers, edge cases
+
+**BLACKBOX** — COMPLETE
+- 67 new tests (blackbox_python_parser.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 354 tests passing
+- 4 findings ruled OVERZEALOUS (design decisions)
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.4 — GREEN_LIGHT ✓
+
+**Task:** Rust parser  
+**Branch:** `task/T-HARNESS-1.4` (merged, deleted)  
+**Phase:** 1 — Infrastructure  
+**Status:** COMPLETE
 
 ### Deliverables
 - [ ] Implement `RustParser` with syn + tree-sitter

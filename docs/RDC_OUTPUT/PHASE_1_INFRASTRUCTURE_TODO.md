@@ -27,11 +27,11 @@
 - [x] Compute hashes: full, signature, body, layout
 - [x] Return `Vec<RustUnit>`
 
-### T-HARNESS-1.5: Python parser
-- [ ] Implement `PythonParser` with rustpython_parser + tree-sitter
-- [ ] Extract: functions, classes, methods, imports
-- [ ] Compute hashes
-- [ ] Return `Vec<PythonUnit>`
+### T-HARNESS-1.5: Python parser ✓
+- [x] Implement `PythonParser` with rustpython_parser + tree-sitter
+- [x] Extract: functions, classes, methods, imports
+- [x] Compute hashes
+- [x] Return `Vec<PythonUnit>`
 
 ### T-HARNESS-1.6: WGSL parser
 - [ ] Implement `WgslParser` with naga + tree-sitter
