@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.2 — GREEN_LIGHT ✓
+
+**Task:** Manual mapping file  
+**Branch:** `task/T-MAP-3.2` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Define TOML format for explicit mappings
+- [x] Implement parser for `test_mappings.toml`
+- [x] Handle glob patterns in targets
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- MappingConfig: TOML-based explicit mapping config
+- ExplicitMapping: test pattern → target patterns
+- ExplicitMapper: applies explicit mappings with glob support
+- CombinedMapper: explicit + convention with priority
+- Added toml, serde, glob dependencies
+
+**WHITEBOX** — COMPLETE
+- 14 new tests (whitebox_manual_mapping.rs)
+- Covers parsing, explicit mapping, combined mapping
+
+**BLACKBOX** — COMPLETE
+- 8 new tests (blackbox_manual_mapping.rs)
+- Full integration with scan pipeline
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 783 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.1 — GREEN_LIGHT ✓
 
 **Task:** Auto-mapping implementation  

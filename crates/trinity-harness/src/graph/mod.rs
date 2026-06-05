@@ -18,7 +18,8 @@ pub use deps::{resolve_deps_to_edges, DepStats, DepType, PythonDepAnalyzer, RawD
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 pub use testmap::{
-    create_test_edges, ConventionMapper, MappingSource, MappingStats, PythonTestMapper,
+    create_test_edges, CombinedMapper, ConventionMapper, ExplicitMapper, ExplicitMapping,
+    MappingConfig, MappingConfigError, MappingSource, MappingStats, PythonTestMapper,
     RustTestMapper, TestMapping,
 };
 use crate::parsers::{Language, UnitType};

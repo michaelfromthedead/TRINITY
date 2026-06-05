@@ -11,10 +11,10 @@
 - [x] Implement convention-based mapping for Rust unit tests
 - [x] Implement convention-based mapping for Python tests
 
-### T-MAP-3.2: Manual mapping file
-- [ ] Define TOML format for explicit mappings
-- [ ] Implement parser for `test_mappings.toml`
-- [ ] Handle glob patterns in targets
+### T-MAP-3.2: Manual mapping file ✓
+- [x] Define TOML format for explicit mappings
+- [x] Implement parser for `test_mappings.toml`
+- [x] Handle glob patterns in targets
 
 ### T-MAP-3.3: Map Rust tests
 - [ ] Scan `crates/*/tests/*.rs`
