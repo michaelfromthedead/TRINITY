@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-GRAPH-2.1: Implement GraphBuilder
-- [ ] Create `graph/builder.rs`
-- [ ] Implement `full_scan()` with walkdir
-- [ ] Filter by language extension
+### T-GRAPH-2.1: Implement GraphBuilder ✓
+- [x] Create `graph/builder.rs`
+- [x] Implement `full_scan()` with walkdir
+- [x] Filter by language extension
 
 ### T-GRAPH-2.2: Parse all Rust files
 - [ ] Scan `crates/` directory

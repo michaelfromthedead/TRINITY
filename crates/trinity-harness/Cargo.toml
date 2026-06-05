@@ -32,6 +32,9 @@ thiserror = "1.0"
 # Hashing
 blake3 = "1.5"
 
+# File system traversal
+walkdir = "2"
+
 [dev-dependencies]
 tempfile = "3.27"
 

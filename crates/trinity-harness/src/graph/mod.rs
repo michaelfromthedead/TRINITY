@@ -1,8 +1,10 @@
 //! Code dependency graph structures.
 
+mod builder;
 mod edges;
 mod nodes;
 
+pub use builder::{GraphBuilder, ScanError, ScanStats};
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 

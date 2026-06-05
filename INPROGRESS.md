@@ -4,12 +4,51 @@
 
 ---
 
-## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.8
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.1
+
+**Task:** Implement GraphBuilder  
+**Branch:** `task/T-GRAPH-2.1`  
+**Phase:** 2 — Code Graph  
+**Status:** IN_PROGRESS
+
+### Deliverables
+- [ ] Create `graph/builder.rs`
+- [ ] Implement `full_scan()` with walkdir
+- [ ] Filter by language extension
+
+### Pipeline
+- [ ] DEV
+- [ ] WHITEBOX ∥ BLACKBOX
+- [ ] JUNIOR_QA → SANITY → FINAL
+- [ ] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Created graph/builder.rs
+- GraphBuilder::full_scan() with walkdir
+- ScanStats with nodes_per_language
+
+**WHITEBOX** — COMPLETE
+- 31 new tests (whitebox_builder.rs)
+
+**BLACKBOX** — COMPLETE
+- 35 new tests (blackbox_builder.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 583 tests passing
+- 1 REAL finding (cosmetic, not blocking)
+- **VERDICT: GREEN_LIGHT**
+
+---
+
+## 2026-06-05 — SDLC_WORKFLOW: T-HARNESS-1.8 — GREEN_LIGHT ✓
 
 **Task:** Basic tests  
-**Branch:** `task/T-HARNESS-1.8`  
+**Branch:** `task/T-HARNESS-1.8` (merged, deleted)  
 **Phase:** 1 — Infrastructure  
-**Status:** IN_PROGRESS
+**Status:** COMPLETE
 
 ### Deliverables
 - [ ] Test schema creation
