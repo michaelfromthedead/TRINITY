@@ -19,10 +19,11 @@ pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 pub use testmap::{
     create_test_edges, extract_unmapped, generate_coverage_report, get_covered_nodes,
-    get_uncovered_nodes, mark_as_orphan, CombinedMapper, ConventionMapper, CoverageReport,
-    ExplicitMapper, ExplicitMapping, FileCoverage, InlineTestMapper, MappingConfig,
-    MappingConfigError, MappingSource, MappingStats, PythonTestMapper, RustTestMapper,
-    TestMapping, UnmappedReview, UnmappedTest,
+    get_orphan_tests, get_uncovered_nodes, mark_as_orphan, validate_mappings,
+    verify_test_targets, CombinedMapper, ConventionMapper, CoverageReport, ExplicitMapper,
+    ExplicitMapping, FileCoverage, InlineTestMapper, MappingConfig, MappingConfigError,
+    MappingSource, MappingStats, PythonTestMapper, RustTestMapper, TestMapping,
+    TestValidationResult, UnmappedReview, UnmappedTest,
 };
 use crate::parsers::{Language, UnitType};
 

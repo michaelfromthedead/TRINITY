@@ -407,6 +407,175 @@ pub fn get_uncovered_nodes(
         .collect()
 }
 
+// ==================== Validation ====================
+
+/// Validation result for test mappings.
+#[derive(Debug, Clone, Default)]
+pub struct TestValidationResult {
+    /// Whether validation passed.
+    pub is_valid: bool,
+    /// Total tests validated.
+    pub total_tests: usize,
+    /// Tests with at least one target.
+    pub tests_with_targets: usize,
+    /// Tests without targets (orphans).
+    pub orphan_tests: Vec<NodeId>,
+    /// Circular dependencies detected.
+    pub circular_deps: Vec<(NodeId, NodeId)>,
+    /// Validation errors.
+    pub errors: Vec<String>,
+}
+
+impl TestValidationResult {
+    /// Create a new passing result.
+    pub fn new() -> Self {
+        Self {
+            is_valid: true,
+            ..Default::default()
+        }
+    }
+
+    /// Check if there are any orphan tests.
+    pub fn has_orphans(&self) -> bool {
+        !self.orphan_tests.is_empty()
+    }
+
+    /// Check if there are circular dependencies.
+    pub fn has_circular_deps(&self) -> bool {
+        !self.circular_deps.is_empty()
+    }
+
+    /// Generate a validation report.
+    pub fn generate_report(&self) -> String {
+        let mut report = String::new();
+
+        report.push_str("=== Test Mapping Validation Report ===\n\n");
+        report.push_str(&format!(
+            "Status: {}\n",
+            if self.is_valid { "PASSED" } else { "FAILED" }
+        ));
+        report.push_str(&format!(
+            "Tests validated: {}\n",
+            self.total_tests
+        ));
+        report.push_str(&format!(
+            "Tests with targets: {}\n",
+            self.tests_with_targets
+        ));
+        report.push_str(&format!(
+            "Orphan tests: {}\n",
+            self.orphan_tests.len()
+        ));
+        report.push_str(&format!(
+            "Circular dependencies: {}\n\n",
+            self.circular_deps.len()
+        ));
+
+        if !self.errors.is_empty() {
+            report.push_str("Errors:\n");
+            for error in &self.errors {
+                report.push_str(&format!("  - {}\n", error));
+            }
+        }
+
+        report
+    }
+}
+
+/// Validate test mappings.
+///
+/// Checks:
+/// 1. All tests have at least one target (warns on orphans)
+/// 2. No circular test dependencies
+/// 3. Orphan test review
+pub fn validate_mappings(
+    _graph: &super::CodeGraph,
+    mappings: &[TestMapping],
+) -> TestValidationResult {
+    let mut result = TestValidationResult::new();
+    result.total_tests = mappings.len();
+
+    // Check for tests without targets
+    for mapping in mappings {
+        if mapping.targets.is_empty() || mapping.source == MappingSource::Unmapped {
+            result.orphan_tests.push(mapping.test_id);
+        } else {
+            result.tests_with_targets += 1;
+        }
+    }
+
+    // Check for circular dependencies
+    result.circular_deps = detect_circular_deps(_graph, mappings);
+
+    // Determine validity
+    // Orphans are warnings, not failures
+    // Circular deps are failures
+    if !result.circular_deps.is_empty() {
+        result.is_valid = false;
+        result.errors.push(format!(
+            "Found {} circular test dependencies",
+            result.circular_deps.len()
+        ));
+    }
+
+    result
+}
+
+/// Detect circular test dependencies.
+///
+/// A circular dependency occurs when:
+/// - Test A tests Code X
+/// - Code X depends on Test A (directly or indirectly)
+///
+/// For test mappings, we check if any test targets another test.
+fn detect_circular_deps(
+    _graph: &super::CodeGraph,
+    mappings: &[TestMapping],
+) -> Vec<(NodeId, NodeId)> {
+    let mut circular = Vec::new();
+
+    // Build set of test node IDs
+    let test_ids: HashSet<NodeId> = mappings.iter().map(|m| m.test_id).collect();
+
+    // Check if any test targets another test
+    for mapping in mappings {
+        for &target in &mapping.targets {
+            if test_ids.contains(&target) {
+                circular.push((mapping.test_id, target));
+            }
+        }
+    }
+
+    circular
+}
+
+/// Get all orphan tests (tests without mappings).
+pub fn get_orphan_tests(mappings: &[TestMapping]) -> Vec<NodeId> {
+    mappings
+        .iter()
+        .filter(|m| m.targets.is_empty() || m.source == MappingSource::Unmapped)
+        .map(|m| m.test_id)
+        .collect()
+}
+
+/// Verify that all tests have at least one target.
+///
+/// Returns (valid_count, invalid_ids).
+pub fn verify_test_targets(mappings: &[TestMapping]) -> (usize, Vec<NodeId>) {
+    let mut valid_count = 0;
+    let mut invalid_ids = Vec::new();
+
+    for mapping in mappings {
+        if mapping.targets.is_empty() || mapping.source == MappingSource::Unmapped {
+            invalid_ids.push(mapping.test_id);
+        } else {
+            valid_count += 1;
+        }
+    }
+
+    (valid_count, invalid_ids)
+}
+
 /// Auto-mapper using naming conventions.
 pub struct ConventionMapper;
 

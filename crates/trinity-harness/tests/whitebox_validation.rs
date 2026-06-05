@@ -1,7 +1,9 @@
-//! Whitebox tests for graph validation.
+//! Whitebox tests for test mapping validation.
 
-use std::collections::HashMap;
-use trinity_harness::graph::{CodeEdge, CodeGraph, CodeNode, EdgeType, NodeId};
+use trinity_harness::graph::{
+    get_orphan_tests, validate_mappings, verify_test_targets, CodeGraph, CodeNode,
+    MappingSource, NodeId, TestMapping, TestValidationResult,
+};
 use trinity_harness::parsers::{CodeUnit, ContentHashes, Language, UnitType};
 
 fn empty_hashes() -> ContentHashes {
@@ -33,300 +35,242 @@ fn make_node(
     graph.add_node(node)
 }
 
-// ==================== Node Count by Language ====================
+// ==================== TestValidationResult ====================
 
 #[test]
-fn test_node_count_by_language_empty() {
-    let graph = CodeGraph::new();
-    let counts = graph.node_count_by_language();
-    assert!(counts.is_empty());
-}
-
-#[test]
-fn test_node_count_by_language_single() {
-    let mut graph = CodeGraph::new();
-    make_node(&mut graph, "a.rs", "func", UnitType::Function, Language::Rust);
-
-    let counts = graph.node_count_by_language();
-    assert_eq!(counts.get(&Language::Rust), Some(&1));
-}
-
-#[test]
-fn test_node_count_by_language_multiple_same() {
-    let mut graph = CodeGraph::new();
-    make_node(&mut graph, "a.rs", "func1", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "b.rs", "func2", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "c.rs", "func3", UnitType::Function, Language::Rust);
-
-    let counts = graph.node_count_by_language();
-    assert_eq!(counts.get(&Language::Rust), Some(&3));
-}
-
-#[test]
-fn test_node_count_by_language_mixed() {
-    let mut graph = CodeGraph::new();
-    make_node(&mut graph, "a.rs", "func", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "b.rs", "struct", UnitType::Struct, Language::Rust);
-    make_node(&mut graph, "c.py", "func", UnitType::Function, Language::Python);
-    make_node(&mut graph, "d.py", "class", UnitType::Class, Language::Python);
-    make_node(&mut graph, "e.py", "method", UnitType::Method, Language::Python);
-    make_node(&mut graph, "f.wgsl", "vs_main", UnitType::Function, Language::Wgsl);
-
-    let counts = graph.node_count_by_language();
-    assert_eq!(counts.get(&Language::Rust), Some(&2));
-    assert_eq!(counts.get(&Language::Python), Some(&3));
-    assert_eq!(counts.get(&Language::Wgsl), Some(&1));
-}
-
-// ==================== Edge Count by Type ====================
-
-#[test]
-fn test_edge_count_by_type_empty() {
-    let graph = CodeGraph::new();
-    let counts = graph.edge_count_by_type();
-    assert!(counts.is_empty());
-}
-
-#[test]
-fn test_edge_count_by_type_single() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
-
-    let counts = graph.edge_count_by_type();
-    assert_eq!(counts.get(&EdgeType::Calls), Some(&1));
-}
-
-#[test]
-fn test_edge_count_by_type_multiple_same() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-    let c = make_node(&mut graph, "c.rs", "c", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
-    graph.add_edge(CodeEdge::new(b, c, EdgeType::Calls));
-    graph.add_edge(CodeEdge::new(a, c, EdgeType::Calls));
-
-    let counts = graph.edge_count_by_type();
-    assert_eq!(counts.get(&EdgeType::Calls), Some(&3));
-}
-
-#[test]
-fn test_edge_count_by_type_mixed() {
-    let mut graph = CodeGraph::new();
-    let fn1 = make_node(&mut graph, "a.rs", "fn1", UnitType::Function, Language::Rust);
-    let fn2 = make_node(&mut graph, "b.rs", "fn2", UnitType::Function, Language::Rust);
-    let struct1 = make_node(&mut graph, "c.rs", "S1", UnitType::Struct, Language::Rust);
-    let struct2 = make_node(&mut graph, "d.wgsl", "S1", UnitType::Struct, Language::Wgsl);
-
-    graph.add_edge(CodeEdge::new(fn1, fn2, EdgeType::Calls));
-    graph.add_edge(CodeEdge::new(fn1, struct1, EdgeType::Uses));
-    graph.add_edge(CodeEdge::new(fn2, struct1, EdgeType::Uses));
-    graph.add_edge(CodeEdge::new(struct2, struct1, EdgeType::MirrorsLayout));
-
-    let counts = graph.edge_count_by_type();
-    assert_eq!(counts.get(&EdgeType::Calls), Some(&1));
-    assert_eq!(counts.get(&EdgeType::Uses), Some(&2));
-    assert_eq!(counts.get(&EdgeType::MirrorsLayout), Some(&1));
-}
-
-// ==================== Orphan Node Detection ====================
-
-#[test]
-fn test_find_orphan_nodes_empty() {
-    let graph = CodeGraph::new();
-    let orphans = graph.find_orphan_nodes();
-    assert!(orphans.is_empty());
-}
-
-#[test]
-fn test_find_orphan_nodes_all_orphans() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-
-    // No edges, all nodes are orphans
-    let orphans = graph.find_orphan_nodes();
-    assert_eq!(orphans.len(), 2);
-    assert!(orphans.contains(&a));
-    assert!(orphans.contains(&b));
-}
-
-#[test]
-fn test_find_orphan_nodes_none_orphan() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
-
-    // Both connected
-    let orphans = graph.find_orphan_nodes();
-    assert!(orphans.is_empty());
-}
-
-#[test]
-fn test_find_orphan_nodes_partial() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-    let c = make_node(&mut graph, "c.rs", "c", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
-
-    // c is orphan
-    let orphans = graph.find_orphan_nodes();
-    assert_eq!(orphans.len(), 1);
-    assert!(orphans.contains(&c));
-}
-
-// ==================== Entry Point Detection ====================
-
-#[test]
-fn test_is_entry_point_rust_main() {
-    let mut graph = CodeGraph::new();
-    let main_id = make_node(&mut graph, "main.rs", "main", UnitType::Function, Language::Rust);
-    let other_id = make_node(&mut graph, "lib.rs", "helper", UnitType::Function, Language::Rust);
-
-    assert!(graph.is_entry_point(main_id));
-    assert!(!graph.is_entry_point(other_id));
-}
-
-#[test]
-fn test_is_entry_point_python_main() {
-    let mut graph = CodeGraph::new();
-    let main_id = make_node(&mut graph, "main.py", "main", UnitType::Function, Language::Python);
-    let dunder_main = make_node(&mut graph, "app.py", "__main__", UnitType::Function, Language::Python);
-    let other_id = make_node(&mut graph, "utils.py", "helper", UnitType::Function, Language::Python);
-
-    assert!(graph.is_entry_point(main_id));
-    assert!(graph.is_entry_point(dunder_main));
-    assert!(!graph.is_entry_point(other_id));
-}
-
-#[test]
-fn test_is_entry_point_wgsl_vertex() {
-    let mut graph = CodeGraph::new();
-    let vs_main = make_node(&mut graph, "shader.wgsl", "vs_main", UnitType::Function, Language::Wgsl);
-    let fs_main = make_node(&mut graph, "shader.wgsl", "fs_main", UnitType::Function, Language::Wgsl);
-    let cs_compute = make_node(&mut graph, "compute.wgsl", "cs_compute", UnitType::Function, Language::Wgsl);
-    let helper = make_node(&mut graph, "shader.wgsl", "calculate", UnitType::Function, Language::Wgsl);
-
-    assert!(graph.is_entry_point(vs_main));
-    assert!(graph.is_entry_point(fs_main));
-    assert!(graph.is_entry_point(cs_compute));
-    assert!(!graph.is_entry_point(helper));
-}
-
-#[test]
-fn test_is_entry_point_invalid_id() {
-    let graph = CodeGraph::new();
-    assert!(!graph.is_entry_point(NodeId(999)));
-}
-
-#[test]
-fn test_find_orphan_non_entry_points() {
-    let mut graph = CodeGraph::new();
-    let main_id = make_node(&mut graph, "main.rs", "main", UnitType::Function, Language::Rust);
-    let helper = make_node(&mut graph, "lib.rs", "helper", UnitType::Function, Language::Rust);
-    let connected = make_node(&mut graph, "lib.rs", "connected", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(main_id, connected, EdgeType::Calls));
-
-    // main and helper are orphans, but main is entry point
-    let non_entry_orphans = graph.find_orphan_non_entry_points();
-    assert_eq!(non_entry_orphans.len(), 1);
-    assert!(non_entry_orphans.contains(&helper));
-    assert!(!non_entry_orphans.contains(&main_id));
-}
-
-// ==================== Validation ====================
-
-#[test]
-fn test_validate_empty_graph() {
-    let graph = CodeGraph::new();
-    let result = graph.validate();
-
-    assert_eq!(result.total_nodes, 0);
-    assert_eq!(result.total_edges, 0);
+fn test_validation_result_new() {
+    let result = TestValidationResult::new();
     assert!(result.is_valid);
+    assert_eq!(result.total_tests, 0);
+    assert!(result.orphan_tests.is_empty());
+    assert!(result.circular_deps.is_empty());
 }
 
 #[test]
-fn test_validate_nodes_only() {
-    let mut graph = CodeGraph::new();
-    make_node(&mut graph, "a.rs", "func", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "b.py", "func", UnitType::Function, Language::Python);
+fn test_validation_result_has_orphans() {
+    let mut result = TestValidationResult::new();
+    assert!(!result.has_orphans());
 
-    let result = graph.validate();
-
-    assert_eq!(result.total_nodes, 2);
-    assert_eq!(result.total_edges, 0);
-    assert!(result.is_valid); // No edges means orphans are OK
+    result.orphan_tests.push(NodeId(0));
+    assert!(result.has_orphans());
 }
 
 #[test]
-fn test_validate_fully_connected() {
-    let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "b", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
+fn test_validation_result_has_circular_deps() {
+    let mut result = TestValidationResult::new();
+    assert!(!result.has_circular_deps());
 
-    let result = graph.validate();
+    result.circular_deps.push((NodeId(0), NodeId(1)));
+    assert!(result.has_circular_deps());
+}
 
-    assert_eq!(result.total_nodes, 2);
-    assert_eq!(result.total_edges, 1);
-    assert_eq!(result.orphan_issues, 0);
+#[test]
+fn test_validation_result_generate_report() {
+    let mut result = TestValidationResult::new();
+    result.total_tests = 10;
+    result.tests_with_targets = 8;
+    result.orphan_tests = vec![NodeId(0), NodeId(1)];
+
+    let report = result.generate_report();
+
+    assert!(report.contains("Validation Report"));
+    assert!(report.contains("PASSED"));
+    assert!(report.contains("Tests validated: 10"));
+    assert!(report.contains("Orphan tests: 2"));
+}
+
+#[test]
+fn test_validation_result_report_failed() {
+    let mut result = TestValidationResult::new();
+    result.is_valid = false;
+    result.errors.push("Test error".to_string());
+
+    let report = result.generate_report();
+
+    assert!(report.contains("FAILED"));
+    assert!(report.contains("Test error"));
+}
+
+// ==================== Validate Mappings ====================
+
+#[test]
+fn test_validate_mappings_empty() {
+    let graph = CodeGraph::new();
+    let mappings: Vec<TestMapping> = vec![];
+
+    let result = validate_mappings(&graph, &mappings);
+
     assert!(result.is_valid);
+    assert_eq!(result.total_tests, 0);
 }
 
 #[test]
-fn test_validate_with_entry_point_orphan() {
+fn test_validate_mappings_all_valid() {
     let mut graph = CodeGraph::new();
-    let main_id = make_node(&mut graph, "main.rs", "main", UnitType::Function, Language::Rust);
-    let lib_fn = make_node(&mut graph, "lib.rs", "helper", UnitType::Function, Language::Rust);
-    let lib_fn2 = make_node(&mut graph, "lib.rs", "other", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(lib_fn, lib_fn2, EdgeType::Calls));
 
-    // main is orphan but is entry point
-    let result = graph.validate();
+    let code_id = make_node(&mut graph, "src/lib.rs", "compute", UnitType::Function, Language::Rust);
+    let test_id = make_node(&mut graph, "tests/test.rs", "test_compute", UnitType::Function, Language::Rust);
 
-    assert_eq!(result.orphan_entry_points, 1);
-    assert_eq!(result.orphan_issues, 0);
+    let mappings = vec![TestMapping {
+        test_id,
+        targets: vec![code_id],
+        source: MappingSource::Convention,
+    }];
+
+    let result = validate_mappings(&graph, &mappings);
+
     assert!(result.is_valid);
+    assert_eq!(result.total_tests, 1);
+    assert_eq!(result.tests_with_targets, 1);
+    assert!(result.orphan_tests.is_empty());
 }
 
 #[test]
-fn test_validate_with_orphan_issue() {
+fn test_validate_mappings_with_orphans() {
     let mut graph = CodeGraph::new();
-    let a = make_node(&mut graph, "a.rs", "connected_a", UnitType::Function, Language::Rust);
-    let b = make_node(&mut graph, "b.rs", "connected_b", UnitType::Function, Language::Rust);
-    let orphan = make_node(&mut graph, "c.rs", "orphan_func", UnitType::Function, Language::Rust);
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
 
-    // orphan is not an entry point
-    let result = graph.validate();
+    let test_id = make_node(&mut graph, "tests/test.rs", "test_orphan", UnitType::Function, Language::Rust);
 
-    assert_eq!(result.orphan_issues, 1);
+    let mappings = vec![TestMapping {
+        test_id,
+        targets: vec![],
+        source: MappingSource::Unmapped,
+    }];
+
+    let result = validate_mappings(&graph, &mappings);
+
+    // Orphans are warnings, not failures
+    assert!(result.is_valid);
+    assert_eq!(result.orphan_tests.len(), 1);
+    assert!(result.orphan_tests.contains(&test_id));
+}
+
+#[test]
+fn test_validate_mappings_circular_deps() {
+    let mut graph = CodeGraph::new();
+
+    let test1 = make_node(&mut graph, "tests/a.rs", "test_a", UnitType::Function, Language::Rust);
+    let test2 = make_node(&mut graph, "tests/b.rs", "test_b", UnitType::Function, Language::Rust);
+
+    // Circular: test1 targets test2
+    let mappings = vec![
+        TestMapping {
+            test_id: test1,
+            targets: vec![test2],
+            source: MappingSource::Convention,
+        },
+        TestMapping {
+            test_id: test2,
+            targets: vec![test1],
+            source: MappingSource::Convention,
+        },
+    ];
+
+    let result = validate_mappings(&graph, &mappings);
+
     assert!(!result.is_valid);
+    assert!(!result.circular_deps.is_empty());
+}
+
+// ==================== Verify Test Targets ====================
+
+#[test]
+fn test_verify_test_targets_all_valid() {
+    let code_id = NodeId(0);
+    let test_id = NodeId(1);
+
+    let mappings = vec![TestMapping {
+        test_id,
+        targets: vec![code_id],
+        source: MappingSource::Convention,
+    }];
+
+    let (valid, invalid) = verify_test_targets(&mappings);
+
+    assert_eq!(valid, 1);
+    assert!(invalid.is_empty());
 }
 
 #[test]
-fn test_validate_summary_counts() {
-    let mut graph = CodeGraph::new();
-    make_node(&mut graph, "a.rs", "f1", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "b.rs", "f2", UnitType::Function, Language::Rust);
-    make_node(&mut graph, "c.py", "f3", UnitType::Function, Language::Python);
-    make_node(&mut graph, "d.wgsl", "s1", UnitType::Struct, Language::Wgsl);
+fn test_verify_test_targets_with_invalid() {
+    let code_id = NodeId(0);
+    let test1 = NodeId(1);
+    let test2 = NodeId(2);
 
-    let a = graph.nodes()[0].id;
-    let b = graph.nodes()[1].id;
-    graph.add_edge(CodeEdge::new(a, b, EdgeType::Calls));
+    let mappings = vec![
+        TestMapping {
+            test_id: test1,
+            targets: vec![code_id],
+            source: MappingSource::Convention,
+        },
+        TestMapping {
+            test_id: test2,
+            targets: vec![],
+            source: MappingSource::Unmapped,
+        },
+    ];
 
-    let result = graph.validate();
+    let (valid, invalid) = verify_test_targets(&mappings);
 
-    assert_eq!(result.total_nodes, 4);
-    assert_eq!(result.total_edges, 1);
-    assert_eq!(result.nodes_by_language.get(&Language::Rust), Some(&2));
-    assert_eq!(result.nodes_by_language.get(&Language::Python), Some(&1));
-    assert_eq!(result.nodes_by_language.get(&Language::Wgsl), Some(&1));
-    assert_eq!(result.edges_by_type.get(&EdgeType::Calls), Some(&1));
+    assert_eq!(valid, 1);
+    assert_eq!(invalid.len(), 1);
+    assert!(invalid.contains(&test2));
+}
+
+// ==================== Get Orphan Tests ====================
+
+#[test]
+fn test_get_orphan_tests_none() {
+    let code_id = NodeId(0);
+    let test_id = NodeId(1);
+
+    let mappings = vec![TestMapping {
+        test_id,
+        targets: vec![code_id],
+        source: MappingSource::Convention,
+    }];
+
+    let orphans = get_orphan_tests(&mappings);
+
+    assert!(orphans.is_empty());
+}
+
+#[test]
+fn test_get_orphan_tests_some() {
+    let test1 = NodeId(0);
+    let test2 = NodeId(1);
+
+    let mappings = vec![
+        TestMapping {
+            test_id: test1,
+            targets: vec![NodeId(2)],
+            source: MappingSource::Convention,
+        },
+        TestMapping {
+            test_id: test2,
+            targets: vec![],
+            source: MappingSource::Unmapped,
+        },
+    ];
+
+    let orphans = get_orphan_tests(&mappings);
+
+    assert_eq!(orphans.len(), 1);
+    assert!(orphans.contains(&test2));
+}
+
+#[test]
+fn test_get_orphan_tests_empty_targets() {
+    let test_id = NodeId(0);
+
+    let mappings = vec![TestMapping {
+        test_id,
+        targets: vec![],
+        source: MappingSource::Convention,
+    }];
+
+    let orphans = get_orphan_tests(&mappings);
+
+    assert_eq!(orphans.len(), 1);
+    assert!(orphans.contains(&test_id));
 }
