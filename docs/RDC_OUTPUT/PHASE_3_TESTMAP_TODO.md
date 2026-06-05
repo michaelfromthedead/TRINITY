@@ -31,10 +31,10 @@
 - [x] Map to containing module
 - [x] Create Tests edges
 
-### T-MAP-3.6: Handle unmapped tests
-- [ ] Identify tests without clear targets
-- [ ] Log for manual review
-- [ ] Create placeholder mappings or mark as orphan
+### T-MAP-3.6: Handle unmapped tests ✓
+- [x] Identify tests without clear targets
+- [x] Log for manual review
+- [x] Create placeholder mappings or mark as orphan
 
 ### T-MAP-3.7: Coverage report
 - [ ] Query: code nodes with at least one test

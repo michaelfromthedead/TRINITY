@@ -67,6 +67,154 @@ impl MappingStats {
     }
 }
 
+/// An unmapped test with review information.
+#[derive(Debug, Clone)]
+pub struct UnmappedTest {
+    /// The test node ID.
+    pub test_id: NodeId,
+    /// The test name.
+    pub test_name: String,
+    /// The file path.
+    pub file_path: String,
+    /// Suggested targets based on name similarity.
+    pub suggestions: Vec<String>,
+}
+
+/// Review report for unmapped tests.
+#[derive(Debug, Clone, Default)]
+pub struct UnmappedReview {
+    /// List of unmapped tests.
+    pub unmapped: Vec<UnmappedTest>,
+    /// Total unmapped count.
+    pub total_unmapped: usize,
+}
+
+impl UnmappedReview {
+    /// Create a new empty review.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if there are any unmapped tests.
+    pub fn has_unmapped(&self) -> bool {
+        !self.unmapped.is_empty()
+    }
+
+    /// Generate a human-readable report.
+    pub fn generate_report(&self) -> String {
+        let mut report = String::new();
+
+        report.push_str(&format!("=== Unmapped Tests Review ===\n"));
+        report.push_str(&format!("Total: {} unmapped tests\n\n", self.total_unmapped));
+
+        if self.unmapped.is_empty() {
+            report.push_str("All tests are mapped.\n");
+            return report;
+        }
+
+        for (i, test) in self.unmapped.iter().enumerate() {
+            report.push_str(&format!(
+                "{}. {} ({})\n",
+                i + 1,
+                test.test_name,
+                test.file_path
+            ));
+            if !test.suggestions.is_empty() {
+                report.push_str("   Suggestions:\n");
+                for suggestion in &test.suggestions {
+                    report.push_str(&format!("   - {}\n", suggestion));
+                }
+            }
+            report.push('\n');
+        }
+
+        report
+    }
+}
+
+/// Extract unmapped tests from mapping results.
+pub fn extract_unmapped(
+    mappings: &[TestMapping],
+    graph: &super::CodeGraph,
+) -> UnmappedReview {
+    let mut review = UnmappedReview::new();
+
+    // Build a name index for suggestions
+    let code_names: Vec<&str> = graph
+        .nodes()
+        .iter()
+        .filter(|n| !n.name().starts_with("test_") && !n.name().starts_with("Test"))
+        .map(|n| n.name())
+        .collect();
+
+    for mapping in mappings {
+        if mapping.source != MappingSource::Unmapped {
+            continue;
+        }
+
+        let Some(node) = graph.nodes().get(mapping.test_id.0) else {
+            continue;
+        };
+
+        let test_name = node.name().to_string();
+        let file_path = node.file_path.clone();
+
+        // Generate suggestions based on name similarity
+        let suggestions = suggest_targets(&test_name, &code_names);
+
+        review.unmapped.push(UnmappedTest {
+            test_id: mapping.test_id,
+            test_name,
+            file_path,
+            suggestions,
+        });
+    }
+
+    review.total_unmapped = review.unmapped.len();
+    review
+}
+
+/// Suggest potential targets based on test name.
+fn suggest_targets(test_name: &str, code_names: &[&str]) -> Vec<String> {
+    let mut suggestions = Vec::new();
+
+    // Extract base name from test name
+    let base_name = test_name
+        .strip_prefix("test_")
+        .or_else(|| test_name.strip_prefix("Test"))
+        .unwrap_or(test_name);
+
+    // Find similar names
+    for name in code_names {
+        if name.contains(base_name) || base_name.contains(*name) {
+            suggestions.push(name.to_string());
+        }
+    }
+
+    // Limit suggestions
+    suggestions.truncate(5);
+    suggestions
+}
+
+/// Mark specific tests as orphan (acknowledged unmapped).
+pub fn mark_as_orphan(
+    mappings: &mut [TestMapping],
+    test_ids: &[NodeId],
+) -> usize {
+    let mut count = 0;
+    let test_set: std::collections::HashSet<_> = test_ids.iter().collect();
+
+    for mapping in mappings.iter_mut() {
+        if test_set.contains(&mapping.test_id) {
+            mapping.source = MappingSource::Unmapped;
+            mapping.targets.clear();
+            count += 1;
+        }
+    }
+
+    count
+}
+
 /// Auto-mapper using naming conventions.
 pub struct ConventionMapper;
 

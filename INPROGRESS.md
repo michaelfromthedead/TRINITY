@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.6 — GREEN_LIGHT ✓
+
+**Task:** Handle unmapped tests  
+**Branch:** `task/T-MAP-3.6` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Identify tests without clear targets
+- [x] Log for manual review
+- [x] Create placeholder mappings or mark as orphan
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- UnmappedTest: struct with test info and suggestions
+- UnmappedReview: review report with generate_report()
+- extract_unmapped(): finds unmapped tests from mappings
+- suggest_targets(): provides similar-name suggestions
+- mark_as_orphan(): marks tests as acknowledged orphans
+
+**WHITEBOX** — COMPLETE
+- 13 new tests (whitebox_unmapped_tests.rs)
+- Covers review, extraction, suggestions, orphan marking
+
+**BLACKBOX** — COMPLETE
+- 6 new tests (blackbox_unmapped_tests.rs)
+- Full integration
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 853 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.5 — GREEN_LIGHT ✓
 
 **Task:** Map inline tests  
