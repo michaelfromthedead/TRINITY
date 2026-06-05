@@ -1,10 +1,12 @@
 //! Code dependency graph structures.
 
 mod builder;
+mod deps;
 mod edges;
 mod nodes;
 
 pub use builder::{persist_graph_to_db, GraphBuilder, PersistError, ScanError, ScanStats};
+pub use deps::{resolve_deps_to_edges, DepStats, DepType, PythonDepAnalyzer, RawDependency, RustDepAnalyzer};
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 

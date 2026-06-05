@@ -3,7 +3,7 @@
 use super::NodeId;
 
 /// Types of relationships between code nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EdgeType {
     /// Function calls another function.
     Calls,

@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.5 — GREEN_LIGHT ✓
+
+**Task:** Dependency detection  
+**Branch:** `task/T-GRAPH-2.5` (merged, deleted)  
+**Phase:** 2 — Code Graph  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Implement Rust dependency detection (use, calls, types)
+- [x] Implement Python dependency detection (import, calls)
+- [x] Create edges for dependencies
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Created `graph/deps.rs` with RustDepAnalyzer and PythonDepAnalyzer
+- RustDepAnalyzer: extracts use statements, function calls, method calls, type refs
+- PythonDepAnalyzer: extracts import/from statements, function calls, method calls
+- `resolve_deps_to_edges()` resolves raw deps to graph edges
+- `GraphBuilder::analyze_dependencies()` integrates with builder
+
+**WHITEBOX** — COMPLETE
+- 21 new tests (whitebox_deps.rs)
+- Covers Rust analyzer (use, calls, methods, types, impl traits)
+- Covers Python analyzer (imports, calls, classes)
+- Covers edge resolution and stats
+
+**BLACKBOX** — COMPLETE
+- 12 new tests (blackbox_deps.rs)
+- Full integration tests with temp directories
+- Tests mixed language, circular deps, large files
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 673 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.4 — GREEN_LIGHT ✓
 
 **Task:** Parse all WGSL files  

@@ -21,10 +21,10 @@
 - [x] Parse each .py file
 - [x] Insert nodes for functions, classes, methods
 
-### T-GRAPH-2.4: Parse all WGSL files
-- [ ] Scan `crates/renderer-backend/shaders/`
-- [ ] Parse each .wgsl file
-- [ ] Insert nodes for structs (with layout!), functions, entry points
+### T-GRAPH-2.4: Parse all WGSL files ✓
+- [x] Scan `crates/renderer-backend/shaders/`
+- [x] Parse each .wgsl file
+- [x] Insert nodes for structs (with layout!), functions, entry points
 
 ### T-GRAPH-2.5: Dependency detection
 - [ ] Implement Rust dependency detection (use, calls, types)

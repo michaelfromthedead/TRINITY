@@ -224,6 +224,58 @@ impl<'a> GraphBuilder<'a> {
 
         Ok((graph, stats))
     }
+
+    /// Analyze dependencies in all files and create edges in the graph.
+    ///
+    /// This should be called after scanning to populate edges between nodes.
+    /// It walks the same directory tree, extracts dependencies from source,
+    /// and resolves them to edges.
+    pub fn analyze_dependencies(
+        &self,
+        root_path: &Path,
+        graph: &mut CodeGraph,
+    ) -> Result<super::DepStats, ScanError> {
+        use super::{resolve_deps_to_edges, PythonDepAnalyzer, RustDepAnalyzer};
+
+        let rust_analyzer = RustDepAnalyzer::new();
+        let python_analyzer = PythonDepAnalyzer::new();
+
+        let mut all_deps = Vec::new();
+
+        for entry in WalkDir::new(root_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+
+            if !path.is_file() {
+                continue;
+            }
+
+            let Some(lang) = ParserRegistry::detect_language(path) else {
+                continue;
+            };
+
+            let source = match std::fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let path_str = path.to_string_lossy().to_string();
+
+            let deps = match lang {
+                Language::Rust => rust_analyzer.analyze(&source, &path_str),
+                Language::Python => python_analyzer.analyze(&source, &path_str),
+                Language::Wgsl => Vec::new(), // WGSL deps not implemented yet
+            };
+
+            all_deps.extend(deps);
+        }
+
+        let stats = resolve_deps_to_edges(graph, &all_deps);
+        Ok(stats)
+    }
 }
 
 /// Persist a code graph to the database.
