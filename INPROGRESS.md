@@ -4,6 +4,50 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-MAP-3.1 — GREEN_LIGHT ✓
+
+**Task:** Auto-mapping implementation  
+**Branch:** `task/T-MAP-3.1` (merged, deleted)  
+**Phase:** 3 — Test Mapping  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Implement convention-based mapping for Rust blackbox tests
+- [x] Implement convention-based mapping for Rust unit tests
+- [x] Implement convention-based mapping for Python tests
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SANITY → FINAL
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Created `graph/testmap.rs` with ConventionMapper
+- ConventionMapper: test_prefix, test_suffix, blackbox_, whitebox_
+- RustTestMapper: find_blackbox_tests(), find_unit_tests()
+- PythonTestMapper: find_python_tests()
+- Added Tests edge type
+- create_test_edges() creates Tests edges from mappings
+
+**WHITEBOX** — COMPLETE
+- 15 new tests (whitebox_testmap.rs)
+- Covers all naming conventions, edge creation
+
+**BLACKBOX** — COMPLETE
+- 9 new tests (blackbox_testmap.rs)
+- Full integration with scan pipeline
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 761 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-GRAPH-2.7 — GREEN_LIGHT ✓
 
 **Task:** Validate graph  

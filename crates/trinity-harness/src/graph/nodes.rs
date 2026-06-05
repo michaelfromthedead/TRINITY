@@ -3,7 +3,7 @@
 use crate::parsers::{CodeUnit, Language, UnitType};
 
 /// Unique identifier for a node in the graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub usize);
 
 /// A node in the code dependency graph.

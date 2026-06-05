@@ -7,6 +7,7 @@ mod crosslang;
 mod deps;
 mod edges;
 mod nodes;
+mod testmap;
 
 pub use builder::{persist_graph_to_db, GraphBuilder, PersistError, ScanError, ScanStats};
 pub use crosslang::{
@@ -16,6 +17,10 @@ pub use crosslang::{
 pub use deps::{resolve_deps_to_edges, DepStats, DepType, PythonDepAnalyzer, RawDependency, RustDepAnalyzer};
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
+pub use testmap::{
+    create_test_edges, ConventionMapper, MappingSource, MappingStats, PythonTestMapper,
+    RustTestMapper, TestMapping,
+};
 use crate::parsers::{Language, UnitType};
 
 /// A code dependency graph.

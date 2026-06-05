@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-MAP-3.1: Auto-mapping implementation
-- [ ] Implement convention-based mapping for Rust blackbox tests
-- [ ] Implement convention-based mapping for Rust unit tests
-- [ ] Implement convention-based mapping for Python tests
+### T-MAP-3.1: Auto-mapping implementation ✓
+- [x] Implement convention-based mapping for Rust blackbox tests
+- [x] Implement convention-based mapping for Rust unit tests
+- [x] Implement convention-based mapping for Python tests
 
 ### T-MAP-3.2: Manual mapping file
 - [ ] Define TOML format for explicit mappings

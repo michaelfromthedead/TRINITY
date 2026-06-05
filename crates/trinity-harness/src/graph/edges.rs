@@ -17,6 +17,8 @@ pub enum EdgeType {
     Binds,
     /// Struct layout mirror (e.g., WGSL struct mirrors #[repr(C)] Rust struct).
     MirrorsLayout,
+    /// Test tests a code node.
+    Tests,
 }
 
 /// An edge in the code dependency graph.
