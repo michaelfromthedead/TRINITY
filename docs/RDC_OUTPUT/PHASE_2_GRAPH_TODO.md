@@ -11,10 +11,10 @@
 - [x] Implement `full_scan()` with walkdir
 - [x] Filter by language extension
 
-### T-GRAPH-2.2: Parse all Rust files
-- [ ] Scan `crates/` directory
-- [ ] Parse each .rs file
-- [ ] Insert nodes for functions, structs, modules
+### T-GRAPH-2.2: Parse all Rust files ✓
+- [x] Scan `crates/` directory
+- [x] Parse each .rs file
+- [x] Insert nodes for functions, structs, modules
 
 ### T-GRAPH-2.3: Parse all Python files
 - [ ] Scan `engine/` and `tests/` directories

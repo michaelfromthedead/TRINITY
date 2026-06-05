@@ -4,7 +4,7 @@ mod builder;
 mod edges;
 mod nodes;
 
-pub use builder::{GraphBuilder, ScanError, ScanStats};
+pub use builder::{persist_graph_to_db, GraphBuilder, PersistError, ScanError, ScanStats};
 pub use edges::{CodeEdge, EdgeType};
 pub use nodes::{CodeNode, NodeId};
 

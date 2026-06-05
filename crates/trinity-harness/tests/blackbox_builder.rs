@@ -881,3 +881,973 @@ fn blackbox_builder_graph_nodes_have_language_info() {
     assert!(!rust_nodes.is_empty(), "Should have Rust nodes");
     assert!(!python_nodes.is_empty(), "Should have Python nodes");
 }
+
+// ============================================================================
+// T-GRAPH-2.2: Language-Specific Scanning Tests
+// ============================================================================
+//
+// CLEANROOM: Tests based on public API from lib.rs:
+// - GraphBuilder::scan_rust(path)
+// - GraphBuilder::scan_python(path)
+// - GraphBuilder::scan_wgsl(path)
+// - persist_graph_to_db(graph, db)
+
+// ============================================================================
+// scan_rust Tests
+// ============================================================================
+
+#[test]
+fn blackbox_scan_rust_single_function() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("lib.rs")).expect("create file");
+    writeln!(file, "pub fn hello_world() {{ println!(\"Hello\"); }}").expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_rust(temp_dir.path());
+
+    assert!(result.is_ok(), "scan_rust should succeed: {:?}", result.err());
+    let (graph, stats) = result.unwrap();
+    assert_eq!(stats.files_scanned, 1, "Should scan exactly one Rust file");
+    assert!(stats.total_nodes >= 1, "Should find at least the function");
+    assert!(!graph.nodes().is_empty(), "Graph should contain nodes");
+}
+
+#[test]
+fn blackbox_scan_rust_multiple_items() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("types.rs")).expect("create file");
+    writeln!(file, r#"
+pub struct Point {{
+    x: f32,
+    y: f32,
+}}
+
+impl Point {{
+    pub fn new(x: f32, y: f32) -> Self {{
+        Self {{ x, y }}
+    }}
+
+    pub fn distance(&self, other: &Point) -> f32 {{
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+    }}
+}}
+
+pub enum Shape {{
+    Circle(f32),
+    Rectangle(f32, f32),
+}}
+
+pub fn calculate_area(shape: &Shape) -> f32 {{
+    match shape {{
+        Shape::Circle(r) => std::f32::consts::PI * r * r,
+        Shape::Rectangle(w, h) => w * h,
+    }}
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    // Should find: struct Point, impl block methods (new, distance), enum Shape, fn calculate_area
+    assert_eq!(stats.files_scanned, 1);
+    assert!(stats.total_nodes >= 4, "Should find struct, enum, and functions, found {}", stats.total_nodes);
+    assert!(graph.nodes().len() >= 4, "Graph should have at least 4 nodes");
+}
+
+#[test]
+fn blackbox_scan_rust_ignores_python_files() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create Rust file
+    let mut rs_file = File::create(temp_dir.path().join("lib.rs")).expect("create");
+    writeln!(rs_file, "fn rust_only() {{}}").expect("write");
+    drop(rs_file);
+
+    // Create Python file (should be ignored by scan_rust)
+    let mut py_file = File::create(temp_dir.path().join("script.py")).expect("create");
+    writeln!(py_file, "def python_func():\n    pass").expect("write");
+    drop(py_file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (_graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    // scan_rust should only count Rust files
+    assert_eq!(stats.files_scanned, 1, "Should only scan Rust file");
+    let rust_count = stats.nodes_per_language.get(&Language::Rust).copied().unwrap_or(0);
+    let python_count = stats.nodes_per_language.get(&Language::Python).copied().unwrap_or(0);
+    assert!(rust_count >= 1, "Should have Rust nodes");
+    assert_eq!(python_count, 0, "Should not have Python nodes from scan_rust");
+}
+
+#[test]
+fn blackbox_scan_rust_nested_modules() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create crate structure
+    let src_dir = temp_dir.path().join("src");
+    fs::create_dir_all(&src_dir).expect("create src");
+
+    let mut lib = File::create(src_dir.join("lib.rs")).expect("create");
+    writeln!(lib, "pub mod utils;\npub fn main_entry() {{}}").expect("write");
+    drop(lib);
+
+    let utils_dir = src_dir.join("utils");
+    fs::create_dir_all(&utils_dir).expect("create utils");
+
+    let mut utils_mod = File::create(utils_dir.join("mod.rs")).expect("create");
+    writeln!(utils_mod, "pub mod helpers;\npub fn util_func() {{}}").expect("write");
+    drop(utils_mod);
+
+    let mut helpers = File::create(utils_dir.join("helpers.rs")).expect("create");
+    writeln!(helpers, "pub fn helper_one() {{}}\npub fn helper_two() {{}}").expect("write");
+    drop(helpers);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 3, "Should scan all 3 Rust files");
+    // Functions: main_entry, util_func, helper_one, helper_two = 4 minimum
+    assert!(stats.total_nodes >= 4, "Should find at least 4 functions, found {}", stats.total_nodes);
+    assert!(graph.nodes().len() >= 4, "Graph should have at least 4 nodes");
+}
+
+#[test]
+fn blackbox_scan_rust_trait_and_impl() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("traits.rs")).expect("create");
+    writeln!(file, r#"
+pub trait Drawable {{
+    fn draw(&self);
+    fn area(&self) -> f32;
+}}
+
+pub struct Circle {{
+    radius: f32,
+}}
+
+impl Drawable for Circle {{
+    fn draw(&self) {{
+        println!("Drawing circle");
+    }}
+
+    fn area(&self) -> f32 {{
+        std::f32::consts::PI * self.radius * self.radius
+    }}
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    // Should find: trait Drawable, struct Circle, impl methods
+    assert!(stats.total_nodes >= 2, "Should find trait and struct at minimum");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_rust_mod_declarations() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("lib.rs")).expect("create");
+    writeln!(file, r#"
+mod internal {{
+    pub fn internal_fn() {{}}
+}}
+
+pub mod exported {{
+    pub fn exported_fn() {{}}
+}}
+
+pub use internal::internal_fn;
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    // Should find the modules and their functions
+    assert!(stats.total_nodes >= 2, "Should find at least 2 functions");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_rust_macros_and_attributes() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("macros.rs")).expect("create");
+    writeln!(file, r#"
+#[derive(Debug, Clone)]
+pub struct Data {{
+    value: i32,
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn test_data() {{
+        let d = Data {{ value: 42 }};
+        assert_eq!(d.value, 42);
+    }}
+}}
+
+macro_rules! my_macro {{
+    ($x:expr) => {{
+        println!("{{}}", $x);
+    }};
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_rust(temp_dir.path());
+
+    // Should handle macros and attributes without crashing
+    assert!(result.is_ok(), "Should handle macros gracefully");
+}
+
+#[test]
+fn blackbox_scan_rust_empty_directory() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.total_nodes, 0);
+    assert!(graph.nodes().is_empty());
+}
+
+// ============================================================================
+// scan_python Tests
+// ============================================================================
+
+#[test]
+fn blackbox_scan_python_single_function() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("main.py")).expect("create");
+    writeln!(file, "def hello():\n    print('Hello')").expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_python(temp_dir.path());
+
+    assert!(result.is_ok(), "scan_python should succeed: {:?}", result.err());
+    let (graph, stats) = result.unwrap();
+    assert_eq!(stats.files_scanned, 1);
+    assert!(stats.total_nodes >= 1);
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_python_class_with_methods() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("models.py")).expect("create");
+    writeln!(file, r#"
+class User:
+    def __init__(self, name: str, email: str):
+        self.name = name
+        self.email = email
+
+    def greet(self) -> str:
+        return f"Hello, {{self.name}}"
+
+    @property
+    def display_name(self) -> str:
+        return self.name.title()
+
+    @staticmethod
+    def create_guest() -> 'User':
+        return User("Guest", "guest@example.com")
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'User':
+        return cls(data['name'], data['email'])
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    // Should find: class User and its methods
+    assert!(stats.total_nodes >= 1, "Should find at least the class");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_python_ignores_rust_files() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create Python file
+    let mut py_file = File::create(temp_dir.path().join("main.py")).expect("create");
+    writeln!(py_file, "def python_only():\n    pass").expect("write");
+    drop(py_file);
+
+    // Create Rust file (should be ignored by scan_python)
+    let mut rs_file = File::create(temp_dir.path().join("lib.rs")).expect("create");
+    writeln!(rs_file, "fn rust_func() {{}}").expect("write");
+    drop(rs_file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (_graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 1, "Should only scan Python file");
+    let python_count = stats.nodes_per_language.get(&Language::Python).copied().unwrap_or(0);
+    let rust_count = stats.nodes_per_language.get(&Language::Rust).copied().unwrap_or(0);
+    assert!(python_count >= 1, "Should have Python nodes");
+    assert_eq!(rust_count, 0, "Should not have Rust nodes from scan_python");
+}
+
+#[test]
+fn blackbox_scan_python_package_structure() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create package structure
+    let pkg_dir = temp_dir.path().join("mypackage");
+    fs::create_dir_all(&pkg_dir).expect("create package");
+
+    let mut init = File::create(pkg_dir.join("__init__.py")).expect("create");
+    writeln!(init, "from .core import main_func").expect("write");
+    drop(init);
+
+    let mut core = File::create(pkg_dir.join("core.py")).expect("create");
+    writeln!(core, "def main_func():\n    pass\n\ndef helper():\n    pass").expect("write");
+    drop(core);
+
+    let subpkg = pkg_dir.join("utils");
+    fs::create_dir_all(&subpkg).expect("create subpackage");
+
+    let mut sub_init = File::create(subpkg.join("__init__.py")).expect("create");
+    writeln!(sub_init, "").expect("write");
+    drop(sub_init);
+
+    let mut helpers = File::create(subpkg.join("helpers.py")).expect("create");
+    writeln!(helpers, "def util_one():\n    pass\n\ndef util_two():\n    pass").expect("write");
+    drop(helpers);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 4, "Should scan all 4 Python files");
+    assert!(stats.total_nodes >= 4, "Should find at least 4 functions");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_python_async_functions() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("async_code.py")).expect("create");
+    writeln!(file, r#"
+import asyncio
+
+async def fetch_data(url: str) -> dict:
+    await asyncio.sleep(1)
+    return {{"url": url}}
+
+async def process_items(items: list):
+    for item in items:
+        await asyncio.sleep(0.1)
+        yield item * 2
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_python(temp_dir.path());
+
+    assert!(result.is_ok(), "Should handle async functions");
+    let (graph, stats) = result.unwrap();
+    assert!(stats.total_nodes >= 2, "Should find async functions");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_python_decorators() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("decorated.py")).expect("create");
+    writeln!(file, r#"
+def my_decorator(func):
+    def wrapper(*args, **kwargs):
+        print("Before")
+        result = func(*args, **kwargs)
+        print("After")
+        return result
+    return wrapper
+
+@my_decorator
+def decorated_function():
+    print("Inside")
+
+class MyClass:
+    @staticmethod
+    def static_method():
+        pass
+
+    @classmethod
+    def class_method(cls):
+        pass
+
+    @property
+    def prop(self):
+        return self._prop
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_python(temp_dir.path());
+
+    assert!(result.is_ok(), "Should handle decorators gracefully");
+}
+
+#[test]
+fn blackbox_scan_python_empty_directory() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.total_nodes, 0);
+    assert!(graph.nodes().is_empty());
+}
+
+// ============================================================================
+// scan_wgsl Tests
+// ============================================================================
+
+#[test]
+fn blackbox_scan_wgsl_vertex_shader() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("vertex.wgsl")).expect("create");
+    writeln!(file, r#"
+@vertex
+fn vs_main(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {{
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 0.5),
+        vec2<f32>(-0.5, -0.5),
+        vec2<f32>(0.5, -0.5)
+    );
+    return vec4<f32>(positions[idx], 0.0, 1.0);
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let result = builder.scan_wgsl(temp_dir.path());
+
+    assert!(result.is_ok(), "scan_wgsl should succeed: {:?}", result.err());
+    let (graph, stats) = result.unwrap();
+    assert_eq!(stats.files_scanned, 1);
+    assert!(stats.total_nodes >= 1, "Should find vertex entry point");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_fragment_shader() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("fragment.wgsl")).expect("create");
+    writeln!(file, r#"
+@fragment
+fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
+    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 1);
+    assert!(stats.total_nodes >= 1, "Should find fragment entry point");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_compute_shader() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("compute.wgsl")).expect("create");
+    writeln!(file, r#"
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> output: array<f32>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    let idx = id.x;
+    output[idx] = input[idx] * 2.0;
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 1);
+    assert!(stats.total_nodes >= 1, "Should find compute entry point");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_structs_and_bindings() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("types.wgsl")).expect("create");
+    writeln!(file, r#"
+struct VertexInput {{
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}}
+
+struct VertexOutput {{
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+}}
+
+struct Uniforms {{
+    model: mat4x4<f32>,
+    view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+}}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {{
+    var output: VertexOutput;
+    output.clip_position = uniforms.projection * uniforms.view * uniforms.model * vec4<f32>(input.position, 1.0);
+    output.world_normal = (uniforms.model * vec4<f32>(input.normal, 0.0)).xyz;
+    output.uv = input.uv;
+    return output;
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    // Should find: 3 structs + 1 function
+    assert!(stats.total_nodes >= 4, "Should find structs and function, found {}", stats.total_nodes);
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_ignores_rust_python() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create WGSL file
+    let mut wgsl_file = File::create(temp_dir.path().join("shader.wgsl")).expect("create");
+    writeln!(wgsl_file, "@compute @workgroup_size(1)\nfn main() {{}}").expect("write");
+    drop(wgsl_file);
+
+    // Create Rust file (should be ignored)
+    let mut rs_file = File::create(temp_dir.path().join("lib.rs")).expect("create");
+    writeln!(rs_file, "fn rust_func() {{}}").expect("write");
+    drop(rs_file);
+
+    // Create Python file (should be ignored)
+    let mut py_file = File::create(temp_dir.path().join("script.py")).expect("create");
+    writeln!(py_file, "def python_func():\n    pass").expect("write");
+    drop(py_file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (_graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 1, "Should only scan WGSL file");
+    let wgsl_count = stats.nodes_per_language.get(&Language::Wgsl).copied().unwrap_or(0);
+    let rust_count = stats.nodes_per_language.get(&Language::Rust).copied().unwrap_or(0);
+    let python_count = stats.nodes_per_language.get(&Language::Python).copied().unwrap_or(0);
+    assert!(wgsl_count >= 1, "Should have WGSL nodes");
+    assert_eq!(rust_count, 0, "Should not have Rust nodes from scan_wgsl");
+    assert_eq!(python_count, 0, "Should not have Python nodes from scan_wgsl");
+}
+
+#[test]
+fn blackbox_scan_wgsl_helper_functions() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("utils.wgsl")).expect("create");
+    writeln!(file, r#"
+fn lerp(a: f32, b: f32, t: f32) -> f32 {{
+    return a + (b - a) * t;
+}}
+
+fn clamp01(x: f32) -> f32 {{
+    return clamp(x, 0.0, 1.0);
+}}
+
+fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {{
+    return pow(srgb, vec3<f32>(2.2));
+}}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {{
+    let value = lerp(0.0, 1.0, 0.5);
+    return vec4<f32>(vec3<f32>(value), 1.0);
+}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    // Should find: 3 helper functions + 1 entry point
+    assert!(stats.total_nodes >= 4, "Should find all functions, found {}", stats.total_nodes);
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_shaders_directory() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create shaders directory structure
+    let shaders_dir = temp_dir.path().join("shaders");
+    fs::create_dir_all(&shaders_dir).expect("create shaders");
+
+    let mut pbr = File::create(shaders_dir.join("pbr.wgsl")).expect("create");
+    writeln!(pbr, "@fragment\nfn pbr_main() -> @location(0) vec4<f32> {{ return vec4<f32>(1.0); }}").expect("write");
+    drop(pbr);
+
+    let mut shadow = File::create(shaders_dir.join("shadow.wgsl")).expect("create");
+    writeln!(shadow, "@vertex\nfn shadow_vs() -> @builtin(position) vec4<f32> {{ return vec4<f32>(0.0); }}").expect("write");
+    drop(shadow);
+
+    let includes = shaders_dir.join("includes");
+    fs::create_dir_all(&includes).expect("create includes");
+
+    let mut common = File::create(includes.join("common.wgsl")).expect("create");
+    writeln!(common, "fn common_util() -> f32 {{ return 1.0; }}").expect("write");
+    drop(common);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 3, "Should scan all 3 WGSL files");
+    assert!(stats.total_nodes >= 3, "Should find at least 3 functions");
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn blackbox_scan_wgsl_empty_directory() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.total_nodes, 0);
+    assert!(graph.nodes().is_empty());
+}
+
+// ============================================================================
+// persist_graph_to_db Tests
+// ============================================================================
+
+use trinity_harness::{persist_graph_to_db, HarnessDb};
+
+#[test]
+fn blackbox_persist_graph_empty() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let db_path = temp_dir.path().join("test.db");
+
+    // Create empty graph via scan of empty directory
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    // Create database and persist
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Persisting empty graph should succeed: {:?}", result.err());
+}
+
+#[test]
+fn blackbox_persist_graph_with_nodes() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create file to scan
+    let mut file = File::create(temp_dir.path().join("code.rs")).expect("create");
+    writeln!(file, "fn test_func() {{}}\nstruct TestStruct {{}}").expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    assert!(stats.total_nodes >= 2, "Should have nodes to persist");
+
+    // Persist to database
+    let db_path = temp_dir.path().join("graph.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Persisting graph should succeed: {:?}", result.err());
+}
+
+#[test]
+fn blackbox_persist_graph_multiple_languages() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create multi-language files
+    let mut rs = File::create(temp_dir.path().join("lib.rs")).expect("create");
+    writeln!(rs, "pub fn rust_entry() {{}}").expect("write");
+    drop(rs);
+
+    let mut py = File::create(temp_dir.path().join("main.py")).expect("create");
+    writeln!(py, "def python_entry():\n    pass").expect("write");
+    drop(py);
+
+    let mut wgsl = File::create(temp_dir.path().join("shader.wgsl")).expect("create");
+    writeln!(wgsl, "@compute @workgroup_size(1)\nfn wgsl_entry() {{}}").expect("write");
+    drop(wgsl);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 3);
+    assert!(stats.total_nodes >= 3);
+
+    // Persist to database
+    let db_path = temp_dir.path().join("multi_lang.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Persisting multi-language graph should succeed");
+}
+
+#[test]
+fn blackbox_persist_graph_large_codebase() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create 50 files with multiple items each
+    for i in 0..50 {
+        let mut file = File::create(temp_dir.path().join(format!("module_{}.rs", i))).expect("create");
+        writeln!(file, r#"
+pub fn func_{}_a() {{}}
+pub fn func_{}_b() {{}}
+pub struct Struct_{} {{}}
+"#, i, i, i).expect("write");
+        drop(file);
+    }
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 50);
+    assert!(stats.total_nodes >= 150, "Should have at least 150 nodes (3 per file)");
+
+    // Persist to database
+    let db_path = temp_dir.path().join("large.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Persisting large graph should succeed");
+}
+
+#[test]
+fn blackbox_persist_graph_idempotent() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("code.rs")).expect("create");
+    writeln!(file, "fn idempotent_test() {{}}").expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan");
+
+    let db_path = temp_dir.path().join("idempotent.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+
+    // Persist twice - should not crash or error
+    let result1 = persist_graph_to_db(&graph, &db);
+    let result2 = persist_graph_to_db(&graph, &db);
+
+    assert!(result1.is_ok(), "First persist should succeed");
+    assert!(result2.is_ok(), "Second persist should succeed (idempotent)");
+}
+
+#[test]
+fn blackbox_persist_graph_node_attributes() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    let mut file = File::create(temp_dir.path().join("attributes.rs")).expect("create");
+    writeln!(file, r#"
+/// Documentation comment
+pub fn documented_func() {{}}
+
+#[inline]
+fn inlined_func() {{}}
+
+#[cfg(feature = "special")]
+pub mod conditional_mod {{}}
+"#).expect("write");
+    drop(file);
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan");
+
+    let db_path = temp_dir.path().join("attributes.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Should persist nodes with attributes");
+}
+
+// ============================================================================
+// Integration: Scan and Persist Workflow
+// ============================================================================
+
+#[test]
+fn blackbox_full_workflow_rust_scan_persist() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create realistic Rust crate structure
+    let src = temp_dir.path().join("src");
+    fs::create_dir_all(&src).expect("create src");
+
+    let mut lib = File::create(src.join("lib.rs")).expect("create");
+    writeln!(lib, r#"
+pub mod core;
+pub mod utils;
+
+pub use core::Engine;
+pub use utils::helpers;
+"#).expect("write");
+    drop(lib);
+
+    let core_dir = src.join("core");
+    fs::create_dir_all(&core_dir).expect("create core");
+
+    let mut core_mod = File::create(core_dir.join("mod.rs")).expect("create");
+    writeln!(core_mod, r#"
+pub struct Engine {{
+    running: bool,
+}}
+
+impl Engine {{
+    pub fn new() -> Self {{
+        Self {{ running: false }}
+    }}
+
+    pub fn start(&mut self) {{
+        self.running = true;
+    }}
+}}
+"#).expect("write");
+    drop(core_mod);
+
+    let utils_dir = src.join("utils");
+    fs::create_dir_all(&utils_dir).expect("create utils");
+
+    let mut utils_mod = File::create(utils_dir.join("mod.rs")).expect("create");
+    writeln!(utils_mod, r#"
+pub mod helpers;
+"#).expect("write");
+    drop(utils_mod);
+
+    let mut helpers = File::create(utils_dir.join("helpers.rs")).expect("create");
+    writeln!(helpers, r#"
+pub fn format_value(v: i32) -> String {{
+    format!("Value: {{}}", v)
+}}
+"#).expect("write");
+    drop(helpers);
+
+    // Scan Rust files only
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 4, "Should scan all 4 Rust files");
+    assert!(stats.total_nodes >= 4, "Should find structs, impls, and functions");
+
+    // Persist to database
+    let db_path = temp_dir.path().join("workflow.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    let result = persist_graph_to_db(&graph, &db);
+
+    assert!(result.is_ok(), "Full workflow should succeed");
+}
+
+#[test]
+fn blackbox_full_workflow_mixed_languages() {
+    let temp_dir = TempDir::new().expect("create temp dir");
+
+    // Create multi-language project
+    let rust_dir = temp_dir.path().join("crates").join("core");
+    fs::create_dir_all(&rust_dir).expect("create rust dir");
+
+    let mut rs = File::create(rust_dir.join("lib.rs")).expect("create");
+    writeln!(rs, "#[pyfunction]\npub fn rust_to_python() -> i32 {{ 42 }}").expect("write");
+    drop(rs);
+
+    let python_dir = temp_dir.path().join("python");
+    fs::create_dir_all(&python_dir).expect("create python dir");
+
+    let mut py = File::create(python_dir.join("main.py")).expect("create");
+    writeln!(py, "from core import rust_to_python\n\ndef use_rust():\n    return rust_to_python()").expect("write");
+    drop(py);
+
+    let shaders_dir = temp_dir.path().join("shaders");
+    fs::create_dir_all(&shaders_dir).expect("create shaders dir");
+
+    let mut wgsl = File::create(shaders_dir.join("render.wgsl")).expect("create");
+    writeln!(wgsl, "@vertex\nfn vs() -> @builtin(position) vec4<f32> {{ return vec4<f32>(0.0); }}").expect("write");
+    drop(wgsl);
+
+    // Full scan all languages
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan");
+
+    assert_eq!(stats.files_scanned, 3);
+    assert!(stats.nodes_per_language.get(&Language::Rust).copied().unwrap_or(0) >= 1);
+    assert!(stats.nodes_per_language.get(&Language::Python).copied().unwrap_or(0) >= 1);
+    assert!(stats.nodes_per_language.get(&Language::Wgsl).copied().unwrap_or(0) >= 1);
+
+    // Persist
+    let db_path = temp_dir.path().join("mixed.db");
+    let db = HarnessDb::open(db_path.to_str().unwrap()).expect("open db");
+    assert!(persist_graph_to_db(&graph, &db).is_ok());
+}

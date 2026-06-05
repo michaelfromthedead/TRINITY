@@ -5,7 +5,8 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use crate::parsers::{Language, ParserRegistry};
+use crate::db::HarnessDb;
+use crate::parsers::{Language, ParserRegistry, UnitType};
 use super::{CodeGraph, CodeNode, NodeId};
 
 /// Statistics from a full scan operation.
@@ -138,7 +139,186 @@ impl<'a> GraphBuilder<'a> {
         let lang = ParserRegistry::detect_language(path)?;
         self.scan_file(path, lang, graph).ok()
     }
+
+    /// Scan only Rust files (.rs) in the directory tree.
+    ///
+    /// This is a convenience method that filters out non-Rust files,
+    /// providing faster scanning when only Rust code is of interest.
+    ///
+    /// # Arguments
+    ///
+    /// * `root_path` - The root directory to start scanning from.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (CodeGraph, ScanStats) containing the built graph and statistics.
+    pub fn scan_rust(&self, root_path: &Path) -> Result<(CodeGraph, ScanStats), ScanError> {
+        self.scan_language(root_path, Language::Rust)
+    }
+
+    /// Scan only Python files (.py) in the directory tree.
+    ///
+    /// This is a convenience method that filters out non-Python files.
+    pub fn scan_python(&self, root_path: &Path) -> Result<(CodeGraph, ScanStats), ScanError> {
+        self.scan_language(root_path, Language::Python)
+    }
+
+    /// Scan only WGSL shader files (.wgsl) in the directory tree.
+    ///
+    /// This is a convenience method that filters out non-WGSL files.
+    pub fn scan_wgsl(&self, root_path: &Path) -> Result<(CodeGraph, ScanStats), ScanError> {
+        self.scan_language(root_path, Language::Wgsl)
+    }
+
+    /// Scan only files of a specific language in the directory tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `root_path` - The root directory to start scanning from.
+    /// * `target_lang` - The language to filter for.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (CodeGraph, ScanStats) containing the built graph and statistics.
+    pub fn scan_language(
+        &self,
+        root_path: &Path,
+        target_lang: Language,
+    ) -> Result<(CodeGraph, ScanStats), ScanError> {
+        let mut graph = CodeGraph::new();
+        let mut stats = ScanStats::new();
+
+        for entry in WalkDir::new(root_path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+
+            if !path.is_file() {
+                continue;
+            }
+
+            let Some(lang) = ParserRegistry::detect_language(path) else {
+                stats.record_skip();
+                continue;
+            };
+
+            if lang != target_lang {
+                stats.record_skip();
+                continue;
+            }
+
+            match self.scan_file(path, lang, &mut graph) {
+                Ok(node_count) => {
+                    stats.record_file();
+                    for _ in 0..node_count {
+                        stats.record_node(lang);
+                    }
+                }
+                Err(_) => {
+                    stats.record_skip();
+                }
+            }
+        }
+
+        Ok((graph, stats))
+    }
 }
+
+/// Persist a code graph to the database.
+///
+/// This function inserts all nodes from the graph into the `code_nodes` table.
+/// Existing nodes with the same node_id are replaced.
+///
+/// # Arguments
+///
+/// * `graph` - The code graph to persist.
+/// * `db` - The database connection.
+///
+/// # Returns
+///
+/// The number of nodes persisted, or an error.
+pub fn persist_graph_to_db(graph: &CodeGraph, db: &HarnessDb) -> Result<usize, PersistError> {
+    let conn = db.connection();
+    let mut count = 0;
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            INSERT OR REPLACE INTO code_nodes (
+                node_id, file_path, span_start_line, span_end_line,
+                language, kind, name, hash_full, current_state
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'unknown')
+            "#,
+        )
+        .map_err(|e| PersistError::DatabaseError(e.to_string()))?;
+
+    for node in graph.nodes() {
+        let node_id = format!("{}:{}:{}", node.file_path, node.unit.start_line, node.name());
+        let language_str = language_to_str(node.language());
+        let kind_str = unit_type_to_str(node.unit_type());
+        let hash_full = hex::encode(&node.unit.hashes.full_hash);
+        let start_line = node.unit.start_line as i64;
+        let end_line = node.unit.end_line as i64;
+
+        stmt.execute(rusqlite::params![
+            node_id,
+            node.file_path,
+            start_line,
+            end_line,
+            language_str,
+            kind_str,
+            node.name(),
+            hash_full,
+        ])
+        .map_err(|e| PersistError::DatabaseError(e.to_string()))?;
+
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+/// Convert Language enum to database string.
+fn language_to_str(lang: Language) -> &'static str {
+    match lang {
+        Language::Rust => "rust",
+        Language::Python => "python",
+        Language::Wgsl => "wgsl",
+    }
+}
+
+/// Convert UnitType enum to database kind string.
+fn unit_type_to_str(unit_type: UnitType) -> &'static str {
+    match unit_type {
+        UnitType::Function => "rust_function",
+        UnitType::Struct => "rust_struct",
+        UnitType::Enum => "rust_enum",
+        UnitType::Class => "python_class",
+        UnitType::Method => "method",
+        UnitType::Module => "module",
+        UnitType::Impl => "rust_impl",
+        UnitType::Trait => "rust_trait",
+    }
+}
+
+/// Errors that can occur during persistence.
+#[derive(Debug)]
+pub enum PersistError {
+    /// Database error.
+    DatabaseError(String),
+}
+
+impl std::fmt::Display for PersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersistError::DatabaseError(msg) => write!(f, "database error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PersistError {}
 
 /// Errors that can occur during scanning.
 #[derive(Debug)]

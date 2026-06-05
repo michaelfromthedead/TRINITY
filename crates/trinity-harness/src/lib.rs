@@ -9,6 +9,6 @@ pub mod parsers;
 pub mod state;
 
 pub use db::HarnessDb;
-pub use graph::{CodeEdge, CodeNode, GraphBuilder, ScanError, ScanStats};
+pub use graph::{persist_graph_to_db, CodeEdge, CodeNode, GraphBuilder, PersistError, ScanError, ScanStats};
 pub use parsers::{CodeUnit, ContentHashes, Language, ParserRegistry, UnitType};
 pub use state::StateMachine;

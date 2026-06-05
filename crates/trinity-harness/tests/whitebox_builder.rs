@@ -590,3 +590,772 @@ fn test_scan_stats_debug() {
     assert!(debug_str.contains("ScanStats"));
     assert!(debug_str.contains("files_scanned"));
 }
+
+// =============================================================================
+// scan_rust() tests - T-GRAPH-2.2
+// =============================================================================
+
+#[test]
+fn test_scan_rust_filters_only_rs_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create files with various extensions
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn rust_func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("main.rs"),
+        "fn main() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def python_func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shader.wgsl"),
+        "fn wgsl_func() {}"
+    ).unwrap();
+    fs::write(temp_dir.path().join("readme.md"), "# Readme").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    // Should only scan .rs files
+    assert_eq!(stats.files_scanned, 2, "should scan only 2 Rust files");
+    assert_eq!(stats.files_skipped, 3, "should skip 3 non-Rust files");
+    assert!(stats.nodes_per_language.contains_key(&Language::Rust));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Python));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Wgsl));
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn test_scan_rust_nested_directories() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create nested structure
+    fs::create_dir_all(temp_dir.path().join("src/module")).unwrap();
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn root() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("src/main.rs"),
+        "fn main() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("src/module/mod.rs"),
+        "fn module_fn() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("src/module/helper.py"),
+        "def helper():\n    pass\n"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (_graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 3, "should scan all 3 Rust files");
+    assert_eq!(stats.files_skipped, 1, "should skip 1 Python file");
+}
+
+#[test]
+fn test_scan_rust_empty_directory() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert!(graph.nodes().is_empty());
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.files_skipped, 0);
+}
+
+#[test]
+fn test_scan_rust_no_rust_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shader.wgsl"),
+        "fn shader() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_rust(temp_dir.path()).expect("scan should succeed");
+
+    assert!(graph.nodes().is_empty());
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.files_skipped, 2, "should skip all non-Rust files");
+}
+
+// =============================================================================
+// scan_python() tests - T-GRAPH-2.2
+// =============================================================================
+
+#[test]
+fn test_scan_python_filters_only_py_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create files with various extensions
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def python_func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("module.py"),
+        "class MyClass:\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn rust_func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shader.wgsl"),
+        "fn wgsl_func() {}"
+    ).unwrap();
+    fs::write(temp_dir.path().join("config.json"), "{}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    // Should only scan .py files
+    assert_eq!(stats.files_scanned, 2, "should scan only 2 Python files");
+    assert_eq!(stats.files_skipped, 3, "should skip 3 non-Python files");
+    assert!(stats.nodes_per_language.contains_key(&Language::Python));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Rust));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Wgsl));
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn test_scan_python_nested_packages() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create Python package structure
+    fs::create_dir_all(temp_dir.path().join("mypackage/subpackage")).unwrap();
+
+    fs::write(
+        temp_dir.path().join("mypackage/__init__.py"),
+        ""
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("mypackage/module.py"),
+        "def module_func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("mypackage/subpackage/__init__.py"),
+        ""
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("mypackage/subpackage/deep.py"),
+        "def deep_func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("mypackage/helper.rs"),
+        "fn helper() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (_graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    // 4 .py files (2 __init__.py + module.py + deep.py)
+    assert_eq!(stats.files_scanned, 4, "should scan all 4 Python files");
+    assert_eq!(stats.files_skipped, 1, "should skip 1 Rust file");
+}
+
+#[test]
+fn test_scan_python_no_python_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shader.wgsl"),
+        "fn shader() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_python(temp_dir.path()).expect("scan should succeed");
+
+    assert!(graph.nodes().is_empty());
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.files_skipped, 2, "should skip all non-Python files");
+}
+
+// =============================================================================
+// scan_wgsl() tests - T-GRAPH-2.2
+// =============================================================================
+
+#[test]
+fn test_scan_wgsl_filters_only_wgsl_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create files with various extensions
+    fs::write(
+        temp_dir.path().join("vertex.wgsl"),
+        "fn vertex_main() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("fragment.wgsl"),
+        "fn fragment_main() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn rust_func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def python_func():\n    pass\n"
+    ).unwrap();
+    fs::write(temp_dir.path().join("shader.glsl"), "void main() {}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    // Should only scan .wgsl files
+    assert_eq!(stats.files_scanned, 2, "should scan only 2 WGSL files");
+    assert_eq!(stats.files_skipped, 3, "should skip 3 non-WGSL files");
+    assert!(stats.nodes_per_language.contains_key(&Language::Wgsl));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Rust));
+    assert!(!stats.nodes_per_language.contains_key(&Language::Python));
+    assert!(!graph.nodes().is_empty());
+}
+
+#[test]
+fn test_scan_wgsl_shader_directory() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create shader directory structure
+    fs::create_dir_all(temp_dir.path().join("shaders/postprocess")).unwrap();
+
+    fs::write(
+        temp_dir.path().join("shaders/common.wgsl"),
+        "fn common_util() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shaders/pbr.wgsl"),
+        "fn pbr_lighting() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shaders/postprocess/bloom.wgsl"),
+        "fn bloom_effect() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shaders/readme.md"),
+        "# Shader documentation"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (_graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert_eq!(stats.files_scanned, 3, "should scan all 3 WGSL files");
+    assert_eq!(stats.files_skipped, 1, "should skip readme.md");
+}
+
+#[test]
+fn test_scan_wgsl_no_wgsl_files() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def func():\n    pass\n"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph, stats) = builder.scan_wgsl(temp_dir.path()).expect("scan should succeed");
+
+    assert!(graph.nodes().is_empty());
+    assert_eq!(stats.files_scanned, 0);
+    assert_eq!(stats.files_skipped, 2, "should skip all non-WGSL files");
+}
+
+// =============================================================================
+// scan_language() tests - generic language filtering
+// =============================================================================
+
+#[test]
+fn test_scan_language_rust_same_as_scan_rust() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("lib.rs"), "fn func() {}").unwrap();
+    fs::write(temp_dir.path().join("script.py"), "def f():\n    pass\n").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph1, stats1) = builder.scan_rust(temp_dir.path()).expect("scan_rust should succeed");
+    let (graph2, stats2) = builder.scan_language(temp_dir.path(), Language::Rust).expect("scan_language should succeed");
+
+    assert_eq!(stats1.files_scanned, stats2.files_scanned);
+    assert_eq!(stats1.files_skipped, stats2.files_skipped);
+    assert_eq!(stats1.total_nodes, stats2.total_nodes);
+    assert_eq!(graph1.nodes().len(), graph2.nodes().len());
+}
+
+#[test]
+fn test_scan_language_python_same_as_scan_python() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("lib.rs"), "fn func() {}").unwrap();
+    fs::write(temp_dir.path().join("script.py"), "def f():\n    pass\n").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph1, stats1) = builder.scan_python(temp_dir.path()).expect("scan_python should succeed");
+    let (graph2, stats2) = builder.scan_language(temp_dir.path(), Language::Python).expect("scan_language should succeed");
+
+    assert_eq!(stats1.files_scanned, stats2.files_scanned);
+    assert_eq!(stats1.files_skipped, stats2.files_skipped);
+    assert_eq!(stats1.total_nodes, stats2.total_nodes);
+    assert_eq!(graph1.nodes().len(), graph2.nodes().len());
+}
+
+#[test]
+fn test_scan_language_wgsl_same_as_scan_wgsl() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("shader.wgsl"), "fn shader() {}").unwrap();
+    fs::write(temp_dir.path().join("lib.rs"), "fn func() {}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    let (graph1, stats1) = builder.scan_wgsl(temp_dir.path()).expect("scan_wgsl should succeed");
+    let (graph2, stats2) = builder.scan_language(temp_dir.path(), Language::Wgsl).expect("scan_language should succeed");
+
+    assert_eq!(stats1.files_scanned, stats2.files_scanned);
+    assert_eq!(stats1.files_skipped, stats2.files_skipped);
+    assert_eq!(stats1.total_nodes, stats2.total_nodes);
+    assert_eq!(graph1.nodes().len(), graph2.nodes().len());
+}
+
+// =============================================================================
+// persist_graph_to_db() tests - T-GRAPH-2.2
+// =============================================================================
+
+use trinity_harness::db::HarnessDb;
+use trinity_harness::graph::persist_graph_to_db;
+
+#[test]
+fn test_persist_graph_to_db_inserts_nodes() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    // Create a Rust file
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn func1() {}\nfn func2() {}\nstruct MyStruct {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    // Open in-memory database
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+
+    // Persist the graph
+    let count = persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    assert_eq!(count, graph.nodes().len(), "persisted count should match node count");
+    assert!(count >= 1, "should have persisted at least one node");
+    assert_eq!(count, stats.total_nodes, "persisted count should match stats.total_nodes");
+}
+
+#[test]
+fn test_persist_graph_to_db_empty_graph() {
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    let graph = CodeGraph::new();
+
+    let count = persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    assert_eq!(count, 0, "persisting empty graph should return 0");
+}
+
+#[test]
+fn test_persist_graph_to_db_correct_node_data() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("test.rs"),
+        "fn test_function() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query the database to verify the data
+    let conn = db.connection();
+    let mut stmt = conn.prepare("SELECT file_path, language, kind, name FROM code_nodes").unwrap();
+    let rows: Vec<(String, String, String, String)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+
+    assert!(!rows.is_empty(), "should have at least one row");
+
+    let (file_path, language, kind, name) = &rows[0];
+    assert!(file_path.contains("test.rs"), "file_path should contain test.rs");
+    assert_eq!(language, "rust", "language should be rust");
+    assert_eq!(kind, "rust_function", "kind should be rust_function");
+    assert_eq!(name, "test_function", "name should be test_function");
+}
+
+#[test]
+fn test_persist_graph_to_db_multiple_languages() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn rust_func() {}"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("script.py"),
+        "def python_func():\n    pass\n"
+    ).unwrap();
+    fs::write(
+        temp_dir.path().join("shader.wgsl"),
+        "fn wgsl_func() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query to check we have nodes for each language
+    let conn = db.connection();
+
+    let rust_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE language = 'rust'", [], |row| row.get(0))
+        .unwrap();
+    let python_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE language = 'python'", [], |row| row.get(0))
+        .unwrap();
+    let wgsl_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE language = 'wgsl'", [], |row| row.get(0))
+        .unwrap();
+
+    assert!(rust_count >= 1, "should have at least 1 Rust node");
+    assert!(python_count >= 1, "should have at least 1 Python node");
+    assert!(wgsl_count >= 1, "should have at least 1 WGSL node");
+}
+
+#[test]
+fn test_persist_graph_to_db_replaces_existing() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn original_func() {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+
+    // First scan and persist
+    let (graph1, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph1, &db).expect("first persist should succeed");
+
+    // Modify file and scan again
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn original_func() {} // modified"
+    ).unwrap();
+    let (graph2, _) = builder.full_scan(temp_dir.path()).expect("second scan should succeed");
+
+    // Persist again - should replace
+    let count = persist_graph_to_db(&graph2, &db).expect("second persist should succeed");
+
+    // The INSERT OR REPLACE should have updated the row
+    assert!(count >= 1, "should persist at least one node");
+
+    // Verify we still have only one entry for this function
+    let conn = db.connection();
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE name = 'original_func'", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(total, 1, "should have exactly one row for original_func after replace");
+}
+
+#[test]
+fn test_persist_graph_to_db_stores_line_numbers() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "// comment\n// another\nfn func_on_line_three() {\n    println!(\"body\");\n}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query line numbers
+    let conn = db.connection();
+    let (start_line, end_line): (i64, i64) = conn
+        .query_row(
+            "SELECT span_start_line, span_end_line FROM code_nodes WHERE name = 'func_on_line_three'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?))
+        )
+        .expect("should find the function");
+
+    assert!(start_line >= 3, "start_line should be at least 3");
+    assert!(end_line >= start_line, "end_line should be >= start_line");
+}
+
+#[test]
+fn test_persist_graph_to_db_stores_hash() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn hashed_func() { let x = 42; }"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query hash
+    let conn = db.connection();
+    let hash: String = conn
+        .query_row(
+            "SELECT hash_full FROM code_nodes WHERE name = 'hashed_func'",
+            [],
+            |row| row.get(0)
+        )
+        .expect("should find the function");
+
+    assert!(!hash.is_empty(), "hash should not be empty");
+    // Hash should be hex encoded (64 chars for SHA-256)
+    assert!(hash.len() >= 32, "hash should be at least 32 chars (hex encoded)");
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "hash should be hex encoded");
+}
+
+// =============================================================================
+// Database roundtrip tests - T-GRAPH-2.2
+// =============================================================================
+
+#[test]
+fn test_db_roundtrip_persist_then_query_all() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn func1() {}\nstruct Struct1 {}\nenum Enum1 {}"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, stats) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    let persisted_count = persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query back all nodes
+    let conn = db.connection();
+    let db_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes", [], |row| row.get(0))
+        .unwrap();
+
+    assert_eq!(persisted_count as i64, db_count, "db count should match persisted count");
+    assert_eq!(stats.total_nodes as i64, db_count, "db count should match stats.total_nodes");
+}
+
+#[test]
+fn test_db_roundtrip_query_by_language() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("a.rs"), "fn rs1() {}\nfn rs2() {}").unwrap();
+    fs::write(temp_dir.path().join("b.py"), "def py1():\n    pass\n").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query Rust nodes
+    let conn = db.connection();
+    let rust_nodes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE language = 'rust'", [], |row| row.get(0))
+        .unwrap();
+    let python_nodes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE language = 'python'", [], |row| row.get(0))
+        .unwrap();
+
+    assert!(rust_nodes >= 2, "should have at least 2 Rust nodes");
+    assert!(python_nodes >= 1, "should have at least 1 Python node");
+}
+
+#[test]
+fn test_db_roundtrip_query_by_kind() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(
+        temp_dir.path().join("lib.rs"),
+        "fn func1() {}\nstruct MyStruct {}\nenum MyEnum { A, B }"
+    ).unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query by kind
+    let conn = db.connection();
+    let functions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE kind = 'rust_function'", [], |row| row.get(0))
+        .unwrap();
+    let structs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE kind = 'rust_struct'", [], |row| row.get(0))
+        .unwrap();
+    let enums: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE kind = 'rust_enum'", [], |row| row.get(0))
+        .unwrap();
+
+    assert!(functions >= 1, "should have at least 1 function");
+    assert!(structs >= 1, "should have at least 1 struct");
+    assert!(enums >= 1, "should have at least 1 enum");
+}
+
+#[test]
+fn test_db_roundtrip_query_by_file() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::create_dir(temp_dir.path().join("src")).unwrap();
+    fs::write(temp_dir.path().join("src/lib.rs"), "fn lib_func() {}").unwrap();
+    fs::write(temp_dir.path().join("src/utils.rs"), "fn util_func() {}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Query by file path pattern
+    let conn = db.connection();
+    let lib_nodes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE file_path LIKE '%lib.rs%'", [], |row| row.get(0))
+        .unwrap();
+    let util_nodes: i64 = conn
+        .query_row("SELECT COUNT(*) FROM code_nodes WHERE file_path LIKE '%utils.rs%'", [], |row| row.get(0))
+        .unwrap();
+
+    assert!(lib_nodes >= 1, "should have nodes from lib.rs");
+    assert!(util_nodes >= 1, "should have nodes from utils.rs");
+}
+
+#[test]
+fn test_db_roundtrip_default_state() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("lib.rs"), "fn stateful_func() {}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Verify default state is 'unknown'
+    let conn = db.connection();
+    let state: String = conn
+        .query_row(
+            "SELECT current_state FROM code_nodes WHERE name = 'stateful_func'",
+            [],
+            |row| row.get(0)
+        )
+        .expect("should find the function");
+
+    assert_eq!(state, "unknown", "default state should be 'unknown'");
+}
+
+#[test]
+fn test_db_roundtrip_node_id_format() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    fs::write(temp_dir.path().join("lib.rs"), "fn my_function() {}").unwrap();
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let (graph, _) = builder.full_scan(temp_dir.path()).expect("scan should succeed");
+
+    let db = HarnessDb::open_in_memory().expect("failed to open in-memory db");
+    persist_graph_to_db(&graph, &db).expect("persist should succeed");
+
+    // Node ID should be in format: file_path:start_line:name
+    let conn = db.connection();
+    let node_id: String = conn
+        .query_row(
+            "SELECT node_id FROM code_nodes WHERE name = 'my_function'",
+            [],
+            |row| row.get(0)
+        )
+        .expect("should find the function");
+
+    assert!(node_id.contains("lib.rs"), "node_id should contain file path");
+    assert!(node_id.contains("my_function"), "node_id should contain function name");
+    let parts: Vec<&str> = node_id.split(':').collect();
+    assert!(parts.len() >= 3, "node_id should have at least 3 parts separated by :");
+}
