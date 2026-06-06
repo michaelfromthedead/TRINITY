@@ -16,10 +16,10 @@
 - [x] Parse pytest-json-report format
 - [x] Extract test name, duration, result
 
-### T-BASE-4.3: Result mapping
-- [ ] Look up test node in graph
-- [ ] Get target nodes via Tests edges
-- [ ] Aggregate results per target
+### T-BASE-4.3: Result mapping ✓
+- [x] Look up test node in graph
+- [x] Get target nodes via Tests edges
+- [x] Aggregate results per target
 
 ### T-BASE-4.4: State transitions
 - [ ] Implement TestsPassed event handling

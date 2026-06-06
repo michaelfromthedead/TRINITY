@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.3 — GREEN_LIGHT ✓
+
+**Task:** Result mapping  
+**Branch:** `task/T-BASE-4.3` (merged, deleted)  
+**Phase:** 4 — Baseline Run  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Look up test node in graph
+- [x] Get target nodes via Tests edges
+- [x] Aggregate results per target
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- NodeResult: aggregated result per code node
+- MappingResult: overall mapping results
+- map_results(): maps test results to graph nodes
+- lookup_test_node(): finds test by name
+- get_test_targets(): gets targets via Tests edges
+
+**WHITEBOX** — COMPLETE
+- 17 new tests (whitebox_result_mapper.rs)
+
+**BLACKBOX** — COMPLETE
+- 4 new tests (blackbox_result_mapper.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 914 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.2 — GREEN_LIGHT ✓
 
 **Task:** Pytest integration  
