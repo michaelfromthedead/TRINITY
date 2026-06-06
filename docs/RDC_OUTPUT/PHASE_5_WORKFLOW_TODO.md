@@ -33,10 +33,10 @@
 - [x] Run stale tests step
 - [x] Update state step
 
-### T-WORK-5.6: Notification service
-- [ ] Implement basic pub/sub
-- [ ] Add webhook support (optional)
-- [ ] Log state transitions
+### T-WORK-5.6: Notification service ✓
+- [x] Implement basic pub/sub
+- [x] Add webhook support (optional)
+- [x] Log state transitions
 
 ### T-WORK-5.7: Documentation
 - [ ] Document daemon operation
