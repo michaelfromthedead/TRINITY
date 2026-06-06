@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.2 — GREEN_LIGHT ✓
+
+**Task:** Pytest integration  
+**Branch:** `task/T-BASE-4.2` (merged, deleted)  
+**Phase:** 4 — Baseline Run  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Implement `run_pytest()` with JSON report
+- [x] Parse pytest-json-report format
+- [x] Extract test name, duration, result
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- PytestConfig: configuration builder
+- PytestResult: test result aggregation
+- run_pytest(): executes and parses pytest
+- JSON report and standard output parsing
+- Shares TestResult/TestOutcome with cargo runner
+
+**WHITEBOX** — COMPLETE
+- 12 new tests (whitebox_pytest_runner.rs)
+
+**BLACKBOX** — COMPLETE
+- 4 new tests (blackbox_pytest_runner.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 893 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.1 — GREEN_LIGHT ✓
 
 **Task:** Cargo test integration  

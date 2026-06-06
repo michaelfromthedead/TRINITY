@@ -11,10 +11,10 @@
 - [x] Parse cargo test JSON format
 - [x] Extract test name, duration, result
 
-### T-BASE-4.2: Pytest integration
-- [ ] Implement `run_pytest()` with JSON report
-- [ ] Parse pytest-json-report format
-- [ ] Extract test name, duration, result
+### T-BASE-4.2: Pytest integration ✓
+- [x] Implement `run_pytest()` with JSON report
+- [x] Parse pytest-json-report format
+- [x] Extract test name, duration, result
 
 ### T-BASE-4.3: Result mapping
 - [ ] Look up test node in graph
