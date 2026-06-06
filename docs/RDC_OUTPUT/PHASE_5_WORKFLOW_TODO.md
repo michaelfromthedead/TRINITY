@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-WORK-5.1: HarnessDaemon implementation
-- [ ] Create `daemon.rs`
-- [ ] Implement main loop
-- [ ] Handle graceful shutdown
+### T-WORK-5.1: HarnessDaemon implementation ✓
+- [x] Create `daemon.rs`
+- [x] Implement main loop
+- [x] Handle graceful shutdown
 
 ### T-WORK-5.2: File watcher integration
 - [ ] Start watcher in separate thread
