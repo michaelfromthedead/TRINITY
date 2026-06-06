@@ -3,6 +3,7 @@
 //! This crate provides infrastructure for parsing and analyzing code
 //! across Rust, Python, and WGSL languages.
 
+pub mod cli;
 pub mod daemon;
 pub mod db;
 pub mod graph;
@@ -10,6 +11,10 @@ pub mod parsers;
 pub mod runners;
 pub mod state;
 
+pub use cli::{
+    cmd_daemon, cmd_query_needs_testing, cmd_run_stale, cmd_update_from_results,
+    execute_command, CliConfig, CommandResult, OutputFormat,
+};
 pub use daemon::{DaemonConfig, DaemonEvent, DaemonStatus, HarnessDaemon};
 pub use db::HarnessDb;
 pub use graph::{persist_graph_to_db, CodeEdge, CodeNode, GraphBuilder, PersistError, ScanError, ScanStats};

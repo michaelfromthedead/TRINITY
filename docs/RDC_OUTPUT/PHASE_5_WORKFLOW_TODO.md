@@ -21,11 +21,11 @@
 - [x] Trigger state transitions
 - [x] Propagate staleness
 
-### T-WORK-5.4: CLI commands
-- [ ] `trinity-harness daemon` — start daemon
-- [ ] `trinity-harness query needs-testing` — list stale nodes
-- [ ] `trinity-harness run-stale` — run only stale tests
-- [ ] `trinity-harness update-from-results` — process test results
+### T-WORK-5.4: CLI commands ✓
+- [x] `trinity-harness daemon` — start daemon
+- [x] `trinity-harness query needs-testing` — list stale nodes
+- [x] `trinity-harness run-stale` — run only stale tests
+- [x] `trinity-harness update-from-results` — process test results
 
 ### T-WORK-5.5: CI workflow
 - [ ] Create `.github/workflows/harness.yml`

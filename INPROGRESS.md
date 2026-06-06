@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-WORK-5.4 — GREEN_LIGHT ✓
+
+**Task:** CLI commands  
+**Branch:** `task/T-WORK-5.4` (merged, deleted)  
+**Phase:** 5 — Workflow Activation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] `trinity-harness daemon` — start daemon
+- [x] `trinity-harness query needs-testing` — list stale nodes
+- [x] `trinity-harness run-stale` — run only stale tests
+- [x] `trinity-harness update-from-results` — process test results
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- CliConfig: CLI configuration with path, verbose, format
+- OutputFormat: Text/Json output
+- CommandResult: success/error handling
+- cmd_daemon(): start daemon
+- cmd_query_needs_testing(): query stale nodes
+- cmd_run_stale(): run only stale tests
+- cmd_update_from_results(): process test results
+- execute_command(): main CLI entry
+
+**WHITEBOX** — COMPLETE
+- 12 new tests (whitebox_cli.rs)
+
+**BLACKBOX** — COMPLETE
+- 5 new tests (blackbox_cli.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1077 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-WORK-5.3 — GREEN_LIGHT ✓
 
 **Task:** Event processor  
