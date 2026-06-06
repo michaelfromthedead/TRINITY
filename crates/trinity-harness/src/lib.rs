@@ -6,6 +6,7 @@
 pub mod db;
 pub mod graph;
 pub mod parsers;
+pub mod runners;
 pub mod state;
 
 pub use db::HarnessDb;

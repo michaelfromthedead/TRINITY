@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-BASE-4.1: Cargo test integration
-- [ ] Implement `run_cargo_test()` with JSON output
-- [ ] Parse cargo test JSON format
-- [ ] Extract test name, duration, result
+### T-BASE-4.1: Cargo test integration ✓
+- [x] Implement `run_cargo_test()` with JSON output
+- [x] Parse cargo test JSON format
+- [x] Extract test name, duration, result
 
 ### T-BASE-4.2: Pytest integration
 - [ ] Implement `run_pytest()` with JSON report
