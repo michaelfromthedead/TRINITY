@@ -14,6 +14,7 @@ mod cargo;
 mod executor;
 mod mapper;
 mod pytest;
+mod smart;
 mod transitions;
 mod validation;
 
@@ -31,6 +32,10 @@ pub use mapper::{
 pub use pytest::{run_pytest, PytestConfig, PytestError, PytestResult};
 pub use transitions::{
     DbStateTracker, NodeState, StateTracker, StateSummary, StateTransition, TestEvent,
+};
+pub use smart::{
+    get_available_disk_space, get_changed_files, run_smart_tests, SmartTestConfig,
+    SmartTestResult,
 };
 pub use validation::{
     generate_summary, validate_and_summarize, validate_baseline, validate_tracker,

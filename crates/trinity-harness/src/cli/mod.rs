@@ -441,10 +441,102 @@ pub fn cmd_status() -> CommandResult {
     CommandResult::ok(msg)
 }
 
+/// Smart test execution options.
+#[derive(Debug, Clone, Default)]
+pub struct SmartTestOptions {
+    pub package: Option<String>,
+    pub incremental: bool,
+    pub affected_only: bool,
+    pub priority: bool,
+    pub disk_budget_gb: Option<f64>,
+    pub use_cache: bool,
+}
+
+/// Run tests with smart execution strategy.
+pub fn cmd_smart_test(config: &CliConfig, opts: SmartTestOptions) -> CommandResult {
+    use crate::runners::{run_smart_tests, get_changed_files, SmartTestConfig, DbStateTracker};
+
+    let db_path = ".harness/state.db";
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
+    };
+
+    let project_root = config.project_root.to_string_lossy().to_string();
+    let mut smart_config = SmartTestConfig::new(&project_root);
+
+    if let Some(pkg) = opts.package {
+        smart_config = smart_config.package(pkg);
+    }
+
+    if opts.incremental {
+        smart_config = smart_config.incremental();
+    }
+
+    if opts.affected_only {
+        let changed = get_changed_files(&project_root);
+        smart_config = smart_config.affected_only(changed);
+    }
+
+    if opts.priority {
+        smart_config = smart_config.priority_order();
+    }
+
+    if let Some(budget_gb) = opts.disk_budget_gb {
+        let bytes = (budget_gb * 1024.0 * 1024.0 * 1024.0) as u64;
+        smart_config = smart_config.disk_budget(bytes);
+    }
+
+    if opts.use_cache {
+        smart_config = smart_config.use_cache();
+    }
+
+    let result = run_smart_tests(&smart_config, &db);
+
+    // Update state based on results
+    let tracker = DbStateTracker::new(&db);
+    for test in &result.tests {
+        match test.outcome {
+            crate::runners::TestOutcome::Passed => {
+                let _ = tracker.mark_test_passed(&test.name);
+            }
+            crate::runners::TestOutcome::Failed => {
+                let _ = tracker.mark_test_failed(&test.name);
+            }
+            _ => {}
+        }
+    }
+
+    let summary = tracker.summary();
+    let disk_mb = result.disk_reclaimed as f64 / (1024.0 * 1024.0);
+
+    let msg = format!(
+        "Smart Test Results:\n  Files tested: {}\n  Tests run: {}\n  Passed: {}\n  Failed: {}\n  Skipped (cached): {}\n  Skipped (unaffected): {}\n  Disk reclaimed: {:.1} MB\n\nState:\n  GREEN: {}\n  RED: {}\n  DIRTY: {}\n  UNTESTED: {}",
+        result.files_processed.len(),
+        result.total_run,
+        result.passed,
+        result.failed,
+        result.skipped_cached,
+        result.skipped_unaffected,
+        disk_mb,
+        summary.green,
+        summary.red,
+        summary.dirty,
+        summary.untested,
+    );
+
+    if !result.errors.is_empty() {
+        let errors: String = result.errors.iter().map(|e| format!("\n  - {}", e)).collect();
+        return CommandResult::ok(format!("{}\n\nErrors:{}", msg, errors));
+    }
+
+    CommandResult::ok(msg)
+}
+
 /// Parse and execute a CLI command.
 pub fn execute_command(args: &[String]) -> CommandResult {
     if args.is_empty() {
-        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>       Scan source directories and build graph\n  status                Show current state summary\n  query needs-testing   List tests that need to run\n  run-stale [-p pkg] [-t filter]   Run stale tests\n  update [file]         Update state from test results\n  daemon                Start file watcher");
+        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>       Scan source directories\n  status                Show state summary\n  run-stale [-p pkg]    Run stale tests\n  smart [flags]         Smart test execution\n    --incremental       Run one file at a time, clean between\n    --affected          Only run tests for changed files\n    --priority          Run recently-changed tests first\n    --budget <GB>       Stay within disk budget\n    --cache             Skip tests for unchanged code\n  update [file]         Update from test results\n  daemon                Start file watcher");
     }
 
     let config = CliConfig::default();
@@ -484,6 +576,41 @@ pub fn execute_command(args: &[String]) -> CommandResult {
             let path = args.get(1).map(|s| s.as_str());
             cmd_update_from_results(&config, path)
         }
-        _ => CommandResult::err(format!("Unknown command: {}. Use: scan, status, query, run-stale, update, daemon", args[0])),
+        "smart" => {
+            // Parse: smart [-p pkg] [--incremental] [--affected] [--priority] [--budget GB] [--cache]
+            let mut opts = SmartTestOptions::default();
+            let mut i = 1;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-p" | "--package" if i + 1 < args.len() => {
+                        opts.package = Some(args[i + 1].clone());
+                        i += 2;
+                    }
+                    "--incremental" => {
+                        opts.incremental = true;
+                        i += 1;
+                    }
+                    "--affected" => {
+                        opts.affected_only = true;
+                        i += 1;
+                    }
+                    "--priority" => {
+                        opts.priority = true;
+                        i += 1;
+                    }
+                    "--budget" if i + 1 < args.len() => {
+                        opts.disk_budget_gb = args[i + 1].parse().ok();
+                        i += 2;
+                    }
+                    "--cache" => {
+                        opts.use_cache = true;
+                        i += 1;
+                    }
+                    _ => i += 1,
+                }
+            }
+            cmd_smart_test(&config, opts)
+        }
+        _ => CommandResult::err(format!("Unknown command: {}. Use: scan, status, smart, run-stale, update, daemon", args[0])),
     }
 }
