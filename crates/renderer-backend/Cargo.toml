@@ -50,13 +50,13 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 exr = "1.74"
 
 # SQLite for cache metadata
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Naga shader compiler for WGSL compilation pipeline
 naga = { version = "24", features = ["wgsl-in", "spv-out", "msl-out", "wgsl-out"] }
 
 # PyO3 for Python bindings (optional)
-pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 [dev-dependencies]
 naga = { version = "24", features = ["wgsl-in"] }
