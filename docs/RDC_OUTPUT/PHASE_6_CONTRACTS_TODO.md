@@ -41,10 +41,10 @@
 - [x] Generate specialized tests
 - [x] Integrate with synth for input generation
 
-### T-CONT-6.8: Incremental rollout
-- [ ] Start with 10 high-value functions
-- [ ] Validate proc macro correctness
-- [ ] Expand to remaining codebase
+### T-CONT-6.8: Incremental rollout ✓
+- [x] Start with 10 high-value functions
+- [x] Validate proc macro correctness
+- [x] Expand to remaining codebase
 
 ---
 

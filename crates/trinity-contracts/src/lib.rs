@@ -8,6 +8,7 @@
 pub mod algebra;
 pub mod layout;
 pub mod proptest;
+pub mod rollout;
 pub mod runtime;
 pub mod schema;
 
@@ -22,6 +23,10 @@ pub use layout::{
 pub use proptest::{
     parse_ensures, parse_requires, ParsedConstraint, PropertyTest, RangeHint, StrategyHint,
     TestModuleGenerator,
+};
+pub use rollout::{
+    create_initial_tracker, high_value_functions, validate_expansion, AdoptionStatus,
+    RolloutStats, RolloutTracker, TrackedFunction, ValidationResult,
 };
 pub use runtime::{
     check_ensures, check_invariant, check_requires, debug_ensures, debug_invariant,
