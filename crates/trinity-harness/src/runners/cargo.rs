@@ -207,11 +207,19 @@ pub fn run_cargo_test(config: &CargoTestConfig) -> Result<CargoTestResult, Cargo
         cmd.arg("-p").arg(pkg);
     }
 
-    // Use -- to separate cargo args from test args
-    cmd.arg("--");
-
+    // If test_name looks like a test file name (no ::), use --test
+    // Otherwise use it as a filter after --
     if let Some(ref test) = config.test_name {
-        cmd.arg(test);
+        if test.contains("::") {
+            // Test function filter: cargo test -- module::test_name
+            cmd.arg("--");
+            cmd.arg(test);
+        } else {
+            // Test file name: cargo test --test whitebox_foo
+            cmd.arg("--test").arg(test);
+        }
+    } else {
+        cmd.arg("--");
     }
 
     for arg in &config.extra_args {

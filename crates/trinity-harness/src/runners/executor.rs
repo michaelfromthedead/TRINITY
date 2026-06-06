@@ -25,6 +25,8 @@ pub struct ExecutorConfig {
     pub run_pytest: bool,
     /// Specific cargo package to test (optional).
     pub cargo_package: Option<String>,
+    /// Specific test name filter (optional).
+    pub test_filter: Option<String>,
     /// Specific pytest path (optional).
     pub pytest_path: Option<String>,
 }
@@ -38,6 +40,7 @@ impl Default for ExecutorConfig {
             run_cargo: true,
             run_pytest: true,
             cargo_package: None,
+            test_filter: None,
             pytest_path: None,
         }
     }
@@ -87,6 +90,12 @@ impl ExecutorConfig {
     /// Set pytest path.
     pub fn pytest_path(mut self, path: impl Into<String>) -> Self {
         self.pytest_path = Some(path.into());
+        self
+    }
+
+    /// Set test name filter (runs only tests matching this pattern).
+    pub fn test_filter(mut self, filter: impl Into<String>) -> Self {
+        self.test_filter = Some(filter.into());
         self
     }
 }
@@ -217,6 +226,10 @@ pub fn run_all_tests(config: &ExecutorConfig) -> ExecutorResult {
 
             if let Some(ref pkg) = config.cargo_package {
                 cargo_config = cargo_config.package(pkg);
+            }
+
+            if let Some(ref filter) = config.test_filter {
+                cargo_config = cargo_config.test(filter);
             }
 
             match run_cargo_test(&cargo_config) {

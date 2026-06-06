@@ -54,7 +54,7 @@ fn test_run_stale_empty_project() {
 
     // Empty project - no tests to run
     let config = CliConfig::new(root);
-    let result = cmd_run_stale(&config);
+    let result = cmd_run_stale(&config, None, None);
 
     // Should succeed but report no stale tests or scan failure
     assert!(result.message.contains("No stale") || result.message.contains("Scan"));
