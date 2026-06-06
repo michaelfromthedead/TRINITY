@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-WORK-5.2 — GREEN_LIGHT ✓
+
+**Task:** File watcher integration  
+**Branch:** `task/T-WORK-5.2` (merged, deleted)  
+**Phase:** 5 — Workflow Activation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Start watcher in separate thread
+- [x] Send events to main loop
+- [x] Debounce rapid file changes
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- WatcherConfig: watch configuration
+- FileWatcher: threaded file watcher
+- FileChange/ChangeKind: change events
+- Debouncer: rapid change debouncing
+- Extension filtering, directory ignoring
+
+**WHITEBOX** — COMPLETE
+- 14 new tests (whitebox_watcher.rs)
+
+**BLACKBOX** — COMPLETE
+- 5 new tests (blackbox_watcher.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1041 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-WORK-5.1 — GREEN_LIGHT ✓
 
 **Task:** HarnessDaemon implementation  

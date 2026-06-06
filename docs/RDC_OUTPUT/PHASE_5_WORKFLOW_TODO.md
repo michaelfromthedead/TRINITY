@@ -11,10 +11,10 @@
 - [x] Implement main loop
 - [x] Handle graceful shutdown
 
-### T-WORK-5.2: File watcher integration
-- [ ] Start watcher in separate thread
-- [ ] Send events to main loop
-- [ ] Debounce rapid file changes
+### T-WORK-5.2: File watcher integration ✓
+- [x] Start watcher in separate thread
+- [x] Send events to main loop
+- [x] Debounce rapid file changes
 
 ### T-WORK-5.3: Event processor
 - [ ] Process file change events

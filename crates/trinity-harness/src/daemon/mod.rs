@@ -2,12 +2,18 @@
 //!
 //! Provides a daemon that monitors file changes and maintains test state.
 
+mod watcher;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::graph::{CodeGraph, NodeId};
+use crate::graph::NodeId;
 use crate::runners::{StateTracker, NodeState, TestEvent};
+
+pub use watcher::{
+    ChangeKind, Debouncer, FileChange, FileWatcher, WatcherConfig,
+};
 
 /// Configuration for the harness daemon.
 #[derive(Debug, Clone)]
