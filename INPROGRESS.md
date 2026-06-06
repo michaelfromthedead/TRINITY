@@ -4,6 +4,41 @@
 
 ---
 
+## 2026-06-06 — CLI Binary & Dogfooding
+
+**Task:** Add CLI binary, enable self-scanning  
+**Branch:** `master`  
+**Status:** COMPLETE ★
+
+### Deliverables
+- [x] `src/bin/trinity-harness.rs` — CLI entry point
+- [x] `cmd_scan()` — scan directories, build graph, persist to SQLite
+- [x] Dogfooding: harness scans itself (1,514 nodes from 98 files)
+
+### CLI Commands
+```bash
+trinity-harness scan <paths...>      # Scan and persist
+trinity-harness query needs-testing  # List stale tests
+trinity-harness daemon               # Start file watcher
+trinity-harness run-stale            # Run affected tests
+```
+
+### Documentation Updates
+- README.md: Added v1 vs v2 architecture section
+- howto/*.md: Added version notes
+- db.rs, schema.sql: Added v1/v2 migration notes
+
+### Stats
+| Metric | Value |
+|--------|-------|
+| Files scanned | 98 |
+| Nodes created | 1,514 |
+| Functions | 1,273 |
+| Structs | 88 |
+| Impl blocks | 104 |
+
+---
+
 ## 2026-06-06 — QA Audit Fix: 4 Issues Resolved
 
 **Task:** Fix source and tests for QA findings  
