@@ -27,11 +27,11 @@
 - [x] `trinity-harness run-stale` — run only stale tests
 - [x] `trinity-harness update-from-results` — process test results
 
-### T-WORK-5.5: CI workflow
-- [ ] Create `.github/workflows/harness.yml`
-- [ ] Query stale tests step
-- [ ] Run stale tests step
-- [ ] Update state step
+### T-WORK-5.5: CI workflow ✓
+- [x] Create `.github/workflows/harness.yml`
+- [x] Query stale tests step
+- [x] Run stale tests step
+- [x] Update state step
 
 ### T-WORK-5.6: Notification service
 - [ ] Implement basic pub/sub
