@@ -174,8 +174,62 @@ Generated `.github/workflows/harness.yml`:
 - `naga` — WGSL parsing with struct layout extraction
 - `blake3` — Content hashing
 - `notify` — File system watching
-- `rusqlite` — State persistence
+- `rusqlite` — State persistence (v1)
 - `serde` / `toml` — Configuration
+
+## Architecture Versions
+
+### v1 (Current)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      RUNTIME                                │
+│   Vec<CodeNode>  +  HashMap<NodeId, Vec<NodeId>>           │
+│   (graph)           (reverse dependency index)              │
+│         ▲                                                   │
+│         │ load at startup                                   │
+│         │                                                   │
+├─────────┴───────────────────────────────────────────────────┤
+│                    PERSISTENCE                              │
+│              rusqlite / .harness/state.db                   │
+│   - code_nodes table (flat storage)                         │
+│   - code_edges table (flat storage)                         │
+│   - code_events table (append-only log)                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Graph traversal:** Rust code (BFS over `HashMap`)
+- **State queries:** SQL `SELECT WHERE current_state = ?`
+- **Persistence:** Plain SQLite via `rusqlite`
+
+### v2 (Planned — SuperSQLite Integration)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      RUNTIME                                │
+│            superrusqlite (rusqlite-compatible)              │
+│         ▲                                                   │
+│         │ graph_traverse(), vec_search(), AS OF             │
+│         │                                                   │
+├─────────┴───────────────────────────────────────────────────┤
+│                    PERSISTENCE                              │
+│        SuperSQLite / brain.db (300+ SQL functions)          │
+│   - supersqlite_graph: graph_traverse(), shortest_path()   │
+│   - supersqlite_bitemporal: AS OF queries, time-travel     │
+│   - supersqlite_vector: vec_distance_cosine(), HNSW index  │
+│   - supersqlite_streams: event sourcing primitives         │
+│   - supersqlite_memory: in-memory cache, pub/sub           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Graph traversal:** SQL (`SELECT * FROM graph_traverse('code', ?, 'incoming', 10)`)
+- **State queries:** Bitemporal (`SELECT state FROM history AS OF '2026-06-01'`)
+- **Vector search:** Semantic code similarity (`vec_distance_cosine()`)
+- **Persistence:** SuperSQLite at `/home/user/dev/USER/PROJECTS_VOID/SQLITE/platform/`
+
+**Migration path:** Swap `rusqlite` → `superrusqlite` in Cargo.toml. API is compatible.
+
+See `docs/V2_SUPERSQLITE_PERSISTENCE.md` for the full v2 design.
 
 ## Stats
 

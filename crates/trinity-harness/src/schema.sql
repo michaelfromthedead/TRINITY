@@ -3,6 +3,11 @@
 -- Version: 2.0.0
 -- =============================================================================
 --
+-- ARCHITECTURE NOTE:
+--   v1 (current): Plain rusqlite. Graph traversal in Rust (HashMap BFS).
+--   v2 (planned): SuperSQLite. Graph traversal in SQL (graph_traverse()).
+--                 See docs/V2_SUPERSQLITE_PERSISTENCE.md for migration.
+--
 -- Tables:
 --   1. code_nodes        - Code units (functions, structs, classes) with hashes
 --   2. code_edges        - Dependency relationships between nodes

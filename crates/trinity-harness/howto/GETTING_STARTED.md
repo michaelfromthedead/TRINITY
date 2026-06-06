@@ -1,5 +1,7 @@
 # Getting Started with Trinity Harness
 
+> **Note:** This documents **v1** of trinity-harness, which uses plain `rusqlite` with in-memory graph traversal. See `docs/V2_SUPERSQLITE_PERSISTENCE.md` for the planned v2 architecture using SuperSQLite with native graph operations, bitemporal queries, and vector search.
+
 ## What This Does
 
 You have 12,743 tests. Running them all takes 30 minutes. 

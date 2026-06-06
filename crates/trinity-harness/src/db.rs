@@ -1,4 +1,15 @@
-//! Database connection and schema management using rusqlite.
+//! Database connection and schema management.
+//!
+//! **v1 (current):** Uses plain `rusqlite`. Graph traversal happens in Rust
+//! memory via `HashMap<NodeId, Vec<NodeId>>`. SQLite stores nodes/edges/events.
+//!
+//! **v2 (planned):** Swap to `superrusqlite` from `/SQLITE/platform/`. Enables:
+//! - `graph_traverse()` — graph algorithms in SQL
+//! - `AS OF` queries — bitemporal state history
+//! - `vec_distance_cosine()` — semantic code search
+//! - `mem_pubsub_*()` — real-time notifications
+//!
+//! See `docs/V2_SUPERSQLITE_PERSISTENCE.md` for the migration plan.
 
 use rusqlite::{Connection, Result};
 

@@ -1,5 +1,7 @@
 # How To: CI Integration
 
+> **Note:** This applies to **v1** (rusqlite with `.harness/state.db`). V2 will use SuperSQLite's `brain.db`.
+
 Set up GitHub Actions to run only affected tests.
 
 ## Generated Workflow

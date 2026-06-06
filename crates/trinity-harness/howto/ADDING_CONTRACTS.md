@@ -1,5 +1,7 @@
 # How To: Adding Contracts to Your Code
 
+> **Note:** Contracts work the same in v1 and v2. The persistence layer changes, not the macro behavior.
+
 Step-by-step guide for annotating functions with contracts.
 
 ## Basic Pattern

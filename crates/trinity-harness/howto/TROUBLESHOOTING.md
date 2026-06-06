@@ -1,5 +1,7 @@
 # How To: Troubleshooting
 
+> **Note:** This applies to **v1** (rusqlite). V2 (SuperSQLite) will have different diagnostics.
+
 Common issues and their solutions.
 
 ## Parse Errors
