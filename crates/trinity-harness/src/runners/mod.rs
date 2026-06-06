@@ -5,13 +5,18 @@
 //! - Pytest (Python)
 //! - Result mapping to code graph
 //! - State transitions based on test results
+//! - Unified test execution
 
 mod cargo;
+mod executor;
 mod mapper;
 mod pytest;
 mod transitions;
 
 pub use cargo::{run_cargo_test, CargoTestConfig, CargoTestResult, TestOutcome, TestResult};
+pub use executor::{
+    estimate_duration, run_all_tests, should_skip_tests, ExecutorConfig, ExecutorResult,
+};
 pub use mapper::{
     get_test_targets, lookup_test_node, map_results, MappingResult, NodeResult,
 };

@@ -26,10 +26,10 @@
 - [x] Implement TestsFailed event handling
 - [x] Update current_state in code_nodes
 
-### T-BASE-4.5: Run all tests
-- [ ] Execute cargo test (may take 10+ minutes)
-- [ ] Execute pytest (may take 30+ minutes)
-- [ ] Handle timeouts and failures
+### T-BASE-4.5: Run all tests ✓
+- [x] Execute cargo test (may take 10+ minutes)
+- [x] Execute pytest (may take 30+ minutes)
+- [x] Handle timeouts and failures
 
 ### T-BASE-4.6: Record baseline
 - [ ] Store baseline timestamp
