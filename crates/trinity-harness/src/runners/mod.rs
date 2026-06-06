@@ -6,13 +6,19 @@
 //! - Result mapping to code graph
 //! - State transitions based on test results
 //! - Unified test execution
+//! - Baseline recording
 
+mod baseline;
 mod cargo;
 mod executor;
 mod mapper;
 mod pytest;
 mod transitions;
 
+pub use baseline::{
+    compare_baselines, record_baseline, Baseline, BaselineComparison, BaselineSummary,
+    NodeStateRecord, StateChange, TestFailure,
+};
 pub use cargo::{run_cargo_test, CargoTestConfig, CargoTestResult, TestOutcome, TestResult};
 pub use executor::{
     estimate_duration, run_all_tests, should_skip_tests, ExecutorConfig, ExecutorResult,

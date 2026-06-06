@@ -31,10 +31,10 @@
 - [x] Execute pytest (may take 30+ minutes)
 - [x] Handle timeouts and failures
 
-### T-BASE-4.6: Record baseline
-- [ ] Store baseline timestamp
-- [ ] Store per-node state
-- [ ] Store any test failures for triage
+### T-BASE-4.6: Record baseline ✓
+- [x] Store baseline timestamp
+- [x] Store per-node state
+- [x] Store any test failures for triage
 
 ### T-BASE-4.7: Validation
 - [ ] Verify all nodes have state != UNKNOWN

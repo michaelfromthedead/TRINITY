@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.6 — GREEN_LIGHT ✓
+
+**Task:** Record baseline  
+**Branch:** `task/T-BASE-4.6` (merged, deleted)  
+**Phase:** 4 — Baseline Run  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Store baseline timestamp
+- [x] Store per-node state
+- [x] Store any test failures for triage
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- Baseline: snapshot with timestamp, states, failures
+- NodeStateRecord: per-node state record
+- TestFailure: failure with triage status
+- record_baseline(): creates baseline from tracker
+- compare_baselines(): diff between baselines
+- JSON persistence (save/load)
+
+**WHITEBOX** — COMPLETE
+- 15 new tests (whitebox_baseline.rs)
+
+**BLACKBOX** — COMPLETE
+- 5 new tests (blackbox_baseline.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 981 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.5 — GREEN_LIGHT ✓
 
 **Task:** Run all tests  
