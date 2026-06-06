@@ -17,26 +17,62 @@ from engine.core.math import Vec2, Vec3, Quat
 from engine.animation.config import CROWD_BEHAVIOR_CONFIG
 
 
-# =============================================================================
-# Exceptions
-# =============================================================================
-
-
 class InvalidTransitionError(Exception):
-    """Raised when an invalid state transition is attempted."""
+    """Raised when an invalid state transition is attempted.
+
+    Attributes:
+        from_state: The current state
+        to_state: The attempted target state
+        message: Descriptive error message
+    """
 
     def __init__(self, from_state: "AgentState", to_state: "AgentState", message: str | None = None):
         self.from_state = from_state
         self.to_state = to_state
-        if message is not None:
-            super().__init__(message)
-        else:
-            super().__init__(f"Invalid transition: {from_state.name} -> {to_state.name}")
+        if message is None:
+            message = f"Invalid transition from {from_state.name} to {to_state.name}"
+        super().__init__(message)
 
 
-# =============================================================================
-# Agent States
-# =============================================================================
+# Valid state transitions map: from_state -> set of allowed to_states
+# Rules:
+# - IDLE can go to WALKING, WAITING, FLEEING (but not directly to FORMATION)
+# - WALKING can go to IDLE, WAITING, FLEEING, FORMATION
+# - WAITING can go to IDLE, WALKING, FLEEING
+# - FLEEING can go to IDLE, WALKING (after escaping threat)
+# - FORMATION can go to IDLE, WALKING, FLEEING
+# - CUSTOM has no restrictions
+VALID_TRANSITIONS: dict["AgentState", set["AgentState"]] = {}
+
+
+def _init_valid_transitions() -> None:
+    """Initialize valid transitions after AgentState is defined."""
+    global VALID_TRANSITIONS
+    VALID_TRANSITIONS = {
+        AgentState.IDLE: {AgentState.WALKING, AgentState.WAITING, AgentState.FLEEING, AgentState.CUSTOM},
+        AgentState.WALKING: {AgentState.IDLE, AgentState.WAITING, AgentState.FLEEING, AgentState.FORMATION, AgentState.CUSTOM},
+        AgentState.WAITING: {AgentState.IDLE, AgentState.WALKING, AgentState.FLEEING, AgentState.CUSTOM},
+        AgentState.FLEEING: {AgentState.IDLE, AgentState.WALKING, AgentState.CUSTOM},
+        AgentState.FORMATION: {AgentState.IDLE, AgentState.WALKING, AgentState.FLEEING, AgentState.CUSTOM},
+        AgentState.CUSTOM: {AgentState.IDLE, AgentState.WALKING, AgentState.WAITING, AgentState.FLEEING, AgentState.FORMATION},
+    }
+
+
+def is_valid_transition(from_state: "AgentState", to_state: "AgentState") -> bool:
+    """Check if a state transition is valid.
+
+    Args:
+        from_state: Current state
+        to_state: Target state
+
+    Returns:
+        True if transition is allowed, False otherwise
+    """
+    if from_state == to_state:
+        return True  # Same state is always valid
+
+    allowed = VALID_TRANSITIONS.get(from_state, set())
+    return to_state in allowed
 
 
 class AgentState(Enum):
@@ -49,38 +85,8 @@ class AgentState(Enum):
     CUSTOM = auto()
 
 
-# =============================================================================
-# Valid State Transitions
-# =============================================================================
-
-# Define which transitions are allowed between states
-VALID_TRANSITIONS: dict[AgentState, set[AgentState]] = {
-    AgentState.IDLE: {AgentState.WALKING, AgentState.WAITING, AgentState.FLEEING, AgentState.CUSTOM},
-    AgentState.WALKING: {AgentState.IDLE, AgentState.WAITING, AgentState.FLEEING, AgentState.FORMATION, AgentState.CUSTOM},
-    AgentState.WAITING: {AgentState.IDLE, AgentState.WALKING, AgentState.FLEEING, AgentState.CUSTOM},
-    AgentState.FLEEING: {AgentState.IDLE, AgentState.WALKING, AgentState.CUSTOM},
-    AgentState.FORMATION: {AgentState.IDLE, AgentState.WALKING, AgentState.FLEEING, AgentState.CUSTOM},
-    AgentState.CUSTOM: {AgentState.IDLE, AgentState.WALKING, AgentState.WAITING, AgentState.FLEEING, AgentState.FORMATION},
-}
-
-
-def is_valid_transition(from_state: AgentState, to_state: AgentState) -> bool:
-    """
-    Check if a state transition is valid.
-
-    Args:
-        from_state: Current state
-        to_state: Target state
-
-    Returns:
-        True if transition is valid
-    """
-    # Same state is always valid
-    if from_state == to_state:
-        return True
-
-    # Check against valid transitions map
-    return to_state in VALID_TRANSITIONS.get(from_state, set())
+# Initialize valid transitions now that AgentState is defined
+_init_valid_transitions()
 
 
 @dataclass
@@ -191,60 +197,120 @@ class CrowdAgent:
         return self.velocity.length_squared() > 0.01
 
     def can_transition_to(self, target_state: AgentState) -> bool:
-        """
-        Check if agent can transition to the target state.
+        """Check if transition to target state is valid.
 
         Args:
             target_state: The state to transition to
 
         Returns:
-            True if transition is valid
+            True if transition is allowed, False otherwise
         """
         return is_valid_transition(self.current_state, target_state)
 
     def transition_to(self, target_state: AgentState) -> None:
-        """
-        Transition agent to a new state.
+        """Transition to a new state.
 
         Args:
             target_state: The state to transition to
 
         Raises:
-            InvalidTransitionError: If transition is not valid
+            InvalidTransitionError: If the transition is not allowed
         """
-        # Same state is a no-op (don't reset state_time)
-        if target_state == self.current_state:
-            return
+        if self.current_state == target_state:
+            return  # Already in target state
 
-        # Check if transition is valid
-        if not self.can_transition_to(target_state):
+        if not is_valid_transition(self.current_state, target_state):
             raise InvalidTransitionError(self.current_state, target_state)
 
-        # Perform transition
+        # Update state
+        old_state = self.current_state
         self.current_state = target_state
         self.state_time = 0.0
 
-        # Update animation for new state
-        self._update_animation_for_state(target_state)
+        # Update animation based on new state
+        self._update_animation_for_state()
 
-    def _update_animation_for_state(self, state: AgentState) -> None:
-        """
-        Update animation blend based on state.
-
-        Args:
-            state: The new state
-        """
-        if state == AgentState.IDLE:
+    def _update_animation_for_state(self) -> None:
+        """Update animation blend based on current state."""
+        if self.current_state == AgentState.IDLE:
             self.animation_blend = AnimationBlend.single(self.idle_animation)
-        elif state == AgentState.WALKING:
+        elif self.current_state == AgentState.WALKING:
             self.animation_blend = AnimationBlend.single(self.walk_animation)
-        elif state == AgentState.WAITING:
+        elif self.current_state == AgentState.WAITING:
             self.animation_blend = AnimationBlend.single(self.idle_animation)
-        elif state == AgentState.FLEEING:
+        elif self.current_state == AgentState.FLEEING:
             self.animation_blend = AnimationBlend.single(self.run_animation)
-        elif state == AgentState.FORMATION:
+        elif self.current_state == AgentState.FORMATION:
             self.animation_blend = AnimationBlend.single(self.walk_animation)
         # CUSTOM state keeps current animation
+
+
+def calculate_avoidance(
+    agent: CrowdAgent,
+    context: BehaviorContext,
+    avoidance_radius: float = CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_RADIUS,
+    avoidance_strength: float = CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_STRENGTH,
+) -> Vec3:
+    """Calculate avoidance vector from nearby agents and obstacles.
+
+    This is a shared utility function used by all behaviors that need collision
+    avoidance. Avoidance is a SAFETY constraint, not a navigation feature -
+    every behavior that updates position must respect it.
+
+    Uses configurable epsilon to avoid division by zero for coincident agents.
+
+    Args:
+        agent: The agent to calculate avoidance for
+        context: Behavior context containing nearby agents and obstacles
+        avoidance_radius: Radius within which to avoid other agents
+        avoidance_strength: Strength of avoidance force
+
+    Returns:
+        Avoidance force vector to apply to agent velocity
+    """
+    avoidance = Vec3.zero()
+
+    # Avoid other agents
+    for other in context.get_nearby_agents(agent, avoidance_radius):
+        to_agent = agent.position - other.position
+        dist = to_agent.length()
+        if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
+            # Agents are coincident - push in random direction
+            angle = random.uniform(0, 2 * math.pi)
+            avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * avoidance_strength
+            continue
+
+        # Stronger avoidance when closer
+        strength = (1.0 - dist / avoidance_radius) * avoidance_strength
+
+        # Consider priority: low priority agents yield more to high priority agents
+        # High priority agents yield less to low priority agents
+        priority_diff = other.priority - agent.priority
+        if priority_diff > 0:
+            # Other agent has higher priority - we yield more
+            strength *= CROWD_BEHAVIOR_CONFIG.AVOIDANCE_PRIORITY_MULTIPLIER
+        elif priority_diff < 0:
+            # We have higher priority - we yield less (push through)
+            strength /= CROWD_BEHAVIOR_CONFIG.AVOIDANCE_PRIORITY_MULTIPLIER
+
+        avoidance = avoidance + to_agent.normalized() * strength
+
+    # Avoid obstacles
+    for obs_pos, obs_radius in context.obstacles:
+        to_agent = agent.position - obs_pos
+        dist = to_agent.length()
+        combined_radius = obs_radius + agent.radius + avoidance_radius
+
+        if dist < combined_radius:
+            if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
+                # Agent at obstacle center - push away in random direction
+                angle = random.uniform(0, 2 * math.pi)
+                avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * avoidance_strength * 2.0
+            else:
+                strength = (1.0 - dist / combined_radius) * avoidance_strength * 2.0
+                avoidance = avoidance + to_agent.normalized() * strength
+
+    return avoidance
 
 
 class CrowdBehavior(ABC):
@@ -271,8 +337,18 @@ class CrowdBehavior(ABC):
         pass
 
     def can_transition_to(self, agent: CrowdAgent, target_state: AgentState) -> bool:
-        """Check if transition to target state is allowed."""
-        return True
+        """Check if transition to target state is allowed.
+
+        Uses the global VALID_TRANSITIONS rules to validate state changes.
+
+        Args:
+            agent: The agent attempting the transition
+            target_state: The target state
+
+        Returns:
+            True if transition is allowed, False otherwise
+        """
+        return is_valid_transition(agent.current_state, target_state)
 
     def on_enter(self, agent: CrowdAgent) -> None:
         """Called when agent enters this behavior state."""
@@ -300,81 +376,6 @@ class BehaviorContext:
         ]
 
 
-# =============================================================================
-# Standalone Avoidance Function
-# =============================================================================
-
-
-def calculate_avoidance(
-    agent: CrowdAgent,
-    context: BehaviorContext,
-    avoidance_radius: float = CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_RADIUS,
-    avoidance_strength: float = CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_STRENGTH,
-) -> Vec3:
-    """
-    Calculate avoidance vector from nearby agents and obstacles.
-
-    This is a standalone function for use by external code.
-
-    Priority weighting:
-    - High priority agents yield less (reduced avoidance)
-    - Low priority agents yield more (increased avoidance)
-    - Equal priority agents use base avoidance
-
-    Args:
-        agent: The agent to calculate avoidance for
-        context: Behavior context with nearby agents and obstacles
-        avoidance_radius: Distance within which to avoid other agents
-        avoidance_strength: Strength of avoidance force
-
-    Returns:
-        Avoidance force vector
-    """
-    avoidance = Vec3.zero()
-
-    # Avoid other agents
-    for other in context.get_nearby_agents(agent, avoidance_radius):
-        to_agent = agent.position - other.position
-        dist = to_agent.length()
-        if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
-            # Agents are coincident - push in random direction
-            angle = random.uniform(0, 2 * math.pi)
-            avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * avoidance_strength
-            continue
-
-        # Stronger avoidance when closer
-        strength = (1.0 - dist / avoidance_radius) * avoidance_strength
-
-        # Apply priority-based weighting
-        # Higher priority agent yields less (divides strength)
-        # Lower priority agent yields more (multiplies strength)
-        if other.priority > agent.priority:
-            # Other agent has higher priority, so we yield more
-            strength *= CROWD_BEHAVIOR_CONFIG.AVOIDANCE_PRIORITY_MULTIPLIER
-        elif other.priority < agent.priority:
-            # We have higher priority, so we yield less
-            strength /= CROWD_BEHAVIOR_CONFIG.AVOIDANCE_PRIORITY_MULTIPLIER
-
-        avoidance = avoidance + to_agent.normalized() * strength
-
-    # Avoid obstacles
-    for obs_pos, obs_radius in context.obstacles:
-        to_agent = agent.position - obs_pos
-        dist = to_agent.length()
-        combined_radius = obs_radius + agent.radius + avoidance_radius
-
-        if dist < combined_radius:
-            if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
-                # Agent at obstacle center - push away in random direction
-                angle = random.uniform(0, 2 * math.pi)
-                avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * avoidance_strength * 2.0
-            else:
-                strength = (1.0 - dist / combined_radius) * avoidance_strength * 2.0
-                avoidance = avoidance + to_agent.normalized() * strength
-
-    return avoidance
-
-
 class IdleBehavior(CrowdBehavior):
     """Idle behavior with occasional variations.
 
@@ -400,9 +401,24 @@ class IdleBehavior(CrowdBehavior):
         agent.state_time += dt
         agent.idle_variation_time -= dt
 
-        # Gradually stop movement
-        agent.target_velocity = Vec3.zero()
-        agent.velocity = agent.velocity * max(0.0, 1.0 - dt * 5.0)
+        # Calculate avoidance for coincident separation (safety constraint)
+        # Even idle agents must separate if they overlap
+        avoidance = calculate_avoidance(
+            agent, context,
+            avoidance_radius=CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_RADIUS,
+            avoidance_strength=CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_STRENGTH,
+        )
+
+        # If avoidance is needed, apply small velocity impulse to separate
+        if avoidance.length_squared() > 0.001:
+            # Apply avoidance as velocity impulse
+            agent.velocity = agent.velocity + avoidance * dt * 2.0
+            # Update position to respect avoidance
+            agent.position = agent.position + agent.velocity * dt
+        else:
+            # Gradually stop movement (normal idle behavior)
+            agent.target_velocity = Vec3.zero()
+            agent.velocity = agent.velocity * max(0.0, 1.0 - dt * 5.0)
 
         # Check for idle variation
         if agent.idle_variation_time <= 0:
@@ -412,10 +428,6 @@ class IdleBehavior(CrowdBehavior):
             # Pick random idle animation
             anim_idx = random.choice(self._idle_animations)
             agent.animation_blend = AnimationBlend.single(anim_idx)
-
-    def can_transition_to(self, agent: CrowdAgent, target_state: AgentState) -> bool:
-        """Check if transition to target state is allowed from IDLE."""
-        return is_valid_transition(AgentState.IDLE, target_state)
 
     def on_enter(self, agent: CrowdAgent) -> None:
         super().on_enter(agent)
@@ -447,9 +459,25 @@ class WalkingBehavior(CrowdBehavior):
     def update(self, agent: CrowdAgent, dt: float, context: BehaviorContext) -> None:
         agent.state_time += dt
 
-        # Calculate desired direction
+        # Calculate avoidance FIRST - this is a safety constraint, not navigation
+        # Avoidance must be applied regardless of whether agent has a target
+        avoidance = calculate_avoidance(
+            agent, context,
+            avoidance_radius=self._avoidance_radius,
+            avoidance_strength=self._avoidance_strength,
+        )
+        avoidance_magnitude = avoidance.length()
+
+        # Calculate desired direction based on target
         if agent.target_position is None:
-            agent.target_velocity = Vec3.zero()
+            # No target, but still apply avoidance for separation
+            if avoidance_magnitude > 0.001:
+                # Use stronger velocity for urgent avoidance (coincident/very close)
+                # Stronger avoidance = higher speed to ensure separation
+                urgency = min(1.0, avoidance_magnitude / self._avoidance_strength)
+                agent.target_velocity = avoidance.normalized() * agent.speed * (0.3 + 0.7 * urgency)
+            else:
+                agent.target_velocity = Vec3.zero()
         else:
             to_target = agent.target_position - agent.position
             distance = to_target.length()
@@ -460,8 +488,7 @@ class WalkingBehavior(CrowdBehavior):
             else:
                 direction = to_target.normalized()
 
-                # Apply avoidance
-                avoidance = self._calculate_avoidance(agent, context)
+                # Apply avoidance to direction
                 direction = (direction + avoidance).normalized()
 
                 # Slow down when approaching target
@@ -492,49 +519,6 @@ class WalkingBehavior(CrowdBehavior):
         # Update animation blend
         self._update_animation(agent)
 
-    def _calculate_avoidance(self, agent: CrowdAgent, context: BehaviorContext) -> Vec3:
-        """Calculate avoidance vector from nearby agents and obstacles.
-
-        Uses configurable epsilon to avoid division by zero for coincident agents.
-        """
-        avoidance = Vec3.zero()
-
-        # Avoid other agents
-        for other in context.get_nearby_agents(agent, self._avoidance_radius):
-            to_agent = agent.position - other.position
-            dist = to_agent.length()
-            if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
-                # Agents are coincident - push in random direction
-                angle = random.uniform(0, 2 * math.pi)
-                avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * self._avoidance_strength
-                continue
-
-            # Stronger avoidance when closer
-            strength = (1.0 - dist / self._avoidance_radius) * self._avoidance_strength
-
-            # Consider priority
-            if other.priority > agent.priority:
-                strength *= CROWD_BEHAVIOR_CONFIG.AVOIDANCE_PRIORITY_MULTIPLIER
-
-            avoidance = avoidance + to_agent.normalized() * strength
-
-        # Avoid obstacles
-        for obs_pos, obs_radius in context.obstacles:
-            to_agent = agent.position - obs_pos
-            dist = to_agent.length()
-            combined_radius = obs_radius + agent.radius + self._avoidance_radius
-
-            if dist < combined_radius:
-                if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
-                    # Agent at obstacle center - push away in random direction
-                    angle = random.uniform(0, 2 * math.pi)
-                    avoidance = avoidance + Vec3(math.sin(angle), 0, math.cos(angle)) * self._avoidance_strength * 2.0
-                else:
-                    strength = (1.0 - dist / combined_radius) * self._avoidance_strength * 2.0
-                    avoidance = avoidance + to_agent.normalized() * strength
-
-        return avoidance
-
     def _update_animation(self, agent: CrowdAgent) -> None:
         """Update animation based on movement speed."""
         speed = agent.velocity.length()
@@ -551,10 +535,6 @@ class WalkingBehavior(CrowdBehavior):
             )
         else:
             agent.animation_blend = AnimationBlend.single(agent.run_animation)
-
-    def can_transition_to(self, agent: CrowdAgent, target_state: AgentState) -> bool:
-        """Check if transition to target state is allowed from WALKING."""
-        return is_valid_transition(AgentState.WALKING, target_state)
 
     def on_enter(self, agent: CrowdAgent) -> None:
         super().on_enter(agent)
@@ -584,9 +564,24 @@ class WaitingBehavior(CrowdBehavior):
         agent.state_time += dt
         self._fidget_timer -= dt
 
-        # Stay in place
-        agent.target_velocity = Vec3.zero()
-        agent.velocity = agent.velocity * max(0.0, 1.0 - dt * 5.0)
+        # Calculate avoidance for coincident separation (safety constraint)
+        # Even waiting agents must separate if they overlap
+        avoidance = calculate_avoidance(
+            agent, context,
+            avoidance_radius=CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_RADIUS,
+            avoidance_strength=CROWD_BEHAVIOR_CONFIG.DEFAULT_AVOIDANCE_STRENGTH,
+        )
+
+        # If avoidance is needed, apply small velocity impulse to separate
+        if avoidance.length_squared() > 0.001:
+            # Apply avoidance as velocity impulse
+            agent.velocity = agent.velocity + avoidance * dt * 2.0
+            # Update position to respect avoidance
+            agent.position = agent.position + agent.velocity * dt
+        else:
+            # Stay in place (normal waiting behavior)
+            agent.target_velocity = Vec3.zero()
+            agent.velocity = agent.velocity * max(0.0, 1.0 - dt * 5.0)
 
         # Occasional fidget
         if self._fidget_timer <= 0:
@@ -642,7 +637,12 @@ class FleeingBehavior(CrowdBehavior):
         # Apply avoidance from other agents
         for other in context.get_nearby_agents(agent, 2.0):
             to_agent = agent.position - other.position
-            if to_agent.length() > 0.01:
+            dist = to_agent.length()
+            if dist < CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
+                # Coincident - add random component to separate
+                angle = random.uniform(0, 2 * math.pi)
+                flee_dir = (flee_dir + Vec3(math.sin(angle), 0, math.cos(angle)) * 0.5).normalized()
+            elif dist > CROWD_BEHAVIOR_CONFIG.MIN_DISTANCE_EPSILON:
                 flee_dir = (flee_dir + to_agent.normalized() * 0.5).normalized()
 
         # Set velocity
@@ -808,43 +808,38 @@ class CrowdSimulator:
                 return agent
         return None
 
-    def transition_agent(
-        self,
-        agent: CrowdAgent,
-        new_state: AgentState,
-        raise_on_invalid: bool = False,
-    ) -> bool:
+    def transition_agent(self, agent: CrowdAgent, new_state: AgentState, raise_on_invalid: bool = False) -> bool:
         """Transition agent to new state.
 
         Args:
             agent: The agent to transition
             new_state: Target state
-            raise_on_invalid: If True, raise InvalidTransitionError on invalid transition
+            raise_on_invalid: If True, raise InvalidTransitionError on invalid transition.
+                              If False, return False on invalid transition.
 
         Returns:
-            True if transition succeeded
+            True if transition succeeded, False if invalid (when raise_on_invalid=False)
 
         Raises:
-            InvalidTransitionError: If raise_on_invalid=True and transition is invalid
+            InvalidTransitionError: If transition is invalid and raise_on_invalid=True
         """
         if agent.current_state == new_state:
             return True
 
-        # Check if transition is valid using global transition rules
-        if not is_valid_transition(agent.current_state, new_state):
+        old_behavior = self._behaviors.get(agent.current_state)
+        new_behavior = self._behaviors.get(new_state)
+
+        # Check if transition is allowed
+        if old_behavior and not old_behavior.can_transition_to(agent, new_state):
             if raise_on_invalid:
                 raise InvalidTransitionError(agent.current_state, new_state)
             return False
-
-        old_behavior = self._behaviors.get(agent.current_state)
-        new_behavior = self._behaviors.get(new_state)
 
         # Perform transition
         if old_behavior:
             old_behavior.on_exit(agent)
 
         agent.current_state = new_state
-        agent.state_time = 0.0  # Reset state time
 
         if new_behavior:
             new_behavior.on_enter(agent)

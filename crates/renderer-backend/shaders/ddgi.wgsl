@@ -5,26 +5,54 @@
 // Two compute entry points:
 //   1. ddgi_update_probes — shoots rays to update SH coefficients at each probe
 //   2. ddgi_sample_probes — samples probe grid to produce indirect irradiance
+//
+// NOTE: For L2 (9-coefficient) SH sampling with visibility weighting and
+// parallax correction, use ddgi_probe_sampling.wgsl instead. This file
+// provides the simpler L0+L1 implementation for backward compatibility.
 
 // ── Constants ──
 
 const SH_L0: f32 = 0.28209479177387814;  // 1 / (2 * sqrt(PI))
 const SH_L1: f32 = 0.4886025119029199;   // sqrt(3 / (4 * PI))
 
+// L2 SH constants (for future L2 update support)
+const SH_Y2_NEG2: f32 = 1.0925484305920792;
+const SH_Y2_NEG1: f32 = 1.0925484305920792;
+const SH_Y2_0: f32 = 0.31539156525252005;
+const SH_Y2_POS1: f32 = 1.0925484305920792;
+const SH_Y2_POS2: f32 = 0.5462742152960396;
+
+// Irradiance convolution coefficients
+const SH_A0: f32 = 1.0;
+const SH_A1: f32 = 0.6666666666666666;
+const SH_A2: f32 = 0.25;
+
 const MAX_RAYS_PER_PROBE: u32 = 256u;
 const MAX_PROBES: u32 = 4096u;
 const PI: f32 = 3.14159265359;
 const MAX_RAY_DISTANCE: f32 = 50.0;
 const NUM_FRAMES_PER_UPDATE: u32 = 8u;
+const EPSILON: f32 = 0.0001;
 
 // ── Data structures ──
 
+/// Legacy L0+L1 probe structure (4 coefficients per channel).
 struct DDGIProbe {
     // Spherical harmonic coefficients: L0 (1 float) + L1 (3 floats) per RGB channel.
     // Packed as: sh_r[4], sh_g[4], sh_b[4].
     sh_r: vec4<f32>,  // [L0, L1.x, L1.y, L1.z] for red
     sh_g: vec4<f32>,  // [L0, L1.x, L1.y, L1.z] for green
     sh_b: vec4<f32>,  // [L0, L1.x, L1.y, L1.z] for blue
+}
+
+/// L2 probe structure (9 coefficients per channel, matches ProbeSH in Rust).
+struct DDGIProbeL2 {
+    // 9 RGB coefficients stored as vec4 for alignment (w unused).
+    coeffs: array<vec4<f32>, 9>,
+    // Visibility SH for soft shadowing.
+    visibility: array<f32, 9>,
+    // Padding to 192 bytes.
+    _pad: array<f32, 3>,
 }
 
 struct ProbeVolume {
@@ -93,6 +121,90 @@ fn project_sh(dir: vec3<f32>, irradiance: vec3<f32>) -> vec4<f32> {
     let l0 = SH_L0;
     let l1 = SH_L1 * dir;
     return vec4<f32>(l0 * irradiance.x, l1.x * irradiance.x, l1.y * irradiance.x, l1.z * irradiance.x);
+}
+
+// ── L2 Spherical harmonic evaluation ──
+
+/// Evaluate all 9 SH basis functions at a direction.
+fn sh_basis_l2(dir: vec3<f32>) -> array<f32, 9> {
+    let x = dir.x;
+    let y = dir.y;
+    let z = dir.z;
+
+    var basis: array<f32, 9>;
+
+    // L=0
+    basis[0] = SH_L0;
+
+    // L=1
+    basis[1] = SH_L1 * y;
+    basis[2] = SH_L1 * z;
+    basis[3] = SH_L1 * x;
+
+    // L=2
+    basis[4] = SH_Y2_NEG2 * x * y;
+    basis[5] = SH_Y2_NEG1 * y * z;
+    basis[6] = SH_Y2_0 * (3.0 * z * z - 1.0);
+    basis[7] = SH_Y2_POS1 * x * z;
+    basis[8] = SH_Y2_POS2 * (x * x - y * y);
+
+    return basis;
+}
+
+/// Evaluate L2 SH irradiance at a direction (with cosine lobe convolution).
+fn eval_sh_l2_irradiance(probe: DDGIProbeL2, dir: vec3<f32>) -> vec3<f32> {
+    let basis = sh_basis_l2(dir);
+
+    var irradiance = vec3<f32>(0.0);
+
+    // L0 band
+    irradiance += probe.coeffs[0].xyz * basis[0] * SH_A0;
+
+    // L1 band
+    irradiance += probe.coeffs[1].xyz * basis[1] * SH_A1;
+    irradiance += probe.coeffs[2].xyz * basis[2] * SH_A1;
+    irradiance += probe.coeffs[3].xyz * basis[3] * SH_A1;
+
+    // L2 band
+    irradiance += probe.coeffs[4].xyz * basis[4] * SH_A2;
+    irradiance += probe.coeffs[5].xyz * basis[5] * SH_A2;
+    irradiance += probe.coeffs[6].xyz * basis[6] * SH_A2;
+    irradiance += probe.coeffs[7].xyz * basis[7] * SH_A2;
+    irradiance += probe.coeffs[8].xyz * basis[8] * SH_A2;
+
+    return max(irradiance, vec3<f32>(0.0));
+}
+
+/// Evaluate raw L2 SH (without irradiance convolution).
+fn eval_sh_l2_raw(probe: DDGIProbeL2, dir: vec3<f32>) -> vec3<f32> {
+    let basis = sh_basis_l2(dir);
+
+    var result = vec3<f32>(0.0);
+    for (var i = 0u; i < 9u; i++) {
+        result += probe.coeffs[i].xyz * basis[i];
+    }
+
+    return result;
+}
+
+// ── Visibility modulation ──
+
+/// Compute visibility weight to reduce light leaking.
+/// Uses backface rejection: if the probe is behind the surface, reduce weight.
+fn compute_visibility_weight(
+    probe_pos: vec3<f32>,
+    shading_pos: vec3<f32>,
+    normal: vec3<f32>,
+) -> f32 {
+    let to_probe = probe_pos - shading_pos;
+    let probe_dist = length(to_probe);
+    let probe_dir = to_probe / max(probe_dist, EPSILON);
+
+    // Backface rejection
+    let n_dot_d = dot(normal, probe_dir);
+    let backface_weight = smoothstep(-0.1, 0.0, n_dot_d);
+
+    return max(backface_weight, EPSILON);
 }
 
 // ── Spatial indexing ──

@@ -320,7 +320,7 @@ class SidechainManager:
             attack_ms=attack_ms,
             release_ms=release_ms,
         )
-        self.create_compressor(config)
+        compressor = self.create_compressor(config)
         return config.id
 
     def remove(self, compressor_id: str) -> bool:

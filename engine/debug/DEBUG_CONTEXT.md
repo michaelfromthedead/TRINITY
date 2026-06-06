@@ -5,6 +5,15 @@
 > needed to implement `engine/debug/`. This document is the single source of truth —
 > implementation should require zero external references.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Profiling, hot-reload, logging, diagnostics |
+| Rust | ⚠️ 50% | GAPSET_20_CROSS_CUTTING — Debug utilities |
+| Wired | ⚠️ Partial | Profiling hooks connected |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

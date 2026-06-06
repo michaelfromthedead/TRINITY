@@ -80,7 +80,7 @@ class Font:
     _units_per_em: int = field(default=1000, repr=False)
     _glyphs: dict[int, GlyphMetrics] = field(default_factory=dict, repr=False)
     _handle: Any = field(default=None, repr=False)  # Platform font handle
-    _manager_cache_key: str | None = field(default=None, repr=False)  # Cache key set by FontManager
+    _manager_cache_key: Optional[str] = field(default=None, repr=False)  # Cache key used by FontManager
 
     def __post_init__(self) -> None:
         """Validate font parameters."""
@@ -121,6 +121,8 @@ class Font:
 
     def cache_key(self) -> str:
         """Generate a unique cache key for this font configuration."""
+        if self._manager_cache_key is not None:
+            return self._manager_cache_key
         return f"{self.family}:{self.size}:{self.weight.value}:{self.style.name}"
 
     def with_size(self, size: float) -> Font:
@@ -426,11 +428,9 @@ class FontManager:
             style=style,
         )
 
-        # Store the cache key on the font for later retrieval
-        font._manager_cache_key = cache_key
-
         # Store the path for later reference
         self._font_paths[cache_key] = path
+        font._manager_cache_key = cache_key
 
         # Load font data if we have a loader
         ext = path.suffix.lower()
@@ -607,13 +607,9 @@ class FontManager:
         Returns:
             True if font was unloaded, False if not found
         """
-        # Use the cache key stored by FontManager during load
-        cache_key = font._manager_cache_key
-        if cache_key and cache_key in self._fonts:
+        cache_key = font.cache_key()
+        if cache_key in self._fonts:
             del self._fonts[cache_key]
-
-            # Remove from font paths
-            self._font_paths.pop(cache_key, None)
 
             # Remove from family if present
             family = self._families.get(font.family)

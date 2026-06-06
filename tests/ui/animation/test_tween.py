@@ -369,7 +369,8 @@ class TestTweenInterpolation:
 
     def test_interpolate_tuple(self, target: AnimatableObject) -> None:
         """Should interpolate tuple values (like colors)."""
-        t = Tween(target, "color", (255, 255, 255), (0, 0, 0), duration=1.0, easing="linear")
+        # Use floats to get float interpolation results
+        t = Tween(target, "color", (255.0, 255.0, 255.0), (0.0, 0.0, 0.0), duration=1.0, easing="linear")
         t.start()
         t.update(0.5)
 

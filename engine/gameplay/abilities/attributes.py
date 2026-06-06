@@ -11,11 +11,18 @@ Attributes follow proper modifier order of operations:
 4. Multiply Bonus modifiers
 5. Override modifiers
 6. Clamp to min/max bounds
+
+Foundation Integration:
+- TrackedDescriptor wiring via @tracked_attribute decorator
+- Automatic dirty flag tracking on attribute changes
+- Change subscription via tracker.on_change()
+- Batch updates via tracker.begin_batch() / tracker.end_batch()
 """
 
 from __future__ import annotations
 
 import math
+import threading
 import weakref
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -24,12 +31,16 @@ from typing import (
     Callable,
     Dict,
     FrozenSet,
+    Generic,
     Iterator,
     List,
     Optional,
     Set,
+    Tuple,
+    Type,
     TypeVar,
     Union,
+    overload,
 )
 from uuid import UUID, uuid4
 
@@ -45,16 +56,593 @@ from engine.gameplay.abilities.constants import (
     ModifierOperation,
 )
 
-T = TypeVar("T")
-
-# Check if Foundation is available for tracker integration
+# Foundation integration imports
 try:
-    from foundation import Registry, registry
     from foundation import tracker as foundation_tracker
+    from foundation import Tracker, Change, Transaction
     FOUNDATION_AVAILABLE = True
 except ImportError:
     FOUNDATION_AVAILABLE = False
-    foundation_tracker = None  # type: ignore
+    foundation_tracker = None
+    Tracker = None
+    Change = None
+    Transaction = None
+
+# Trinity descriptor integration
+try:
+    from trinity.descriptors import TrackedDescriptor as TrinityTrackedDescriptor
+    TRINITY_DESCRIPTORS_AVAILABLE = True
+except ImportError:
+    TRINITY_DESCRIPTORS_AVAILABLE = False
+    TrinityTrackedDescriptor = None
+
+T = TypeVar("T")
+AttrT = TypeVar("AttrT", bound=float)
+
+# Type alias for attribute change callbacks
+AttributeChangeCallback = Callable[[Any, str, Any, Any], None]
+
+
+# =============================================================================
+# ATTRIBUTE TRACKER (Foundation Integration)
+# =============================================================================
+
+
+class AttributeTracker:
+    """
+    Centralized tracker for ability attributes with Foundation integration.
+
+    Provides:
+    - Dirty flag tracking per attribute
+    - Change subscriptions by attribute type or instance
+    - Batch update support for atomic changes
+    - Integration with Foundation Tracker when available
+    """
+
+    __slots__ = (
+        "_dirty",
+        "_callbacks",
+        "_type_callbacks",
+        "_batch_mode",
+        "_batch_changes",
+        "_lock",
+        "_version",
+    )
+
+    def __init__(self) -> None:
+        """Initialize the attribute tracker."""
+        self._dirty: Dict[int, Tuple[weakref.ref, Set[str]]] = {}
+        self._callbacks: Dict[int, List[AttributeChangeCallback]] = {}
+        self._type_callbacks: Dict[str, List[AttributeChangeCallback]] = {}
+        self._batch_mode: bool = False
+        self._batch_changes: List[Tuple[Any, str, Any, Any]] = []
+        self._lock = threading.RLock()
+        self._version: int = 0
+
+    def mark_dirty(
+        self,
+        obj: Any,
+        field_name: str,
+        old_value: Any,
+        new_value: Any,
+    ) -> None:
+        """Mark an attribute as dirty and optionally notify callbacks."""
+        with self._lock:
+            oid = id(obj)
+            if oid not in self._dirty:
+                self._dirty[oid] = (
+                    weakref.ref(obj, lambda _: self._cleanup(oid)),
+                    set(),
+                )
+            self._dirty[oid][1].add(field_name)
+            self._version += 1
+
+            if self._batch_mode:
+                # Store change for later notification
+                self._batch_changes.append((obj, field_name, old_value, new_value))
+            else:
+                self._notify(obj, field_name, old_value, new_value)
+
+            # Forward to Foundation tracker if available
+            if FOUNDATION_AVAILABLE and foundation_tracker is not None:
+                foundation_tracker.mark_dirty(obj, field_name, old_value, new_value)
+
+    def mark_clean(self, obj: Any, field_name: Optional[str] = None) -> None:
+        """Clear dirty flag(s) for an object."""
+        with self._lock:
+            oid = id(obj)
+            entry = self._dirty.get(oid)
+            if entry:
+                if field_name is None:
+                    entry[1].clear()
+                else:
+                    entry[1].discard(field_name)
+
+    def is_dirty(self, obj: Any, field_name: Optional[str] = None) -> bool:
+        """Check if an object or specific field is dirty."""
+        with self._lock:
+            oid = id(obj)
+            entry = self._dirty.get(oid)
+            if not entry:
+                return False
+            if field_name is None:
+                return bool(entry[1])
+            return field_name in entry[1]
+
+    def dirty_fields(self, obj: Any) -> Set[str]:
+        """Get all dirty field names for an object."""
+        with self._lock:
+            oid = id(obj)
+            entry = self._dirty.get(oid)
+            return set(entry[1]) if entry else set()
+
+    def all_dirty(self) -> bool:
+        """Check if any tracked object has dirty fields."""
+        with self._lock:
+            for oid, (ref, fields) in list(self._dirty.items()):
+                if ref() is None:
+                    del self._dirty[oid]
+                    continue
+                if fields:
+                    return True
+            return False
+
+    def get_all_dirty_objects(self) -> List[Any]:
+        """Return list of all objects with dirty fields."""
+        with self._lock:
+            result: List[Any] = []
+            dead: List[int] = []
+            for oid, (ref, fields) in self._dirty.items():
+                obj = ref()
+                if obj is None:
+                    dead.append(oid)
+                elif fields:
+                    result.append(obj)
+            for oid in dead:
+                del self._dirty[oid]
+            return result
+
+    def on_change(
+        self,
+        target: Union[None, Any, str],
+        callback: AttributeChangeCallback,
+    ) -> None:
+        """
+        Subscribe to attribute changes.
+
+        Args:
+            target: None for global, object instance for object-specific,
+                   or string for attribute type subscription
+            callback: Function(obj, field, old, new) to call on change
+        """
+        with self._lock:
+            if target is None:
+                # Global subscription - use type callback with empty key
+                self._type_callbacks.setdefault("", []).append(callback)
+            elif isinstance(target, str):
+                # Attribute type subscription
+                self._type_callbacks.setdefault(target, []).append(callback)
+            else:
+                # Object-specific subscription
+                oid = id(target)
+                self._callbacks.setdefault(oid, []).append(callback)
+
+    def off_change(self, callback: AttributeChangeCallback) -> None:
+        """Unsubscribe a callback from all subscriptions."""
+        with self._lock:
+            # Remove from type callbacks
+            for cbs in self._type_callbacks.values():
+                if callback in cbs:
+                    cbs.remove(callback)
+            # Remove from object callbacks
+            for cbs in self._callbacks.values():
+                if callback in cbs:
+                    cbs.remove(callback)
+
+    def begin_batch(self) -> None:
+        """Begin batch mode - callbacks deferred until end_batch()."""
+        with self._lock:
+            if self._batch_mode:
+                raise RuntimeError("Already in batch mode")
+            self._batch_mode = True
+            self._batch_changes.clear()
+
+    def end_batch(self) -> None:
+        """End batch mode and fire all deferred callbacks."""
+        with self._lock:
+            if not self._batch_mode:
+                raise RuntimeError("Not in batch mode")
+            self._batch_mode = False
+            # Fire all deferred notifications
+            changes = self._batch_changes.copy()
+            self._batch_changes.clear()
+
+        # Fire callbacks outside the lock
+        for obj, field_name, old_value, new_value in changes:
+            self._notify(obj, field_name, old_value, new_value)
+
+    @property
+    def in_batch(self) -> bool:
+        """Check if currently in batch mode."""
+        return self._batch_mode
+
+    @property
+    def version(self) -> int:
+        """Get the global version counter."""
+        return self._version
+
+    def _notify(
+        self,
+        obj: Any,
+        field_name: str,
+        old_value: Any,
+        new_value: Any,
+    ) -> None:
+        """Fire change callbacks."""
+        # Global callbacks
+        for cb in self._type_callbacks.get("", []):
+            try:
+                cb(obj, field_name, old_value, new_value)
+            except Exception:
+                pass
+
+        # Type-specific callbacks
+        for cb in self._type_callbacks.get(field_name, []):
+            try:
+                cb(obj, field_name, old_value, new_value)
+            except Exception:
+                pass
+
+        # Object-specific callbacks
+        for cb in self._callbacks.get(id(obj), []):
+            try:
+                cb(obj, field_name, old_value, new_value)
+            except Exception:
+                pass
+
+    def _cleanup(self, oid: int) -> None:
+        """Clean up entries for garbage collected objects."""
+        with self._lock:
+            self._dirty.pop(oid, None)
+            self._callbacks.pop(oid, None)
+
+
+# Global attribute tracker instance
+attribute_tracker = AttributeTracker()
+
+
+# =============================================================================
+# TRACKED ATTRIBUTE DESCRIPTOR
+# =============================================================================
+
+
+class TrackedAttributeDescriptor(Generic[AttrT]):
+    """
+    Descriptor that wraps attribute access with Foundation tracking.
+
+    Provides:
+    - Automatic dirty flag on value change
+    - Min/max value clamping
+    - Integration with AttributeTracker for subscriptions
+    - Compatible with Trinity TrackedDescriptor pattern
+    """
+
+    __slots__ = (
+        "_name",
+        "_min_value",
+        "_max_value",
+        "_default",
+        "_storage_attr",
+        "_tracker",
+    )
+
+    def __init__(
+        self,
+        name: str,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        default: float = 0.0,
+        tracker: Optional[AttributeTracker] = None,
+    ) -> None:
+        """
+        Initialize tracked attribute descriptor.
+
+        Args:
+            name: Attribute name for tracking
+            min_value: Minimum allowed value (None for no limit)
+            max_value: Maximum allowed value (None for no limit)
+            default: Default value when not set
+            tracker: AttributeTracker instance (uses global if not provided)
+        """
+        self._name = name
+        self._min_value = min_value
+        self._max_value = max_value
+        self._default = default
+        self._storage_attr = f"_tracked_attr_{name}"
+        self._tracker = tracker or attribute_tracker
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Called when descriptor is assigned to a class attribute."""
+        # Register with class for introspection
+        if not hasattr(owner, "_tracked_attributes"):
+            owner._tracked_attributes = set()
+        owner._tracked_attributes.add(self._name)
+
+    @overload
+    def __get__(self, obj: None, objtype: type) -> "TrackedAttributeDescriptor[AttrT]":
+        ...
+
+    @overload
+    def __get__(self, obj: Any, objtype: Optional[type]) -> AttrT:
+        ...
+
+    def __get__(
+        self, obj: Any, objtype: Optional[type] = None
+    ) -> Union["TrackedAttributeDescriptor[AttrT]", AttrT]:
+        """Get the tracked attribute value."""
+        if obj is None:
+            return self
+        return getattr(obj, self._storage_attr, self._default)
+
+    def __set__(self, obj: Any, value: AttrT) -> None:
+        """Set the tracked attribute value with clamping and dirty tracking."""
+        # Get old value
+        old_value = getattr(obj, self._storage_attr, self._default)
+
+        # Apply clamping
+        clamped_value = self._clamp(value)
+
+        # Only update and track if actually changed
+        if old_value != clamped_value:
+            setattr(obj, self._storage_attr, clamped_value)
+            self._tracker.mark_dirty(obj, self._name, old_value, clamped_value)
+
+    def __delete__(self, obj: Any) -> None:
+        """Reset attribute to default."""
+        old_value = getattr(obj, self._storage_attr, self._default)
+        if hasattr(obj, self._storage_attr):
+            delattr(obj, self._storage_attr)
+        if old_value != self._default:
+            self._tracker.mark_dirty(obj, self._name, old_value, self._default)
+
+    def _clamp(self, value: AttrT) -> AttrT:
+        """Clamp value to min/max bounds."""
+        result = value
+        if self._min_value is not None and result < self._min_value:
+            result = self._min_value  # type: ignore
+        if self._max_value is not None and result > self._max_value:
+            result = self._max_value  # type: ignore
+        return result
+
+    @property
+    def name(self) -> str:
+        """Get attribute name."""
+        return self._name
+
+    @property
+    def min_value(self) -> Optional[float]:
+        """Get minimum value constraint."""
+        return self._min_value
+
+    @property
+    def max_value(self) -> Optional[float]:
+        """Get maximum value constraint."""
+        return self._max_value
+
+    @property
+    def default(self) -> float:
+        """Get default value."""
+        return self._default
+
+    def is_dirty(self, obj: Any) -> bool:
+        """Check if this attribute is dirty on the given object."""
+        return self._tracker.is_dirty(obj, self._name)
+
+    def clear_dirty(self, obj: Any) -> None:
+        """Clear the dirty flag for this attribute."""
+        self._tracker.mark_clean(obj, self._name)
+
+    def mark_dirty(self, obj: Any) -> None:
+        """Manually mark this attribute as dirty."""
+        value = self.__get__(obj, type(obj))
+        self._tracker.mark_dirty(obj, self._name, value, value)
+
+
+def tracked_attribute(
+    name: str,
+    min: Optional[float] = None,
+    max: Optional[float] = None,
+    default: float = 0.0,
+    tracker: Optional[AttributeTracker] = None,
+) -> TrackedAttributeDescriptor:
+    """
+    Create a tracked attribute descriptor.
+
+    This decorator/factory creates a TrackedAttributeDescriptor that:
+    - Wraps attribute access with automatic dirty tracking
+    - Supports min/max value clamping
+    - Integrates with Foundation's Tracker system
+    - Enables change subscriptions via tracker.on_change()
+
+    Args:
+        name: Attribute name for tracking and subscriptions
+        min: Minimum allowed value (None for no minimum)
+        max: Maximum allowed value (None for no maximum)
+        default: Default value when attribute is not set
+        tracker: Custom AttributeTracker (uses global if not provided)
+
+    Returns:
+        TrackedAttributeDescriptor instance
+
+    Example:
+        class Character:
+            health = tracked_attribute("health", min=0, max=100, default=100)
+            mana = tracked_attribute("mana", min=0, max=50, default=50)
+
+        char = Character()
+        char.health = 80  # Sets dirty flag
+        attribute_tracker.is_dirty(char, "health")  # True
+    """
+    return TrackedAttributeDescriptor(
+        name=name,
+        min_value=min,
+        max_value=max,
+        default=default,
+        tracker=tracker,
+    )
+
+
+# =============================================================================
+# TRACKED ABILITY ATTRIBUTE CLASSES
+# =============================================================================
+
+
+class TrackedAbilityAttribute:
+    """
+    Base class for ability attributes with Foundation tracking integration.
+
+    Provides automatic dirty tracking, min/max clamping, and change callbacks
+    for common ability attributes like Health, Mana, Stamina, and Cooldowns.
+    """
+
+    # Class-level tracked attributes - override in subclasses
+    _tracked_fields: FrozenSet[str] = frozenset()
+
+    def __init__(self, tracker: Optional[AttributeTracker] = None) -> None:
+        """Initialize with optional custom tracker."""
+        self._custom_tracker = tracker
+
+    @property
+    def tracker(self) -> AttributeTracker:
+        """Get the tracker instance for this attribute."""
+        return self._custom_tracker or attribute_tracker
+
+    def is_dirty(self) -> bool:
+        """Check if any field on this attribute is dirty."""
+        return self.tracker.is_dirty(self)
+
+    def clear_dirty(self) -> None:
+        """Clear all dirty flags for this attribute."""
+        self.tracker.mark_clean(self)
+
+
+class TrackedVitalAttribute(TrackedAbilityAttribute):
+    """
+    Tracked vital attribute (Health, Mana, Stamina) with current/max values.
+    """
+
+    current = tracked_attribute("current", min=0.0, default=100.0)
+    maximum = tracked_attribute("maximum", min=1.0, default=100.0)
+    regen_rate = tracked_attribute("regen_rate", min=-100.0, max=1000.0, default=0.0)
+
+    _tracked_fields = frozenset({"current", "maximum", "regen_rate"})
+
+    def __init__(
+        self,
+        current: float = 100.0,
+        maximum: float = 100.0,
+        regen_rate: float = 0.0,
+        tracker: Optional[AttributeTracker] = None,
+    ) -> None:
+        """Initialize vital attribute."""
+        super().__init__(tracker)
+        self.current = min(current, maximum)
+        self.maximum = maximum
+        self.regen_rate = regen_rate
+        # Clear initial dirty state
+        self.clear_dirty()
+
+    @property
+    def percent(self) -> float:
+        """Get current value as percentage of maximum."""
+        if self.maximum <= 0:
+            return 0.0
+        return self.current / self.maximum
+
+    def apply_damage(self, amount: float) -> float:
+        """Apply damage, returning actual damage dealt."""
+        old = self.current
+        self.current = max(0.0, self.current - amount)
+        return old - self.current
+
+    def apply_healing(self, amount: float) -> float:
+        """Apply healing, returning actual healing done."""
+        old = self.current
+        self.current = min(self.maximum, self.current + amount)
+        return self.current - old
+
+    def regenerate(self, delta_time: float) -> float:
+        """Apply regeneration for delta_time seconds."""
+        if self.regen_rate == 0:
+            return 0.0
+        amount = self.regen_rate * delta_time
+        if amount > 0:
+            return self.apply_healing(amount)
+        else:
+            return -self.apply_damage(-amount)
+
+
+class TrackedCooldownAttribute(TrackedAbilityAttribute):
+    """
+    Tracked cooldown timer attribute.
+    """
+
+    remaining = tracked_attribute("remaining", min=0.0, default=0.0)
+    duration = tracked_attribute("duration", min=0.0, default=1.0)
+    reduction = tracked_attribute("reduction", min=0.0, max=0.75, default=0.0)
+
+    _tracked_fields = frozenset({"remaining", "duration", "reduction"})
+
+    def __init__(
+        self,
+        duration: float = 1.0,
+        reduction: float = 0.0,
+        tracker: Optional[AttributeTracker] = None,
+    ) -> None:
+        """Initialize cooldown attribute."""
+        super().__init__(tracker)
+        self.duration = duration
+        self.reduction = reduction
+        self.remaining = 0.0
+        self.clear_dirty()
+
+    @property
+    def effective_duration(self) -> float:
+        """Get duration after cooldown reduction applied."""
+        return self.duration * (1.0 - self.reduction)
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if cooldown is ready (remaining <= 0)."""
+        return self.remaining <= EPSILON
+
+    @property
+    def progress(self) -> float:
+        """Get cooldown progress (0.0 = just started, 1.0 = ready)."""
+        eff_dur = self.effective_duration
+        if eff_dur <= 0:
+            return 1.0
+        return 1.0 - (self.remaining / eff_dur)
+
+    def start(self) -> None:
+        """Start the cooldown timer."""
+        self.remaining = self.effective_duration
+
+    def tick(self, delta_time: float) -> bool:
+        """
+        Tick the cooldown timer.
+
+        Returns True if cooldown just became ready.
+        """
+        if self.remaining <= 0:
+            return False
+        was_on_cooldown = self.remaining > EPSILON
+        self.remaining = max(0.0, self.remaining - delta_time)
+        return was_on_cooldown and self.remaining <= EPSILON
+
+    def reset(self) -> None:
+        """Reset cooldown to ready state."""
+        self.remaining = 0.0
 
 
 # =============================================================================
@@ -588,767 +1176,91 @@ def create_standard_attributes() -> AttributeSet:
 
 
 # =============================================================================
-# ATTRIBUTE TRACKER (Foundation Integration)
-# =============================================================================
-
-
-# Type alias for attribute change callbacks
-AttributeChangeCallback = Callable[[Any, str, float, float], None]
-
-
-class AttributeTracker:
-    """
-    Tracks attribute changes across multiple objects.
-
-    Provides dirty flag tracking, callbacks, batch mode, and versioning.
-    Integrates with the Foundation framework for change notifications.
-    """
-
-    def __init__(self) -> None:
-        # _dirty stores {obj_id: (weak_ref, {field_names})} for garbage collection
-        self._dirty: Dict[int, tuple] = {}
-        self._callbacks: Dict[int, Dict[str, List[AttributeChangeCallback]]] = {}
-        self._type_callbacks: Dict[type, List[AttributeChangeCallback]] = {}
-        self._batch_mode: bool = False
-        self._batch_changes: List[tuple] = []  # [(obj, field, old, new), ...]
-        self._version: int = 0
-
-    @property
-    def version(self) -> int:
-        """Get the current version counter."""
-        return self._version
-
-    def _cleanup_dead_refs(self) -> None:
-        """Remove entries for garbage-collected objects."""
-        dead_ids = [
-            obj_id for obj_id, (ref, _) in self._dirty.items()
-            if ref() is None
-        ]
-        for obj_id in dead_ids:
-            del self._dirty[obj_id]
-
-    def mark_dirty(
-        self,
-        obj: Any,
-        field: str,
-        old_value: float,
-        new_value: float,
-    ) -> None:
-        """Mark a field as dirty and notify callbacks."""
-        obj_id = id(obj)
-
-        # Track object reference for get_all_dirty_objects using weak refs
-        try:
-            ref = weakref.ref(obj)
-        except TypeError:
-            # Object doesn't support weak references
-            ref = lambda: obj  # type: ignore
-
-        # Track dirty state with weak reference
-        if obj_id not in self._dirty:
-            self._dirty[obj_id] = (ref, set())
-        self._dirty[obj_id][1].add(field)
-
-        # Increment version
-        self._version += 1
-
-        if self._batch_mode:
-            self._batch_changes.append((obj, field, old_value, new_value))
-        else:
-            self._notify_callbacks(obj, field, old_value, new_value)
-
-    def is_dirty(self, obj: Any, field: Optional[str] = None) -> bool:
-        """Check if an object (or specific field) is dirty."""
-        obj_id = id(obj)
-        if obj_id not in self._dirty:
-            return False
-        ref, fields = self._dirty[obj_id]
-        if field is None:
-            return len(fields) > 0
-        return field in fields
-
-    def clear_dirty(self, obj: Any, field: Optional[str] = None) -> None:
-        """Clear dirty flags for an object or specific field."""
-        obj_id = id(obj)
-        if obj_id not in self._dirty:
-            return
-        ref, fields = self._dirty[obj_id]
-        if field is None:
-            fields.clear()
-        else:
-            fields.discard(field)
-
-    def mark_clean(self, obj: Any, field: Optional[str] = None) -> None:
-        """Alias for clear_dirty - clears dirty flags for an object or field."""
-        self.clear_dirty(obj, field)
-
-    def all_dirty(self) -> bool:
-        """Check if any object has dirty fields."""
-        self._cleanup_dead_refs()
-        for obj_id, (ref, fields) in self._dirty.items():
-            if ref() is not None and fields:
-                return True
-        return False
-
-    def get_all_dirty_objects(self) -> List[Any]:
-        """Get all objects that have dirty fields."""
-        self._cleanup_dead_refs()
-        result = []
-        for obj_id, (ref, fields) in self._dirty.items():
-            obj = ref()
-            if obj is not None and fields:
-                result.append(obj)
-        return result
-
-    def on_change(
-        self,
-        field_or_obj: Optional[Any],
-        callback: AttributeChangeCallback,
-    ) -> None:
-        """
-        Subscribe to change notifications.
-
-        Args:
-            field_or_obj: If None, subscribe to all changes.
-                         If a string, subscribe to that field name.
-                         If an object, subscribe to that object's changes.
-            callback: Function to call on change (obj, field, old, new).
-        """
-        if field_or_obj is None:
-            # Subscribe to all changes
-            if not hasattr(self, "_global_callbacks"):
-                self._global_callbacks: List[AttributeChangeCallback] = []
-            self._global_callbacks.append(callback)
-        elif isinstance(field_or_obj, str):
-            # Subscribe to field name
-            if not hasattr(self, "_field_callbacks"):
-                self._field_callbacks: Dict[str, List[AttributeChangeCallback]] = {}
-            if field_or_obj not in self._field_callbacks:
-                self._field_callbacks[field_or_obj] = []
-            self._field_callbacks[field_or_obj].append(callback)
-        else:
-            # Subscribe to object
-            self.add_callback(field_or_obj, "*", callback)
-
-    def off_change(
-        self,
-        callback: AttributeChangeCallback,
-        field_or_obj: Optional[Any] = None,
-    ) -> bool:
-        """
-        Unsubscribe from change notifications.
-
-        Args:
-            callback: The callback to remove.
-            field_or_obj: Optional filter - if None, removes from global callbacks.
-                         If a string, removes from that field's callbacks.
-                         If an object, removes from that object's callbacks.
-
-        Returns True if callback was removed.
-        """
-        removed = False
-
-        # Try to remove from global callbacks
-        if hasattr(self, "_global_callbacks") and callback in self._global_callbacks:
-            self._global_callbacks.remove(callback)
-            removed = True
-
-        # Try to remove from field callbacks
-        if hasattr(self, "_field_callbacks"):
-            for field_name, callbacks in self._field_callbacks.items():
-                if callback in callbacks:
-                    callbacks.remove(callback)
-                    removed = True
-
-        # Try to remove from object callbacks
-        for obj_id, field_callbacks in self._callbacks.items():
-            for field, callbacks in field_callbacks.items():
-                if callback in callbacks:
-                    callbacks.remove(callback)
-                    removed = True
-
-        return removed
-
-    def add_callback(
-        self,
-        obj: Any,
-        field: str,
-        callback: AttributeChangeCallback,
-    ) -> None:
-        """Add a callback for changes to a specific field."""
-        obj_id = id(obj)
-        if obj_id not in self._callbacks:
-            self._callbacks[obj_id] = {}
-        if field not in self._callbacks[obj_id]:
-            self._callbacks[obj_id][field] = []
-        self._callbacks[obj_id][field].append(callback)
-
-    def remove_callback(
-        self,
-        obj: Any,
-        field: str,
-        callback: AttributeChangeCallback,
-    ) -> bool:
-        """Remove a callback. Returns True if removed."""
-        obj_id = id(obj)
-        if obj_id not in self._callbacks:
-            return False
-        if field not in self._callbacks[obj_id]:
-            return False
-        try:
-            self._callbacks[obj_id][field].remove(callback)
-            return True
-        except ValueError:
-            return False
-
-    def add_type_callback(
-        self,
-        obj_type: type,
-        callback: AttributeChangeCallback,
-    ) -> None:
-        """Add a callback for all objects of a type."""
-        if obj_type not in self._type_callbacks:
-            self._type_callbacks[obj_type] = []
-        self._type_callbacks[obj_type].append(callback)
-
-    @property
-    def in_batch(self) -> bool:
-        """Check if currently in batch mode."""
-        return self._batch_mode
-
-    def begin_batch(self) -> None:
-        """Begin batch mode - changes are collected but not notified."""
-        if self._batch_mode:
-            raise RuntimeError("Already in batch mode")
-        self._batch_mode = True
-        self._batch_changes.clear()
-
-    def end_batch(self) -> None:
-        """End batch mode and notify all collected changes."""
-        if not self._batch_mode:
-            raise RuntimeError("Not in batch mode")
-        self._batch_mode = False
-        for obj, field, old_value, new_value in self._batch_changes:
-            self._notify_callbacks(obj, field, old_value, new_value)
-        self._batch_changes.clear()
-
-    def dirty_fields(self, obj: Any) -> Set[str]:
-        """Get the set of dirty field names for an object."""
-        obj_id = id(obj)
-        if obj_id not in self._dirty:
-            return set()
-        ref, fields = self._dirty[obj_id]
-        return set(fields)
-
-    def _notify_callbacks(
-        self,
-        obj: Any,
-        field: str,
-        old_value: float,
-        new_value: float,
-    ) -> None:
-        """Notify all relevant callbacks of a change."""
-        obj_id = id(obj)
-
-        def _safe_call(callback: AttributeChangeCallback) -> None:
-            """Call a callback safely, catching any exceptions."""
-            try:
-                callback(obj, field, old_value, new_value)
-            except Exception:
-                # Silently ignore callback errors to prevent crashes
-                pass
-
-        # Global callbacks (on_change(None, callback))
-        if hasattr(self, "_global_callbacks"):
-            for callback in self._global_callbacks:
-                _safe_call(callback)
-
-        # Field-specific callbacks (on_change("field_name", callback))
-        if hasattr(self, "_field_callbacks") and field in self._field_callbacks:
-            for callback in self._field_callbacks[field]:
-                _safe_call(callback)
-
-        # Instance callbacks
-        if obj_id in self._callbacks:
-            # Check for field-specific callbacks
-            if field in self._callbacks[obj_id]:
-                for callback in self._callbacks[obj_id][field]:
-                    _safe_call(callback)
-            # Check for wildcard callbacks (subscribe to all fields for this object)
-            if "*" in self._callbacks[obj_id]:
-                for callback in self._callbacks[obj_id]["*"]:
-                    _safe_call(callback)
-
-        # Type callbacks
-        for obj_type, callbacks in self._type_callbacks.items():
-            if isinstance(obj, obj_type):
-                for callback in callbacks:
-                    _safe_call(callback)
-
-
-# Global default tracker instance
-_default_tracker = AttributeTracker()
-
-# Expose the global tracker as attribute_tracker
-attribute_tracker = _default_tracker
-
-
-# =============================================================================
-# TRACKED ATTRIBUTE DESCRIPTOR
-# =============================================================================
-
-
-class TrackedAttributeDescriptor:
-    """
-    Descriptor for tracked attributes that automatically notify changes.
-
-    Usage:
-        class Character:
-            health = TrackedAttributeDescriptor("health", default=100.0)
-    """
-
-    def __init__(
-        self,
-        name: str,
-        default: float = 0.0,
-        min_value: float = DEFAULT_ATTRIBUTE_MIN,
-        max_value: float = DEFAULT_ATTRIBUTE_MAX,
-        tracker: Optional[AttributeTracker] = None,
-    ) -> None:
-        self.name = name
-        self.default = default
-        self.min_value = min_value
-        self.max_value = max_value
-        # Use provided tracker or global default
-        self._tracker = tracker if tracker is not None else attribute_tracker
-
-    @property
-    def tracker(self) -> AttributeTracker:
-        return self._tracker
-
-    @property
-    def _storage_attr(self) -> str:
-        """Get the storage attribute name (for test compatibility)."""
-        return f"_tracked_attr_{self.name}"
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        self.attr_name = f"_tracked_{name}"
-        # Register this attribute on the owner class
-        if not hasattr(owner, "_tracked_attributes"):
-            owner._tracked_attributes = set()
-        owner._tracked_attributes.add(name)
-
-    def __get__(self, obj: Any, objtype: Optional[type] = None) -> Any:
-        if obj is None:
-            # When accessed from class, return the descriptor itself
-            return self
-        return getattr(obj, self.attr_name, self.default)
-
-    def clear_dirty(self, obj: Any) -> None:
-        """Clear the dirty flag for this attribute on the given object."""
-        self.tracker.mark_clean(obj, self.name)
-
-    def is_dirty(self, obj: Any) -> bool:
-        """Check if this attribute is dirty on the given object."""
-        return self.tracker.is_dirty(obj, self.name)
-
-    def mark_dirty(self, obj: Any) -> None:
-        """Mark this attribute as dirty on the given object."""
-        old_value = getattr(obj, self.attr_name, self.default)
-        self.tracker.mark_dirty(obj, self.name, old_value, old_value)
-
-    def __delete__(self, obj: Any) -> None:
-        """Reset attribute to default value."""
-        old_value = getattr(obj, self.attr_name, self.default)
-        setattr(obj, self.attr_name, self.default)
-        if abs(self.default - old_value) > EPSILON:
-            self.tracker.mark_dirty(obj, self.name, old_value, self.default)
-
-    def __set__(self, obj: Any, value: float) -> None:
-        old_value = getattr(obj, self.attr_name, self.default)
-        # Clamp value
-        new_value = max(self.min_value, min(self.max_value, value))
-        setattr(obj, self.attr_name, new_value)
-
-        if abs(new_value - old_value) > EPSILON:
-            self.tracker.mark_dirty(obj, self.name, old_value, new_value)
-            # Also notify Foundation tracker if available
-            if FOUNDATION_AVAILABLE and foundation_tracker is not None:
-                foundation_tracker.mark_dirty(obj, self.name, old_value, new_value)
-
-
-_NOT_SET = object()  # Sentinel for detecting unset values
-
-
-def tracked_attribute(
-    name: str,
-    default: float = 0.0,
-    min_value: Any = _NOT_SET,
-    max_value: Any = _NOT_SET,
-    tracker: Optional[AttributeTracker] = None,
-    # Support alternate naming for min/max
-    min: Optional[float] = None,
-    max: Optional[float] = None,
-) -> TrackedAttributeDescriptor:
-    """Create a tracked attribute descriptor."""
-    # Determine actual min - use 'min' alias if provided, else min_value if provided
-    if min is not None:
-        actual_min = min
-    elif min_value is not _NOT_SET:
-        actual_min = min_value
-    else:
-        # No min specified - use very low value to allow any negative
-        actual_min = -float('inf')
-
-    # Determine actual max - use 'max' alias if provided, else max_value if provided
-    if max is not None:
-        actual_max = max
-    elif max_value is not _NOT_SET:
-        actual_max = max_value
-    else:
-        # No max specified - use very high value
-        actual_max = float('inf')
-
-    return TrackedAttributeDescriptor(
-        name=name,
-        default=default,
-        min_value=actual_min,
-        max_value=actual_max,
-        tracker=tracker,
-    )
-
-
-# =============================================================================
-# TRACKED ABILITY ATTRIBUTES
-# =============================================================================
-
-
-class TrackedAbilityAttribute(TrackedAttributeDescriptor):
-    """Tracked attribute for ability-related values (cooldowns, charges, etc.)."""
-
-    def __init__(
-        self,
-        name: str,
-        default: float = 0.0,
-        min_value: float = 0.0,
-        max_value: float = DEFAULT_ATTRIBUTE_MAX,
-        ability_id: Optional[str] = None,
-    ) -> None:
-        super().__init__(name, default, min_value, max_value)
-        self.ability_id = ability_id
-
-
-class TrackedVitalAttribute:
-    """
-    Tracked attribute for vital stats (health, mana, stamina).
-
-    Can be used as a standalone object with current/maximum values,
-    apply_damage, apply_healing, and regenerate methods.
-    """
-
-    def __init__(
-        self,
-        current: float = 100.0,
-        maximum: float = 100.0,
-        regen_rate: float = 0.0,
-        tracker: Optional[AttributeTracker] = None,
-        # Legacy params for backwards compatibility
-        name: Optional[str] = None,
-        default: Optional[float] = None,
-        min_value: float = 0.0,
-        max_value: Optional[float] = None,
-    ) -> None:
-        self._current = min(current, maximum)
-        self._maximum = max(maximum, 1.0)  # Ensure at least 1.0
-        self._regen_rate = regen_rate
-        self._tracker = tracker or _default_tracker
-        self._dirty = False
-
-    @property
-    def current(self) -> float:
-        """Get the current value."""
-        return self._current
-
-    @current.setter
-    def current(self, value: float) -> None:
-        """Set the current value (clamped to 0-maximum)."""
-        old = self._current
-        self._current = max(0.0, min(value, self._maximum))
-        if abs(self._current - old) > EPSILON:
-            self._dirty = True
-
-    @property
-    def maximum(self) -> float:
-        """Get the maximum value."""
-        return self._maximum
-
-    @maximum.setter
-    def maximum(self, value: float) -> None:
-        """Set the maximum value."""
-        self._maximum = max(value, 1.0)
-        # Clamp current if now exceeds max
-        if self._current > self._maximum:
-            self._current = self._maximum
-
-    @property
-    def regen_rate(self) -> float:
-        """Get the regeneration rate per second."""
-        return self._regen_rate
-
-    @regen_rate.setter
-    def regen_rate(self, value: float) -> None:
-        """Set the regeneration rate."""
-        self._regen_rate = value
-
-    @property
-    def percent(self) -> float:
-        """Get current value as a percentage of maximum (0.0-1.0)."""
-        if self._maximum <= 0:
-            return 0.0
-        return self._current / self._maximum
-
-    def apply_damage(self, amount: float) -> float:
-        """
-        Apply damage, reducing current value.
-
-        Args:
-            amount: The damage amount (positive value).
-
-        Returns:
-            The actual damage dealt (may be less if current was lower).
-        """
-        actual = min(amount, self._current)
-        self.current = self._current - amount
-        return actual
-
-    def apply_healing(self, amount: float) -> float:
-        """
-        Apply healing, increasing current value.
-
-        Args:
-            amount: The healing amount (positive value).
-
-        Returns:
-            The actual healing done (may be less if close to max).
-        """
-        before = self._current
-        self.current = self._current + amount
-        return self._current - before
-
-    def regenerate(self, delta_time: float) -> float:
-        """
-        Apply regeneration over time.
-
-        Args:
-            delta_time: Time elapsed in seconds.
-
-        Returns:
-            The amount regenerated (positive) or degenerated (negative).
-        """
-        regen_amount = self._regen_rate * delta_time
-        if regen_amount >= 0:
-            return self.apply_healing(regen_amount)
-        else:
-            # Negative regen = degeneration
-            actual = self.apply_damage(-regen_amount)
-            return -actual if actual > 0 else regen_amount
-
-    def is_dirty(self) -> bool:
-        """Check if the value has changed since last clear."""
-        return self._dirty
-
-    def clear_dirty(self) -> None:
-        """Clear the dirty flag."""
-        self._dirty = False
-
-
-class TrackedCooldownAttribute:
-    """
-    Tracked attribute for cooldown management.
-
-    Manages ability cooldowns with duration, reduction, and tick-based updates.
-    """
-
-    def __init__(
-        self,
-        duration: float = 1.0,
-        reduction: float = 0.0,
-        tracker: Optional[AttributeTracker] = None,
-        # Legacy params for backwards compatibility
-        name: Optional[str] = None,
-        base_cooldown: Optional[float] = None,
-        min_cooldown: float = 0.0,
-    ) -> None:
-        self._duration = duration
-        self._reduction = min(0.75, max(0.0, reduction))  # Clamp 0-75%
-        self._remaining = 0.0
-        self._tracker = tracker or _default_tracker
-
-    @property
-    def duration(self) -> float:
-        """Get the base cooldown duration."""
-        return self._duration
-
-    @duration.setter
-    def duration(self, value: float) -> None:
-        """Set the base cooldown duration."""
-        self._duration = max(0.0, value)
-
-    @property
-    def reduction(self) -> float:
-        """Get the cooldown reduction percentage (0.0-0.75)."""
-        return self._reduction
-
-    @reduction.setter
-    def reduction(self, value: float) -> None:
-        """Set the cooldown reduction percentage."""
-        self._reduction = min(0.75, max(0.0, value))
-
-    @property
-    def remaining(self) -> float:
-        """Get the remaining cooldown time."""
-        return self._remaining
-
-    @property
-    def effective_duration(self) -> float:
-        """Get the effective cooldown duration after reduction."""
-        return self._duration * (1.0 - self._reduction)
-
-    @property
-    def is_ready(self) -> bool:
-        """Check if the cooldown has elapsed (ready to use)."""
-        return self._remaining <= 0.0
-
-    @property
-    def progress(self) -> float:
-        """Get the cooldown progress (0.0 = just started, 1.0 = ready)."""
-        eff_dur = self.effective_duration
-        if eff_dur <= 0:
-            return 1.0
-        if self._remaining <= 0:
-            return 1.0
-        return 1.0 - (self._remaining / eff_dur)
-
-    def start(self) -> None:
-        """Start the cooldown (set remaining to effective duration)."""
-        self._remaining = self.effective_duration
-
-    def tick(self, delta_time: float) -> bool:
-        """
-        Update the cooldown by elapsed time.
-
-        Args:
-            delta_time: Time elapsed in seconds.
-
-        Returns:
-            True if the cooldown just became ready (was active, now ready).
-        """
-        if self._remaining <= 0:
-            return False
-
-        was_active = self._remaining > 0
-        self._remaining = max(0.0, self._remaining - delta_time)
-        now_ready = self._remaining <= 0
-
-        return was_active and now_ready
-
-    def reset(self) -> None:
-        """Reset the cooldown (set remaining to 0, making it ready)."""
-        self._remaining = 0.0
-
-    def start_cooldown(self, obj: Any = None, cdr: float = 0.0) -> None:
-        """Legacy method - start the cooldown with optional reduction."""
-        self._reduction = min(0.75, cdr)
-        self.start()
-
-
-# =============================================================================
-# TRACKED ATTRIBUTE SET
+# TRACKED ATTRIBUTE SET (AttributeSet with Foundation tracking)
 # =============================================================================
 
 
 class TrackedAttributeSet(AttributeSet):
     """
-    Attribute set with Foundation tracking integration.
+    AttributeSet with Foundation Tracker integration.
 
-    Automatically tracks changes and notifies the global tracker.
+    Extends AttributeSet to automatically track all attribute changes
+    via the Foundation Tracker system, enabling:
+    - all_dirty() checks across the entire set
+    - on_change() subscriptions by attribute type
+    - Batch updates for atomic changes
     """
 
     def __init__(self, tracker: Optional[AttributeTracker] = None) -> None:
+        """Initialize with optional custom tracker."""
         super().__init__()
-        self._tracker = tracker or _default_tracker
-        self._tracked_owner: Optional[Any] = None
+        self._tracker = tracker or attribute_tracker
 
     @property
     def tracker(self) -> AttributeTracker:
-        """Get the associated tracker."""
+        """Get the attribute tracker for this set."""
         return self._tracker
 
-    def bind_to(self, owner: Any) -> "TrackedAttributeSet":
-        """Bind this attribute set to an owner object for tracking."""
-        self._tracked_owner = owner
-        return self
-
     def all_dirty(self) -> bool:
-        """Check if any attribute is dirty."""
+        """Check if any attribute in the set is dirty."""
         return self._tracker.all_dirty()
 
     def clear_all_dirty(self) -> None:
-        """Clear all dirty flags for all tracked attributes."""
-        # Clear for tracked owner if set
-        if self._tracked_owner is not None:
-            self._tracker.mark_clean(self._tracked_owner)
-        # Clear for all attributes
+        """Clear dirty flags for all attributes."""
         for attr in self._attributes.values():
             self._tracker.mark_clean(attr)
+        for derived in self._derived.values():
+            self._tracker.mark_clean(derived)
 
     def on_change(
         self,
-        field_or_obj: Optional[Any],
-        callback: Callable[[Any, str, float, float], None],
+        target: Union[None, str, Attribute],
+        callback: AttributeChangeCallback,
     ) -> None:
-        """Subscribe to change notifications."""
-        self._tracker.on_change(field_or_obj, callback)
+        """
+        Subscribe to attribute changes.
+
+        Args:
+            target: None for all, attribute name string, or Attribute instance
+            callback: Function(obj, field, old, new) to call on change
+        """
+        if isinstance(target, Attribute):
+            self._tracker.on_change(target, callback)
+        elif isinstance(target, str):
+            # Subscribe to attribute by name
+            attr = self._attributes.get(target)
+            if attr:
+                self._tracker.on_change(attr, callback)
+            else:
+                # Type-level subscription
+                self._tracker.on_change(target, callback)
+        else:
+            self._tracker.on_change(None, callback)
 
     def begin_batch(self) -> None:
-        """Begin batch mode - changes are collected but not notified."""
+        """Begin batch mode - defer all callbacks until end_batch()."""
         self._tracker.begin_batch()
 
     def end_batch(self) -> None:
-        """End batch mode and notify all collected changes."""
+        """End batch mode and fire all deferred callbacks."""
         self._tracker.end_batch()
 
     def _on_attribute_change(
         self, attr: Attribute, old_value: float, new_value: float
     ) -> None:
         """Handle attribute value changes with tracking."""
+        # Mark dirty via tracker
+        self._tracker.mark_dirty(attr, attr.name, old_value, new_value)
+
         # Call parent implementation
         super()._on_attribute_change(attr, old_value, new_value)
 
-        # Mark the attribute itself as dirty
-        self._tracker.mark_dirty(
-            attr,
-            attr.name,
-            old_value,
-            new_value,
-        )
-
-        # Also notify tracker if we have a tracked owner
-        if self._tracked_owner is not None:
-            self._tracker.mark_dirty(
-                self._tracked_owner,
-                attr.name,
-                old_value,
-                new_value,
-            )
-
 
 def create_tracked_standard_attributes(
-    owner: Optional[Any] = None,
     tracker: Optional[AttributeTracker] = None,
 ) -> TrackedAttributeSet:
     """Create a tracked attribute set with common gameplay attributes."""
-    attrs = TrackedAttributeSet(tracker)
+    attrs = TrackedAttributeSet(tracker=tracker)
 
     # Vital stats
     attrs.define("health", base_value=100.0, min_value=0.0, max_value=10000.0)
@@ -1376,7 +1288,7 @@ def create_tracked_standard_attributes(
     # Cooldown reduction
     attrs.define("cooldown_reduction", base_value=0.0, min_value=0.0, max_value=0.75)
 
-    # Derived attributes
+    # Derived: effective damage
     attrs.define_derived(
         "effective_damage",
         lambda v: v["damage"] * (1 + v["critical_chance"] * (v["critical_damage"] - 1)),
@@ -1385,6 +1297,7 @@ def create_tracked_standard_attributes(
         max_value=1000000.0,
     )
 
+    # Derived: health percentage
     attrs.define_derived(
         "health_percent",
         lambda v: (v["health"] / v["max_health"]) if v["max_health"] > 0 else 0.0,
@@ -1393,6 +1306,7 @@ def create_tracked_standard_attributes(
         max_value=1.0,
     )
 
+    # Derived: mana percentage
     attrs.define_derived(
         "mana_percent",
         lambda v: (v["mana"] / v["max_mana"]) if v["max_mana"] > 0 else 0.0,
@@ -1400,9 +1314,6 @@ def create_tracked_standard_attributes(
         min_value=0.0,
         max_value=1.0,
     )
-
-    if owner is not None:
-        attrs.bind_to(owner)
 
     return attrs
 
@@ -1412,22 +1323,27 @@ def create_tracked_standard_attributes(
 # =============================================================================
 
 __all__ = [
+    # Core attribute classes
     "Attribute",
-    "AttributeChangeCallback",
     "AttributeModifier",
     "AttributeModifierHandle",
     "AttributeSet",
-    "AttributeTracker",
     "DerivedAttribute",
-    "EPSILON",
-    "FOUNDATION_AVAILABLE",
-    "TrackedAbilityAttribute",
-    "TrackedAttributeDescriptor",
-    "TrackedAttributeSet",
-    "TrackedCooldownAttribute",
-    "TrackedVitalAttribute",
-    "attribute_tracker",
     "create_standard_attributes",
-    "create_tracked_standard_attributes",
+    # Foundation Tracker integration
+    "AttributeTracker",
+    "attribute_tracker",
+    "TrackedAttributeDescriptor",
     "tracked_attribute",
+    "AttributeChangeCallback",
+    # Tracked ability attributes
+    "TrackedAbilityAttribute",
+    "TrackedVitalAttribute",
+    "TrackedCooldownAttribute",
+    # Tracked attribute set
+    "TrackedAttributeSet",
+    "create_tracked_standard_attributes",
+    # Constants for availability checks
+    "FOUNDATION_AVAILABLE",
+    "TRINITY_DESCRIPTORS_AVAILABLE",
 ]

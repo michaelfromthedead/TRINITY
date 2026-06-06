@@ -879,9 +879,18 @@ class TestVoiceManager:
     def test_virtual_voices(self, voice_manager, audio_clip):
         """Test virtual voice creation when all slots are filled with higher priority."""
         # Fill all slots with critical priority (can't be stolen by NORMAL)
+        # Use unique clips to avoid per-sound instance limit (MAX_INSTANCES_PER_SOUND=4)
         for i in range(8):
             source = AudioSource(id=f"critical_{i}")
-            source.set_clip(audio_clip)
+            unique_clip = AudioClip(
+                id=f"clip_{i}",
+                name=f"clip_{i}",
+                category=AudioCategory.SFX,
+                pool_type=MemoryPoolType.RESIDENT,
+            )
+            unique_clip.metadata = audio_clip.metadata
+            unique_clip.load_state = ClipLoadState.LOADED
+            source.set_clip(unique_clip)
             source.priority = PRIORITY_CRITICAL
             voice_manager.allocate_voice(source)
 

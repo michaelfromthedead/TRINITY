@@ -36,6 +36,126 @@ from engine.gameplay.constants import (
     UTILITY_LOGISTIC_STEEPNESS,
 )
 
+# Import AI Registry decorators for runtime registration
+from engine.gameplay.ai.ai_registry import (
+    behavior_tree,
+    bt_node,
+    goap_action,
+    consideration,
+    get_all_behavior_trees,
+    get_all_bt_nodes,
+    get_bt_nodes_by_type,
+    get_all_goap_actions,
+    get_goap_actions_by_effect,
+    get_goap_actions_by_precondition,
+    get_all_considerations,
+    get_considerations_by_curve,
+    create_bt_node_from_registry,
+    create_goap_action_from_registry,
+    create_consideration_from_registry,
+    TAG_BEHAVIOR_TREE,
+    TAG_BT_NODE,
+    TAG_GOAP_ACTION,
+    TAG_CONSIDERATION,
+)
+
+# Import AI Debug decorator and utilities
+from engine.gameplay.ai.ai_debug import (
+    # Main decorator
+    ai_debug,
+    # Tag constant
+    TAG_AI_DEBUG,
+    # Data classes
+    BTNodeDebugStatus,
+    BTNodeDebugInfo,
+    BTDebugState,
+    PerceptionRange,
+    PerceptionDebugState,
+    InfluenceCell,
+    InfluenceDebugState,
+    AIDebugConfig,
+    AIDebugData,
+    # Storage
+    AIDebugStorage,
+    # Data API
+    get_debug_data,
+    set_debug_data,
+    remove_debug_data,
+    get_all_debug_data,
+    clear_all_debug_data,
+    get_debug_data_count,
+    # Factory functions
+    create_debug_data,
+    create_bt_debug_state,
+    create_perception_debug_state,
+    create_influence_debug_state,
+    # Query helpers
+    get_all_ai_debug_configs,
+    get_enabled_debug_configs,
+    get_debug_configs_with_bt,
+    get_debug_configs_with_perception,
+    get_debug_configs_with_influence,
+    # Runtime control
+    enable_debug,
+    disable_debug,
+    is_debug_enabled,
+    toggle_debug,
+    get_debug_config,
+    # Visualization integration
+    WireframeCone,
+    BTNodeVisualization,
+    generate_perception_wireframes,
+    generate_bt_visualization,
+    # Color defaults
+    DEFAULT_BT_NODE_COLORS,
+    DEFAULT_PERCEPTION_COLORS,
+    DEFAULT_INFLUENCE_COLORS,
+)
+
+# Import Blackboard Registry decorators and helpers
+from engine.gameplay.ai.blackboard import (
+    blackboard as blackboard_decorator,
+    get_all_blackboards,
+    get_blackboards_by_scope,
+    get_blackboard_metadata,
+    create_blackboard_from_registry,
+    clear_blackboard_registry,
+    TAG_BLACKBOARD,
+    VALID_SCOPES as BLACKBOARD_VALID_SCOPES,
+)
+
+# Import Utility AI Registry decorators and helpers
+from engine.gameplay.ai.utility_ai import (
+    utility_ai,
+    get_all_utility_ai,
+    get_utility_ai_by_id,
+    get_utility_ai_by_update_rate,
+    create_utility_ai_from_registry,
+    TAG_UTILITY_AI,
+)
+
+# Import Perception Registry decorators and helpers
+from engine.gameplay.ai.perception_registry import (
+    perception,
+    sense,
+    get_all_perception_configs,
+    get_perception_configs_by_sense,
+    get_all_sense_configs,
+    get_sense_configs_by_type,
+    get_perception_by_name,
+    get_sense_by_name,
+    PerceptionConfig,
+    SenseConfig,
+    create_perception_config_from_registry,
+    create_sense_config_from_registry,
+    TAG_PERCEPTION,
+    TAG_SENSE,
+    VALID_SENSE_TYPES,
+    SENSE_TYPE_MAP,
+    DEFAULT_RANGES,
+    DEFAULT_DECAY_TIMES,
+)
+
 if TYPE_CHECKING:
     from engine.gameplay.entity import Actor
 
@@ -1142,55 +1262,6 @@ class CombatAI:
         self._current_target = None
 
 
-# Import decorators and registry functions from submodules
-from .behavior_tree import behavior_tree
-from .ai_registry import bt_node, goap_action, consideration
-from .blackboard import blackboard as blackboard_decorator
-from .utility_ai import utility_ai
-
-
-def perception(
-    sense: Optional[str] = None,
-    name: Optional[str] = None,
-    sight_range: float = 50.0,
-    hearing_range: float = 30.0,
-):
-    """Decorator to register a perception configuration."""
-    def decorator(cls):
-        cls._perception = True
-        cls._perception_name = name or cls.__name__
-        cls._perception_sense = sense
-        cls._perception_sight_range = sight_range
-        cls._perception_hearing_range = hearing_range
-        return cls
-    return decorator
-
-
-def sense(
-    sense_type: str,
-    range: float = 50.0,
-):
-    """Decorator to register a sense configuration."""
-    def decorator(cls):
-        cls._sense = True
-        cls._sense_type = sense_type
-        cls._sense_range = range
-        return cls
-    return decorator
-
-
-def ai_debug(
-    enabled: bool = True,
-    log_decisions: bool = False,
-):
-    """Decorator to enable AI debugging on a class."""
-    def decorator(cls):
-        cls._ai_debug = enabled
-        cls._ai_debug_log_decisions = log_decisions
-        return cls
-    return decorator
-
-
 __all__ = [
     # Blackboard
     "BlackboardKey",
@@ -1230,14 +1301,121 @@ __all__ = [
     "CombatBehavior",
     "ThreatAssessment",
     "CombatAI",
-    # Decorators
+    # AI Registry - Decorators
     "behavior_tree",
     "bt_node",
-    "blackboard_decorator",
     "goap_action",
     "consideration",
+    # AI Registry - Query helpers
+    "get_all_behavior_trees",
+    "get_all_bt_nodes",
+    "get_bt_nodes_by_type",
+    "get_all_goap_actions",
+    "get_goap_actions_by_effect",
+    "get_goap_actions_by_precondition",
+    "get_all_considerations",
+    "get_considerations_by_curve",
+    # AI Registry - Factory functions
+    "create_bt_node_from_registry",
+    "create_goap_action_from_registry",
+    "create_consideration_from_registry",
+    # AI Registry - Constants
+    "TAG_BEHAVIOR_TREE",
+    "TAG_BT_NODE",
+    "TAG_GOAP_ACTION",
+    "TAG_CONSIDERATION",
+    # Blackboard Registry - Decorator
+    "blackboard_decorator",
+    # Blackboard Registry - Query helpers
+    "get_all_blackboards",
+    "get_blackboards_by_scope",
+    "get_blackboard_metadata",
+    # Blackboard Registry - Factory functions
+    "create_blackboard_from_registry",
+    "clear_blackboard_registry",
+    # Blackboard Registry - Constants
+    "TAG_BLACKBOARD",
+    "BLACKBOARD_VALID_SCOPES",
+    # Utility AI Registry - Decorator
     "utility_ai",
+    # Utility AI Registry - Query helpers
+    "get_all_utility_ai",
+    "get_utility_ai_by_id",
+    "get_utility_ai_by_update_rate",
+    # Utility AI Registry - Factory function
+    "create_utility_ai_from_registry",
+    # Utility AI Registry - Constants
+    "TAG_UTILITY_AI",
+    # Perception Registry - Decorators
     "perception",
     "sense",
+    # Perception Registry - Query helpers
+    "get_all_perception_configs",
+    "get_perception_configs_by_sense",
+    "get_all_sense_configs",
+    "get_sense_configs_by_type",
+    "get_perception_by_name",
+    "get_sense_by_name",
+    # Perception Registry - Data classes
+    "PerceptionConfig",
+    "SenseConfig",
+    # Perception Registry - Factory functions
+    "create_perception_config_from_registry",
+    "create_sense_config_from_registry",
+    # Perception Registry - Constants
+    "TAG_PERCEPTION",
+    "TAG_SENSE",
+    "VALID_SENSE_TYPES",
+    "SENSE_TYPE_MAP",
+    "DEFAULT_RANGES",
+    "DEFAULT_DECAY_TIMES",
+    # AI Debug - Main decorator
     "ai_debug",
+    # AI Debug - Tag constant
+    "TAG_AI_DEBUG",
+    # AI Debug - Data classes
+    "BTNodeDebugStatus",
+    "BTNodeDebugInfo",
+    "BTDebugState",
+    "PerceptionRange",
+    "PerceptionDebugState",
+    "InfluenceCell",
+    "InfluenceDebugState",
+    "AIDebugConfig",
+    "AIDebugData",
+    # AI Debug - Storage
+    "AIDebugStorage",
+    # AI Debug - Data API
+    "get_debug_data",
+    "set_debug_data",
+    "remove_debug_data",
+    "get_all_debug_data",
+    "clear_all_debug_data",
+    "get_debug_data_count",
+    # AI Debug - Factory functions
+    "create_debug_data",
+    "create_bt_debug_state",
+    "create_perception_debug_state",
+    "create_influence_debug_state",
+    # AI Debug - Query helpers
+    "get_all_ai_debug_configs",
+    "get_enabled_debug_configs",
+    "get_debug_configs_with_bt",
+    "get_debug_configs_with_perception",
+    "get_debug_configs_with_influence",
+    # AI Debug - Runtime control
+    "enable_debug",
+    "disable_debug",
+    "is_debug_enabled",
+    "toggle_debug",
+    "get_debug_config",
+    # AI Debug - Visualization integration
+    "WireframeCone",
+    "BTNodeVisualization",
+    "generate_perception_wireframes",
+    "generate_bt_visualization",
+    # AI Debug - Color defaults
+    "DEFAULT_BT_NODE_COLORS",
+    "DEFAULT_PERCEPTION_COLORS",
+    "DEFAULT_INFLUENCE_COLORS",
 ]

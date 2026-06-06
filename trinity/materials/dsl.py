@@ -1,1077 +1,1271 @@
-"""Material DSL classes for TRINITY engine.
+"""Material DSL: Pythonic surface shader authoring with WGSL codegen.
 
-Provides the base classes and metaclass for defining materials with
-texture bindings that compile to WGSL shaders.
+This module provides the core abstractions for writing material surface shaders
+in Python that compile to WGSL. The key components are:
+
+- MaterialMeta: Metaclass that extracts surface() method source and compiles to WGSL
+- SurfaceContext: Input proxy providing texture sampling and shader inputs
+- SurfaceOutput: Output proxy for PBR material parameters
+- Material: Base class for user-defined materials
+- surface: Decorator marking the shader entry point
+
+Example usage::
+
+    class GoldMaterial(Material, metaclass=MaterialMeta):
+        albedo_texture = Texture2D(default="white", srgb=True)
+
+        @surface
+        def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
+            out.base_color = ctx.sample(self.albedo_texture, ctx.uv())
+            out.metallic = 0.9
+            out.roughness = 0.3
+
+The MaterialMeta metaclass will:
+1. Extract the surface() method source via inspect
+2. Parse it to a Python AST
+3. Walk the AST to translate Python expressions to WGSL
+4. Store the compiled WGSL on the class as _wgsl_source
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+import ast
+import inspect
+import textwrap
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional, Tuple, TypeVar, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from trinity.materials.textures import TextureDescriptor
+    from trinity.materials.textures import Texture2D, TextureCube
+
+
+# =============================================================================
+# WGSL TYPE MARKERS (local copies for standalone operation)
+# =============================================================================
 
 
 class Vec2:
-    """2D vector for material shader parameters."""
-
-    __slots__ = ('x', 'y')
+    """WGSL vec2<f32> proxy for material DSL."""
+    _wgsl_name = "vec2<f32>"
 
     def __init__(self, x: float = 0.0, y: float = 0.0):
-        self.x = float(x)
-        self.y = float(y)
+        self.x = x
+        self.y = y
 
     def __repr__(self) -> str:
         return f"Vec2({self.x}, {self.y})"
 
-    def __iter__(self):
-        return iter((self.x, self.y))
-
-    def __getitem__(self, index: int) -> float:
-        return (self.x, self.y)[index]
-
-    def to_tuple(self) -> Tuple[float, float]:
-        return (self.x, self.y)
-
 
 class Vec3:
-    """3D vector for material shader parameters."""
-
-    __slots__ = ('x', 'y', 'z')
+    """WGSL vec3<f32> proxy for material DSL."""
+    _wgsl_name = "vec3<f32>"
 
     def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0):
-        self.x = float(x)
-        self.y = float(y)
-        self.z = float(z)
+        self.x = x
+        self.y = y
+        self.z = z
 
     def __repr__(self) -> str:
         return f"Vec3({self.x}, {self.y}, {self.z})"
 
-    def __iter__(self):
-        return iter((self.x, self.y, self.z))
-
-    def __getitem__(self, index: int) -> float:
-        return (self.x, self.y, self.z)[index]
-
-    def to_tuple(self) -> Tuple[float, float, float]:
-        return (self.x, self.y, self.z)
-
 
 class Vec4:
-    """4D vector for material shader parameters."""
-
-    __slots__ = ('x', 'y', 'z', 'w')
+    """WGSL vec4<f32> proxy for material DSL."""
+    _wgsl_name = "vec4<f32>"
 
     def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, w: float = 1.0):
-        self.x = float(x)
-        self.y = float(y)
-        self.z = float(z)
-        self.w = float(w)
+        self.x = x
+        self.y = y
+        self.z = z
+        self.w = w
 
     def __repr__(self) -> str:
         return f"Vec4({self.x}, {self.y}, {self.z}, {self.w})"
 
-    def __iter__(self):
-        return iter((self.x, self.y, self.z, self.w))
 
-    def __getitem__(self, index: int) -> float:
-        return (self.x, self.y, self.z, self.w)[index]
-
-    def to_tuple(self) -> Tuple[float, float, float, float]:
-        return (self.x, self.y, self.z, self.w)
+# =============================================================================
+# SURFACE CONTEXT: Shader input proxy
+# =============================================================================
 
 
-class SurfaceOutput:
-    """Output structure for material surface shaders.
-
-    Provides aliases for backwards compatibility:
-    - albedo -> base_color (deprecated)
-    - emission -> emissive (deprecated)
-    """
-
-    def __init__(self):
-        self._base_color = Vec3(1.0, 1.0, 1.0)
-        self.metallic = 0.0
-        self.roughness = 0.5
-        self._emissive = Vec3(0.0, 0.0, 0.0)
-        self.alpha = 1.0
-        self.normal = (0.0, 0.0, 1.0)
-        self.ao = 1.0
-        self.clearcoat = 0.0
-        self.clearcoat_roughness = 0.0
-        self.subsurface = 0.0
-        self.specular = 0.5
-        self.anisotropy = 0.0
-        self.sheen = 0.0
-        self.sheen_tint = 0.0
-        self.transmission = 0.0
-        self.ior = 1.5
-        self.thickness = 0.0
-        self.ambient_occlusion = 1.0
-        self.iridescence = 0.0
-        self.iridescence_ior = 1.3
-
-    @property
-    def base_color(self) -> Vec3:
-        """Primary surface color."""
-        return self._base_color
-
-    @base_color.setter
-    def base_color(self, value):
-        if isinstance(value, Vec3):
-            self._base_color = value
-        elif isinstance(value, (tuple, list)) and len(value) >= 3:
-            self._base_color = Vec3(value[0], value[1], value[2])
-        else:
-            self._base_color = Vec3(float(value), float(value), float(value))
-
-    @property
-    def albedo(self) -> Vec3:
-        """Alias for base_color (deprecated)."""
-        return self._base_color
-
-    @albedo.setter
-    def albedo(self, value):
-        """Set base_color via albedo alias."""
-        if isinstance(value, Vec3):
-            self._base_color = value
-        elif isinstance(value, (tuple, list)) and len(value) >= 3:
-            self._base_color = Vec3(value[0], value[1], value[2])
-        else:
-            self._base_color = Vec3(float(value), float(value), float(value))
-
-    @property
-    def emissive(self) -> Vec3:
-        """Emissive color for glow/light emission."""
-        return self._emissive
-
-    @emissive.setter
-    def emissive(self, value):
-        if isinstance(value, Vec3):
-            self._emissive = value
-        elif isinstance(value, (tuple, list)) and len(value) >= 3:
-            self._emissive = Vec3(value[0], value[1], value[2])
-        else:
-            self._emissive = Vec3(float(value), float(value), float(value))
-
-    @property
-    def emission(self) -> Vec3:
-        """Alias for emissive (deprecated)."""
-        return self._emissive
-
-    @emission.setter
-    def emission(self, value):
-        """Set emissive via emission alias."""
-        if isinstance(value, Vec3):
-            self._emissive = value
-        elif isinstance(value, (tuple, list)) and len(value) >= 3:
-            self._emissive = Vec3(value[0], value[1], value[2])
-        else:
-            self._emissive = Vec3(float(value), float(value), float(value))
-
-
+@dataclass
 class SurfaceContext:
-    """Provides sampling functions available in material surface shaders."""
+    """Proxy for shader input values available in material surface shaders.
 
-    def __init__(self):
-        self.position = Vec3(0.0, 0.0, 0.0)
-        self.normal = Vec3(0.0, 1.0, 0.0)
-        self.uv = Vec2(0.0, 0.0)
-        self.vertex_color = Vec4(1.0, 1.0, 1.0, 1.0)
-        self._time = 0.0
+    Provides access to vertex attributes, texture sampling, and built-in
+    functions. All methods generate corresponding WGSL code when invoked
+    during AST translation.
 
-    def sample(self, texture: Any, uv: tuple) -> Vec4:
-        """Sample a texture at the given UV coordinates."""
-        return Vec4(1.0, 1.0, 1.0, 1.0)
+    Attributes:
+        position: World-space position (vec3<f32>)
+        normal: World-space normal (vec3<f32>)
+        tangent: World-space tangent (vec3<f32>)
+        uv: Primary UV coordinates (vec2<f32>)
+        vertex_color: Vertex color (vec4<f32>)
+        time: Current time in seconds (f32)
+    """
+    position: Vec3 = field(default_factory=Vec3)
+    normal: Vec3 = field(default_factory=lambda: Vec3(0.0, 0.0, 1.0))
+    tangent: Vec3 = field(default_factory=lambda: Vec3(1.0, 0.0, 0.0))
+    uv: Vec2 = field(default_factory=Vec2)
+    vertex_color: Vec4 = field(default_factory=lambda: Vec4(1.0, 1.0, 1.0, 1.0))
+    time: float = 0.0
 
-    def sample_cube(self, texture: Any, direction: tuple) -> Vec4:
-        """Sample a cubemap texture in the given direction."""
-        return Vec4(0.0, 0.0, 0.0, 1.0)
+    # Additional inputs
+    view_direction: Vec3 = field(default_factory=lambda: Vec3(0.0, 0.0, 1.0))
+    screen_uv: Vec2 = field(default_factory=Vec2)
 
-    def noise(self, pos: tuple, scale: float = 1.0) -> float:
-        """Generate procedural noise at the given position."""
-        return 0.0
+    def sample(self, texture: Any, uv: Tuple[float, float] | Vec2) -> Vec4:
+        """Sample a 2D texture at the given UV coordinates.
 
-    def texture(self, path: str, uv: tuple) -> tuple:
-        """Sample a texture by path (deprecated, use sample())."""
-        return (1.0, 1.0, 1.0, 1.0)
-
-    def world_position(self) -> Vec3:
-        """Get world-space position."""
-        return Vec3(self.position.x, self.position.y, self.position.z)
-
-    def world_normal(self) -> Vec3:
-        """Get world-space normal."""
-        return Vec3(self.normal.x, self.normal.y, self.normal.z)
-
-    def world_tangent(self) -> Vec3:
-        """Get world-space tangent."""
-        return Vec3(1.0, 0.0, 0.0)
-
-    def get_uv(self) -> Vec2:
-        """Get UV coordinates."""
-        return Vec2(self.uv.x, self.uv.y)
-
-    def get_vertex_color(self) -> Vec4:
-        """Get vertex color."""
-        return Vec4(self.vertex_color.x, self.vertex_color.y,
-                    self.vertex_color.z, self.vertex_color.w)
-
-    def get_time(self) -> float:
-        """Get shader time."""
-        return self._time
-
-
-def surface(func):
-    """Decorator: marks a method as the material surface shader entry point."""
-    func._is_surface = True
-    return func
-
-
-class Material:
-    """Base class for user-defined materials. Override surface()."""
-
-    # Set by MaterialMeta during class creation
-    _texture_bindings: Dict[str, Any] = {}
-    _wgsl_source: str = ""
-    _compilation_error: Optional[str] = None
-
-    def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
-        pass
-
-    @classmethod
-    def has_texture(cls, name: str) -> bool:
-        """Check if this material has a texture with the given name.
+        Maps to WGSL: textureSample(texture, sampler, uv)
 
         Args:
-            name: Texture binding name.
+            texture: Texture2D descriptor bound to the material
+            uv: UV coordinates as tuple or Vec2
 
         Returns:
-            True if the texture exists, False otherwise.
+            Sampled color as Vec4 (RGBA)
         """
-        return name in cls._texture_bindings
+        # Runtime stub - actual sampling happens in WGSL
+        return Vec4(1.0, 1.0, 1.0, 1.0)
 
-    @classmethod
-    def get_textures(cls) -> Dict[str, Any]:
-        """Get all texture bindings for this material.
+    def sample_cube(self, texture: Any, direction: Tuple[float, float, float] | Vec3) -> Vec4:
+        """Sample a cubemap texture in the given direction.
+
+        Maps to WGSL: textureSample(texture, sampler, direction)
+
+        Args:
+            texture: TextureCube descriptor bound to the material
+            direction: Sampling direction as tuple or Vec3
 
         Returns:
-            Dictionary mapping texture names to TextureDescriptor objects.
+            Sampled color as Vec4 (RGBA)
         """
-        return dict(cls._texture_bindings)
+        # Runtime stub - actual sampling happens in WGSL
+        return Vec4(1.0, 1.0, 1.0, 1.0)
 
-    @classmethod
-    def get_inherited_textures(cls) -> Dict[str, Any]:
-        """Get texture bindings inherited from parent classes.
+    def sample_level(self, texture: Any, uv: Tuple[float, float] | Vec2, level: float) -> Vec4:
+        """Sample a 2D texture at a specific mip level.
+
+        Maps to WGSL: textureSampleLevel(texture, sampler, uv, level)
+
+        Args:
+            texture: Texture2D descriptor bound to the material
+            uv: UV coordinates as tuple or Vec2
+            level: Mip level to sample (0 = base level)
 
         Returns:
-            Dictionary of inherited textures (not defined in this class).
+            Sampled color as Vec4 (RGBA)
         """
-        own_textures = getattr(cls, '_own_textures', set())
-        return {
-            name: tex
-            for name, tex in cls._texture_bindings.items()
-            if name not in own_textures
-        }
+        return Vec4(1.0, 1.0, 1.0, 1.0)
 
-    @classmethod
-    def get_own_textures(cls) -> Dict[str, Any]:
-        """Get texture bindings defined in this class (not inherited).
+    def noise(self, pos: Tuple[float, ...] | Vec2 | Vec3, scale: float = 1.0) -> float:
+        """Generate procedural noise at the given position.
+
+        Maps to WGSL: noise(pos * scale)
+
+        Args:
+            pos: Position (2D or 3D) to sample noise
+            scale: Noise frequency multiplier
 
         Returns:
-            Dictionary of textures defined directly on this class.
+            Noise value in range [-1, 1]
         """
-        own_textures = getattr(cls, '_own_textures', set())
-        return {
-            name: tex
-            for name, tex in cls._texture_bindings.items()
-            if name in own_textures
-        }
+        return 0.0
 
-    @classmethod
-    def has_super_call(cls) -> bool:
-        """Check if this material's surface method calls super().surface().
+    def world_position(self) -> Vec3:
+        """Get the world-space position of the current fragment.
 
-        Returns:
-            True if super().surface() is called, False otherwise.
+        Maps to WGSL: in.world_position
         """
-        return getattr(cls, '_has_super_call', False)
+        return self.position
 
-    @classmethod
-    def get_parent_material(cls) -> Optional[type]:
-        """Get the parent material class if this material inherits from one.
+    def world_normal(self) -> Vec3:
+        """Get the world-space normal of the current fragment.
 
-        Returns:
-            Parent Material class or None if no parent.
+        Maps to WGSL: in.world_normal
         """
-        return getattr(cls, '_parent_material', None)
+        return self.normal
 
-    @classmethod
-    def get_inheritance_chain(cls) -> list:
-        """Get the inheritance chain of material classes.
+    def world_tangent(self) -> Vec3:
+        """Get the world-space tangent of the current fragment.
 
-        Returns:
-            List of material classes from this class up to (but not including)
-            the base Material class, in order from child to parent.
+        Maps to WGSL: in.world_tangent
         """
-        chain = [cls]
-        current = cls
-        while True:
-            parent = getattr(current, '_parent_material', None)
-            if parent is None:
-                break
-            # Stop if we've reached the base Material class
-            if parent.__name__ == 'Material' and not hasattr(parent, '_surface_method'):
-                break
-            chain.append(parent)
-            current = parent
-        return chain
+        return self.tangent
+
+    def get_uv(self) -> Vec2:
+        """Get the primary UV coordinates.
+
+        Maps to WGSL: in.uv
+        """
+        return self.uv
+
+    def get_vertex_color(self) -> Vec4:
+        """Get the vertex color.
+
+        Maps to WGSL: in.vertex_color
+        """
+        return self.vertex_color
+
+    def get_time(self) -> float:
+        """Get the current time in seconds (elapsed since animation start).
+
+        Maps to WGSL: uniforms.elapsed_seconds
+
+        Use this for time-based material animations like UV scrolling,
+        color pulsing, or emission flickering.
+        """
+        return self.time
+
+    def get_delta_time(self) -> float:
+        """Get the delta time since last frame in seconds.
+
+        Maps to WGSL: uniforms.delta_time
+
+        Use this for frame-rate independent animations.
+        """
+        return 0.016  # Default ~60 FPS
+
+    def get_frame_count(self) -> int:
+        """Get the current frame count.
+
+        Maps to WGSL: uniforms.frame_count
+        """
+        return 0
+
+    def get_view_direction(self) -> Vec3:
+        """Get the view direction (fragment to camera).
+
+        Maps to WGSL: normalize(uniforms.camera_position - in.world_position)
+        """
+        return self.view_direction
 
 
-class MaterialMeta(type):
-    """Metaclass for Material classes that collects texture bindings and compiles WGSL.
+# =============================================================================
+# SURFACE OUTPUT: Shader output proxy
+# =============================================================================
 
-    When a class is defined with `metaclass=MaterialMeta`, this metaclass:
-    1. Collects all TextureDescriptor attributes (Texture2D, TextureCube)
-    2. Assigns binding indices to each texture
-    3. Generates WGSL binding declarations
-    4. Compiles the surface() method to WGSL
+
+@dataclass
+class SurfaceOutput:
+    """Proxy for shader output values in material surface shaders.
+
+    Represents the PBR material parameters that the surface shader produces.
+    All fields map directly to the PBROutput WGSL struct.
+
+    Attributes:
+        base_color: Albedo color (vec3<f32>), default white
+        metallic: Metallic factor (f32), 0.0 = dielectric, 1.0 = metal
+        roughness: Roughness factor (f32), 0.0 = smooth, 1.0 = rough
+        normal: Tangent-space normal (vec3<f32>), default up
+        emissive: Emissive color (vec3<f32>), default black
+        ao: Ambient occlusion (f32), 0.0 = fully occluded, 1.0 = none
+        alpha: Opacity (f32), for translucent materials
+        specular: Specular intensity (f32), for dielectrics
+        subsurface: Subsurface scattering factor (f32)
+        subsurface_color: Subsurface scattering color (vec3<f32>)
+        clearcoat: Clear coat intensity (f32)
+        clearcoat_roughness: Clear coat roughness (f32)
+        anisotropy: Anisotropy strength (f32)
+        anisotropy_direction: Anisotropy direction in tangent space (vec2<f32>)
+        sheen: Sheen intensity (f32)
+        sheen_color: Sheen tint color (vec3<f32>)
+        transmission: Transmission factor (f32) for thin-walled transparency
+        ior: Index of refraction (f32) for transmission
+    """
+    # Core PBR parameters
+    base_color: Vec3 = field(default_factory=lambda: Vec3(1.0, 1.0, 1.0))
+    metallic: float = 0.0
+    roughness: float = 0.5
+    normal: Vec3 = field(default_factory=lambda: Vec3(0.0, 0.0, 1.0))
+    emissive: Vec3 = field(default_factory=lambda: Vec3(0.0, 0.0, 0.0))
+    ao: float = 1.0
+    alpha: float = 1.0
+
+    # Extended PBR parameters
+    specular: float = 0.5
+    subsurface: float = 0.0
+    subsurface_color: Vec3 = field(default_factory=lambda: Vec3(1.0, 1.0, 1.0))
+    clearcoat: float = 0.0
+    clearcoat_roughness: float = 0.03
+    anisotropy: float = 0.0
+    anisotropy_direction: Vec2 = field(default_factory=lambda: Vec2(1.0, 0.0))
+    sheen: float = 0.0
+    sheen_color: Vec3 = field(default_factory=lambda: Vec3(1.0, 1.0, 1.0))
+    transmission: float = 0.0
+    ior: float = 1.5
+
+    # Legacy aliases (deprecated, for backward compatibility)
+    @property
+    def albedo(self) -> Tuple[float, float, float]:
+        """Deprecated: Use base_color instead."""
+        return (self.base_color.x, self.base_color.y, self.base_color.z)
+
+    @albedo.setter
+    def albedo(self, value: Tuple[float, float, float] | Vec3) -> None:
+        """Deprecated: Use base_color instead."""
+        if isinstance(value, Vec3):
+            self.base_color = value
+        else:
+            self.base_color = Vec3(value[0], value[1], value[2])
+
+    @property
+    def emission(self) -> Tuple[float, float, float]:
+        """Deprecated: Use emissive instead."""
+        return (self.emissive.x, self.emissive.y, self.emissive.z)
+
+    @emission.setter
+    def emission(self, value: Tuple[float, float, float] | Vec3) -> None:
+        """Deprecated: Use emissive instead."""
+        if isinstance(value, Vec3):
+            self.emissive = value
+        else:
+            self.emissive = Vec3(value[0], value[1], value[2])
+
+
+# =============================================================================
+# SURFACE DECORATOR
+# =============================================================================
+
+
+def surface(func: Callable) -> Callable:
+    """Decorator: marks a method as the material surface shader entry point.
+
+    The decorated method will be extracted and compiled to WGSL when the
+    class is created. The method signature must be:
+
+        def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
 
     Example::
 
         class MyMaterial(Material, metaclass=MaterialMeta):
-            albedo = Texture2D(default="white", srgb=True)
-            normal = Texture2D(default="flat_normal")
-
             @surface
             def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
-                out.base_color = Vec3(1.0, 1.0, 1.0)
-
-    After class creation:
-        - MyMaterial._texture_bindings = {"albedo": <Texture2D>, "normal": <Texture2D>}
-        - MyMaterial._wgsl_source = "// Generated WGSL..."
-        - MyMaterial._compilation_error = None (or error message if failed)
+                out.base_color = Vec3(1.0, 0.5, 0.2)
+                out.roughness = 0.4
     """
+    func._is_surface = True
+    return func
 
-    # Registry of all materials created with this metaclass
-    _registry: Dict[str, type] = {}
 
-    @classmethod
-    def get_material(mcs, name: str) -> Optional[type]:
-        """Get a material class by name.
-
-        Args:
-            name: Material class name.
-
-        Returns:
-            Material class or None if not found.
-        """
-        return mcs._registry.get(name)
-
-    @classmethod
-    def all_materials(mcs) -> list:
-        """Get all registered material classes.
-
-        Returns:
-            List of all registered Material subclasses.
-        """
-        return list(mcs._registry.values())
-
-    def __new__(
-        mcs,
-        name: str,
-        bases: Tuple[type, ...],
-        namespace: Dict[str, Any],
-        **kwargs: Any
-    ) -> MaterialMeta:
-        # Collect texture descriptors from namespace
-        texture_bindings: Dict[str, Any] = {}
-
-        # Also inherit texture bindings from parent classes (respecting MRO)
-        # Process bases in REVERSE order so first base wins (MRO precedence)
-        for base in reversed(bases):
-            if hasattr(base, '_texture_bindings'):
-                texture_bindings.update(base._texture_bindings)
-
-        # Find new texture descriptors in this class
-        own_textures: set = set()
-        binding_index = len(texture_bindings) * 2 + 1  # Start after inherited bindings
-        for attr_name, attr_value in namespace.items():
-            if hasattr(attr_value, '_is_texture_descriptor') and attr_value._is_texture_descriptor:
-                # Assign binding index (2 bindings per texture: texture + sampler)
-                attr_value.binding_index = binding_index
-                attr_value._name = attr_name
-                texture_bindings[attr_name] = attr_value
-                own_textures.add(attr_name)
-                binding_index += 2
-
-        # Create the class
-        cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-
-        # Attach texture bindings
-        cls._texture_bindings = texture_bindings
-        cls._own_textures = own_textures
-
-        # Store reference to surface method - check namespace first, then inherit from parents
-        surface_method = namespace.get('surface')
-        parent_material = None
-        inherited_surface = False
-
-        if surface_method is not None:
-            cls._surface_method = surface_method
-            # Find parent material for super() calls
-            for base in bases:
-                if hasattr(base, '_surface_method') and base._surface_method is not None:
-                    parent_material = base
-                    break
-        else:
-            # Try to inherit surface method from parent classes
-            for base in bases:
-                if hasattr(base, '_surface_method') and base._surface_method is not None:
-                    cls._surface_method = base._surface_method
-                    surface_method = base._surface_method
-                    parent_material = base
-                    inherited_surface = True
-                    break
-            else:
-                cls._surface_method = None
-
-        # Track parent material reference for super() calls
-        cls._parent_material = parent_material
-
-        # Register the material
-        mcs._registry[name] = cls
-
-        # Generate WGSL source
-        try:
-            import ast
-            import inspect
-            import textwrap
-
-            # If we inherited surface without overriding, use parent's WGSL
-            if inherited_surface and parent_material is not None:
-                cls._wgsl_source = parent_material._wgsl_source
-                cls._has_super_call = getattr(parent_material, '_has_super_call', False)
-                cls._used_builtins = getattr(parent_material, '_used_builtins', set())
-                cls._compilation_error = None
-            else:
-                wgsl_parts = []
-
-                # Generate bindings for OWN textures only (not inherited)
-                for tex_name in own_textures:
-                    tex_desc = texture_bindings[tex_name]
-                    if hasattr(tex_desc, 'generate_wgsl_binding'):
-                        wgsl_parts.append(tex_desc.generate_wgsl_binding(tex_name))
-
-                # Translate surface method to WGSL
-                wgsl_parts.append("\n// Surface shader")
-                wgsl_parts.append("fn surface_main() {")
-
-                has_super_call = False
-                used_builtins: set = set()
-
-                if surface_method is not None:
-                    try:
-                        source = textwrap.dedent(inspect.getsource(surface_method))
-                        tree = ast.parse(source)
-
-                        # Check for super().surface() calls
-                        for node in ast.walk(tree):
-                            if isinstance(node, ast.Call):
-                                if isinstance(node.func, ast.Attribute):
-                                    if node.func.attr == 'surface':
-                                        # Check if it's super().surface()
-                                        if isinstance(node.func.value, ast.Call):
-                                            if isinstance(node.func.value.func, ast.Name):
-                                                if node.func.value.func.id == 'super':
-                                                    has_super_call = True
-                                                    # Validate parent exists
-                                                    if parent_material is None:
-                                                        raise WGSLTranslationError(
-                                                            f"super().surface() called in {name} but no parent "
-                                                            f"material with surface method found. "
-                                                            f"Material shader DSL requires a parent with surface()."
-                                                        )
-                                                    break
-
-                        translator = PythonToWGSLTranslator()
-                        # Find the function body
-                        for node in ast.walk(tree):
-                            if isinstance(node, ast.FunctionDef) and node.name == 'surface':
-                                for stmt in node.body:
-                                    # Check if this is super().surface() call
-                                    if has_super_call and isinstance(stmt, ast.Expr):
-                                        if isinstance(stmt.value, ast.Call):
-                                            func = stmt.value.func
-                                            if isinstance(func, ast.Attribute) and func.attr == 'surface':
-                                                if isinstance(func.value, ast.Call):
-                                                    super_func = func.value.func
-                                                    if isinstance(super_func, ast.Name) and super_func.id == 'super':
-                                                        # Inline parent code
-                                                        if parent_material is not None:
-                                                            parent_wgsl = getattr(parent_material, '_wgsl_source', '')
-                                                            # Extract just the body content (between { and })
-                                                            if 'fn surface_main()' in parent_wgsl:
-                                                                start = parent_wgsl.find('fn surface_main() {')
-                                                                if start != -1:
-                                                                    brace_start = parent_wgsl.find('{', start)
-                                                                    brace_end = parent_wgsl.rfind('}')
-                                                                    if brace_start != -1 and brace_end != -1:
-                                                                        body = parent_wgsl[brace_start+1:brace_end].strip()
-                                                                        wgsl_parts.append(f"    // Inlined from {parent_material.__name__}")
-                                                                        for line in body.split('\n'):
-                                                                            if line.strip():
-                                                                                wgsl_parts.append(f"    {line.strip()}")
-                                                        continue
-                                    line = translator.translate(stmt)
-                                    wgsl_parts.append(f"    {line}")
-                                break
-
-                        used_builtins = translator.used_builtins
-                        # Merge parent builtins if super() was called
-                        if has_super_call and parent_material is not None:
-                            parent_builtins = getattr(parent_material, '_used_builtins', set())
-                            used_builtins = used_builtins | parent_builtins
-
-                    except WGSLTranslationError as e:
-                        # Propagate translation errors to _compilation_error
-                        cls._has_super_call = has_super_call
-                        cls._used_builtins = used_builtins
-                        wgsl_parts.append("}")
-                        cls._wgsl_source = "\n".join(wgsl_parts)
-                        cls._compilation_error = str(e)
-                        return cls
-                    except Exception as e:
-                        wgsl_parts.append(f"    // Translation error: {e}")
-
-                cls._has_super_call = has_super_call
-                cls._used_builtins = used_builtins
-
-                wgsl_parts.append("}")
-
-                # Add alias comments for special builtins (ctx.time -> time_uniforms.elapsed_seconds)
-                final_wgsl = "\n".join(wgsl_parts)
-                if 'ctx.time' in used_builtins:
-                    # Add ctx.time alias comment for backward compatibility
-                    final_wgsl = final_wgsl.replace(
-                        "// Surface shader",
-                        "// Surface shader (ctx.time -> time_uniforms.elapsed_seconds)"
-                    )
-
-                cls._wgsl_source = final_wgsl
-                cls._compilation_error = None
-        except Exception as e:
-            cls._wgsl_source = ""
-            cls._compilation_error = str(e)
-            cls._used_builtins = set()
-
-        # Add get_wgsl method to class
-        def get_wgsl(self_or_cls) -> str:
-            """Get the compiled WGSL source code."""
-            if isinstance(self_or_cls, type):
-                return self_or_cls._wgsl_source
-            return self_or_cls.__class__._wgsl_source
-
-        cls.get_wgsl = classmethod(lambda cls_: cls_._wgsl_source)
-
-        return cls
+# =============================================================================
+# PYTHON TO WGSL AST TRANSLATOR
+# =============================================================================
 
 
 class WGSLTranslationError(Exception):
-    """Exception raised when Python to WGSL translation fails."""
-
-    def __init__(self, message: str, node: Any = None):
-        self.message = message
-        self.node = node
-        super().__init__(message)
+    """Raised when Python AST cannot be translated to WGSL."""
+    pass
 
 
-class PythonToWGSLTranslator:
+class PythonToWGSLTranslator(ast.NodeVisitor):
     """Translates Python AST to WGSL shader code.
 
     Supports the following AST node types:
-    - Expr: Expression statements
-    - Constant: Literals (int, float, bool, str)
-    - Name: Variable references
-    - Attribute: Attribute access (obj.attr)
-    - BinOp: Binary operations (+, -, *, /, etc.)
-    - UnaryOp: Unary operations (-, not, ~)
-    - Compare: Comparison operations (==, !=, <, >, etc.)
-    - BoolOp: Boolean operations (and, or)
-    - Call: Function/method calls
-    - Assign: Assignment statements
-    - AugAssign: Augmented assignment (+=, -=, etc.)
-    - If: Conditional statements
-    - Return: Return statements
-    - Subscript: Index access (arr[i])
-    - Tuple: Tuple expressions
-
-    Example::
-
-        import ast
-        translator = PythonToWGSLTranslator()
-        tree = ast.parse("out.base_color = Vec3(1.0, 0.5, 0.2)")
-        wgsl = translator.translate(tree)
-        # -> "out.base_color = vec3<f32>(1.0, 0.5, 0.2);"
+    - Expr: Expression statement
+    - Assign: Assignment (a = b)
+    - AnnAssign: Annotated assignment (a: T = b)
+    - Call: Function/method call
+    - BinOp: Binary operation (+, -, *, /, etc.)
+    - If: Conditional expression
+    - Attribute: Attribute access (a.b)
+    - Name: Variable name
+    - Constant: Literal value
+    - Subscript: Index access (a[i])
+    - UnaryOp: Unary operation (-, not)
+    - Compare: Comparison (<, >, ==, etc.)
+    - BoolOp: Boolean operation (and, or)
+    - Return: Return statement
+    - Tuple: Tuple construction (for vec types)
     """
 
-    # Python to WGSL type mappings
-    TYPE_MAP = {
-        'Vec2': 'vec2<f32>',
-        'Vec3': 'vec3<f32>',
-        'Vec4': 'vec4<f32>',
-        'float': 'f32',
-        'int': 'i32',
-        'bool': 'bool',
-    }
-
-    # Context attribute mappings (ctx.X -> in.X or special)
-    CTX_ATTR_MAP = {
-        'uv': 'in.uv',
-        'position': 'in.position',
-        'normal': 'in.normal',
-        'tangent': 'in.tangent',
-        'vertex_color': 'in.vertex_color',
-        'time': 'time_uniforms.elapsed_seconds',
-        'delta_time': 'time_uniforms.delta_time',
-        'world_position': 'in.world_position',
-        'world_normal': 'in.world_normal',
-    }
-
-    # Context method call mappings (ctx.method() -> result)
-    CTX_METHOD_MAP = {
-        'world_position': 'in.world_position',
-        'world_normal': 'in.world_normal',
-        'world_tangent': 'in.world_tangent',
-        'get_uv': 'in.uv',
-        'get_vertex_color': 'in.vertex_color',
-        'get_time': 'time_uniforms.elapsed_seconds',
-    }
-
-    # Output attribute mappings (out.X -> out.Y)
-    OUT_ATTR_MAP = {
-        'ao': 'out.ambient_occlusion',
-        'albedo': 'out.base_color',
-        'emission': 'out.emissive',
-    }
-
-    # Self attribute prefix mapping (self.X -> material.X)
-    SELF_PREFIX = 'material'
-
-    # Python to WGSL binary operator mappings
+    # Python operator to WGSL operator mapping
     BINOP_MAP = {
-        'Add': '+',
-        'Sub': '-',
-        'Mult': '*',
-        'Div': '/',
-        'Mod': '%',
-        'Pow': '',  # Special handling needed
-        'FloorDiv': '/',  # Will need floor() wrapper
-        'BitOr': '|',
-        'BitXor': '^',
-        'BitAnd': '&',
-        'LShift': '<<',
-        'RShift': '>>',
+        ast.Add: "+",
+        ast.Sub: "-",
+        ast.Mult: "*",
+        ast.Div: "/",
+        ast.Mod: "%",
+        ast.Pow: "pow",  # Special case: becomes pow(a, b)
+        ast.BitAnd: "&",
+        ast.BitOr: "|",
+        ast.BitXor: "^",
+        ast.LShift: "<<",
+        ast.RShift: ">>",
     }
 
-    # Python to WGSL comparison operator mappings
-    CMPOP_MAP = {
-        'Eq': '==',
-        'NotEq': '!=',
-        'Lt': '<',
-        'LtE': '<=',
-        'Gt': '>',
-        'GtE': '>=',
-    }
-
-    # Python to WGSL unary operator mappings
     UNARYOP_MAP = {
-        'UAdd': '+',
-        'USub': '-',
-        'Not': '!',
-        'Invert': '~',
+        ast.USub: "-",
+        ast.Not: "!",
+        ast.Invert: "~",
+        ast.UAdd: "+",
     }
 
-    # Custom builtin functions that need to be tracked for injection
+    CMPOP_MAP = {
+        ast.Eq: "==",
+        ast.NotEq: "!=",
+        ast.Lt: "<",
+        ast.LtE: "<=",
+        ast.Gt: ">",
+        ast.GtE: ">=",
+    }
+
+    BOOLOP_MAP = {
+        ast.And: "&&",
+        ast.Or: "||",
+    }
+
+    # Built-in function mapping (Python name -> WGSL name)
+    # Core WGSL built-ins
+    BUILTIN_MAP = {
+        "abs": "abs",
+        "min": "min",
+        "max": "max",
+        "pow": "pow",
+        "sqrt": "sqrt",
+        "sin": "sin",
+        "cos": "cos",
+        "tan": "tan",
+        "asin": "asin",
+        "acos": "acos",
+        "atan": "atan",
+        "atan2": "atan2",
+        "exp": "exp",
+        "exp2": "exp2",
+        "log": "log",
+        "log2": "log2",
+        "floor": "floor",
+        "ceil": "ceil",
+        "round": "round",
+        "fract": "fract",
+        "trunc": "trunc",
+        "sign": "sign",
+        "clamp": "clamp",
+        "saturate": "saturate",
+        "mix": "mix",
+        "lerp": "mix",  # Alias
+        "step": "step",
+        "smoothstep": "smoothstep",
+        "length": "length",
+        "distance": "distance",
+        "dot": "dot",
+        "cross": "cross",
+        "normalize": "normalize",
+        "reflect": "reflect",
+        "refract": "refract",
+        "faceforward": "faceforward",
+        # Custom builtins (require WGSL helper functions from builtins.py)
+        # Noise functions
+        "value_noise": "value_noise",
+        "perlin_noise": "perlin_noise",
+        "simplex_noise": "simplex_noise",
+        "worley_noise": "worley_noise",
+        "fbm": "fbm",
+        "turbulence": "turbulence",
+        # Color conversion
+        "rgb_to_hsv": "rgb_to_hsv",
+        "hsv_to_rgb": "hsv_to_rgb",
+        "srgb_to_linear": "srgb_to_linear",
+        "linear_to_srgb": "linear_to_srgb",
+        # Tonemapping
+        "tonemap_reinhard": "tonemap_reinhard",
+        "tonemap_aces": "tonemap_aces",
+        "tonemap_uncharted2": "tonemap_uncharted2",
+        "tonemap_agx": "tonemap_agx",
+        # Math utilities
+        "remap": "remap",
+        "inverse_lerp": "inverse_lerp",
+        "smooth_min": "smooth_min",
+        "smooth_max": "smooth_max",
+        "smootherstep": "smootherstep",
+    }
+
+    # Custom builtins that require WGSL helper functions
     CUSTOM_BUILTINS = {
-        # Noise builtins
-        'value_noise', 'perlin_noise', 'simplex_noise', 'worley_noise',
-        'fbm', 'turbulence',
-        # Color builtins
-        'rgb_to_hsv', 'hsv_to_rgb', 'srgb_to_linear', 'linear_to_srgb',
-        'tonemap_reinhard', 'tonemap_aces', 'tonemap_uncharted2', 'tonemap_agx',
-        # Math utility builtins
-        'remap', 'inverse_lerp', 'smooth_min', 'smooth_max', 'smootherstep',
+        "value_noise", "perlin_noise", "simplex_noise", "worley_noise",
+        "fbm", "turbulence",
+        "rgb_to_hsv", "hsv_to_rgb", "srgb_to_linear", "linear_to_srgb",
+        "tonemap_reinhard", "tonemap_aces", "tonemap_uncharted2", "tonemap_agx",
+        "remap", "inverse_lerp", "smooth_min", "smooth_max", "smootherstep",
     }
 
-    def __init__(self):
-        self._indent = 0
-        self.used_builtins: set = set()
+    # Context method mapping (SurfaceContext.method -> WGSL)
+    CONTEXT_METHOD_MAP = {
+        "sample": "textureSample",
+        "sample_cube": "textureSample",
+        "sample_level": "textureSampleLevel",
+        "world_position": "in.world_position",
+        "world_normal": "in.world_normal",
+        "world_tangent": "in.world_tangent",
+        "get_uv": "in.uv",
+        "uv": "in.uv",
+        "get_vertex_color": "in.vertex_color",
+        "vertex_color": "in.vertex_color",
+        # Time accessors (T-MAT-5.5)
+        "get_time": "time_uniforms.elapsed_seconds",
+        "time": "time_uniforms.elapsed_seconds",
+        "get_delta_time": "time_uniforms.delta_time",
+        "delta_time": "time_uniforms.delta_time",
+        "get_frame_count": "time_uniforms.frame_count",
+        "frame_count": "time_uniforms.frame_count",
+        # View direction
+        "get_view_direction": "normalize(uniforms.camera_position - in.world_position)",
+        "view_direction": "normalize(uniforms.camera_position - in.world_position)",
+    }
 
-    def translate(self, node: Any) -> str:
-        """Translate a Python AST node to WGSL code.
+    # Output field mapping (SurfaceOutput.field -> PBROutput.field)
+    OUTPUT_FIELD_MAP = {
+        "base_color": "out.base_color",
+        "albedo": "out.base_color",  # Alias
+        "metallic": "out.metallic",
+        "roughness": "out.roughness",
+        "normal": "out.normal",
+        "emissive": "out.emissive",
+        "emission": "out.emissive",  # Alias
+        "ao": "out.ambient_occlusion",
+        "alpha": "out.alpha",
+        "specular": "out.specular",
+        "subsurface": "out.subsurface",
+        "subsurface_color": "out.subsurface_color",
+        "clearcoat": "out.clearcoat",
+        "clearcoat_roughness": "out.clearcoat_roughness",
+        "anisotropy": "out.anisotropy",
+        "anisotropy_direction": "out.anisotropy_direction",
+        "sheen": "out.sheen",
+        "sheen_color": "out.sheen_color",
+        "transmission": "out.transmission",
+        "ior": "out.ior",
+    }
+
+    def __init__(self, parent_wgsl: Optional[str] = None, parent_name: Optional[str] = None):
+        """Initialize the WGSL translator.
 
         Args:
-            node: Python AST node (Module, statement, or expression)
+            parent_wgsl: Optional WGSL source from parent material (for inheritance)
+            parent_name: Optional name of parent material class
+        """
+        self.indent_level = 0
+        self.lines: list[str] = []
+        self.used_builtins: set[str] = set()  # Track custom builtins used
+        self.parent_wgsl = parent_wgsl
+        self.parent_name = parent_name
+        self.has_super_call = False  # Track if super() was called
+
+    def indent(self) -> str:
+        """Return current indentation string."""
+        return "    " * self.indent_level
+
+    def emit(self, line: str) -> None:
+        """Emit a line of WGSL code with current indentation."""
+        self.lines.append(f"{self.indent()}{line}")
+
+    def translate(self, tree: ast.AST) -> str:
+        """Translate an AST tree to WGSL code."""
+        self.lines = []
+        self.indent_level = 0
+        self.used_builtins = set()
+        self.has_super_call = False
+        self.visit(tree)
+        return "\n".join(self.lines)
+
+    def _is_super_call(self, node: ast.Call) -> bool:
+        """Detect super().surface(ctx, out) pattern for inheritance.
+
+        Matches patterns like:
+        - super().surface(ctx, out)
+        - super().surface(ctx)
+
+        Args:
+            node: AST Call node to check
 
         Returns:
-            WGSL code string
-
-        Raises:
-            WGSLTranslationError: If translation fails
+            True if this is a super().surface() call
         """
-        import ast
+        if not isinstance(node.func, ast.Attribute):
+            return False
 
-        if isinstance(node, ast.Module):
-            return self._translate_module(node)
-        elif isinstance(node, ast.FunctionDef):
-            return self._translate_function(node)
-        elif isinstance(node, ast.Expr):
-            return self._translate_expr(node)
-        elif isinstance(node, ast.Assign):
-            return self._translate_assign(node)
-        elif isinstance(node, ast.AugAssign):
-            return self._translate_aug_assign(node)
-        elif isinstance(node, ast.AnnAssign):
-            return self._translate_ann_assign(node)
-        elif isinstance(node, ast.If):
-            return self._translate_if(node)
-        elif isinstance(node, ast.Return):
-            return self._translate_return(node)
-        elif isinstance(node, ast.Pass):
-            return ""  # No-op, produces empty string
-        else:
-            return self._translate_expression(node)
+        # Check if calling .surface method
+        if node.func.attr != "surface":
+            return False
 
-    def _translate_module(self, node: Any) -> str:
-        """Translate a module (list of statements)."""
-        lines = []
+        # Check if the object is a super() call
+        if not isinstance(node.func.value, ast.Call):
+            return False
+
+        # Check if it's super()
+        if isinstance(node.func.value.func, ast.Name):
+            if node.func.value.func.id == "super":
+                return True
+
+        return False
+
+    def _emit_parent_surface_call(self) -> str:
+        """Generate WGSL code to call parent surface logic.
+
+        When super().surface(ctx, out) is called in Python, we inline
+        the parent's surface shader body to simulate inheritance.
+
+        Returns:
+            WGSL code that represents the parent surface call
+        """
+        if self.parent_wgsl is None:
+            raise WGSLTranslationError(
+                "super().surface() called but no parent material found. "
+                "Ensure the base class has a @surface method."
+            )
+
+        self.has_super_call = True
+        # Return a comment indicating parent call - actual inlining done at class level
+        parent_ref = self.parent_name or "parent"
+        return f"/* super().surface() -> {parent_ref} */"
+
+    def get_used_builtins(self) -> set[str]:
+        """Get the set of custom builtins used in the last translation."""
+        return self.used_builtins.copy()
+
+    def visit_Module(self, node: ast.Module) -> None:
+        """Visit module node (top-level container)."""
         for stmt in node.body:
-            lines.append(self.translate(stmt))
-        return "\n".join(lines)
+            self.visit(stmt)
 
-    def _translate_function(self, node: Any) -> str:
-        """Translate a function definition."""
-        # For now, just translate the body
-        lines = []
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Visit function definition (surface shader entry)."""
+        # Skip the function signature - we extract just the body
         for stmt in node.body:
-            lines.append(self.translate(stmt))
-        return "\n".join(lines)
+            self.visit(stmt)
 
-    def _translate_expr(self, node: Any) -> str:
-        """Translate an expression statement."""
-        expr = self._translate_expression(node.value)
-        return f"{expr};"
+    def visit_Expr(self, node: ast.Expr) -> None:
+        """Visit expression statement."""
+        expr = self.visit(node.value)
+        if expr:
+            self.emit(f"{expr};")
 
-    def _translate_assign(self, node: Any) -> str:
-        """Translate an assignment statement."""
-        import ast
-
-        targets = []
+    def visit_Assign(self, node: ast.Assign) -> None:
+        """Visit assignment statement."""
+        value = self.visit(node.value)
         for target in node.targets:
-            targets.append(self._translate_expression(target))
+            target_str = self.visit(target)
+            self.emit(f"{target_str} = {value};")
 
-        value = self._translate_expression(node.value)
-        target_str = targets[0] if len(targets) == 1 else ", ".join(targets)
-        return f"{target_str} = {value};"
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        """Visit annotated assignment (type-hinted variable)."""
+        if node.value is None:
+            return  # Declaration without value
+        target = self.visit(node.target)
+        value = self.visit(node.value)
+        # In WGSL, we use let for local variables
+        self.emit(f"let {target} = {value};")
 
-    def _translate_aug_assign(self, node: Any) -> str:
-        """Translate an augmented assignment (+=, -=, etc.)."""
-        import ast
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Visit augmented assignment (+=, -=, etc.)."""
+        target = self.visit(node.target)
+        value = self.visit(node.value)
+        op = self.BINOP_MAP.get(type(node.op), "+")
+        self.emit(f"{target} = {target} {op} {value};")
 
-        target = self._translate_expression(node.target)
-        value = self._translate_expression(node.value)
-        op = self.BINOP_MAP.get(type(node.op).__name__, '+')
-        # Expand to full form: x = x + value (tests expect this)
-        return f"{target} = {target} {op} {value};"
-
-    def _translate_ann_assign(self, node: Any) -> str:
-        """Translate an annotated assignment."""
-        target = self._translate_expression(node.target)
-        if node.value:
-            value = self._translate_expression(node.value)
-            return f"let {target} = {value};"
-        # Skip declaration-only annotations (no value)
-        return ""
-
-    def _translate_if(self, node: Any) -> str:
-        """Translate an if statement."""
-        import ast
-
-        cond = self._translate_expression(node.test)
-        lines = [f"if ({cond}) {{"]
-
+    def visit_If(self, node: ast.If) -> str:
+        """Visit if statement."""
+        test = self.visit(node.test)
+        self.emit(f"if ({test}) {{")
+        self.indent_level += 1
         for stmt in node.body:
-            lines.append("    " + self.translate(stmt))
+            self.visit(stmt)
+        self.indent_level -= 1
 
         if node.orelse:
             if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
-                # else if
-                lines.append("} else " + self._translate_if(node.orelse[0]))
+                # elif chain
+                self.emit("} else ")
+                self.visit(node.orelse[0])
             else:
-                lines.append("} else {")
+                self.emit("} else {")
+                self.indent_level += 1
                 for stmt in node.orelse:
-                    lines.append("    " + self.translate(stmt))
-                lines.append("}")
+                    self.visit(stmt)
+                self.indent_level -= 1
+                self.emit("}")
         else:
-            lines.append("}")
+            self.emit("}")
+        return ""
 
-        return "\n".join(lines)
-
-    def _translate_return(self, node: Any) -> str:
-        """Translate a return statement."""
+    def visit_Return(self, node: ast.Return) -> None:
+        """Visit return statement."""
         if node.value:
-            value = self._translate_expression(node.value)
-            return f"return {value};"
-        return "return;"
-
-    def _translate_expression(self, node: Any) -> str:
-        """Translate an expression to WGSL."""
-        import ast
-
-        if isinstance(node, ast.Constant):
-            return self._translate_constant(node)
-        elif isinstance(node, ast.Name):
-            name = node.id
-            # Map True/False to WGSL booleans
-            if name == 'True':
-                return 'true'
-            elif name == 'False':
-                return 'false'
-            elif name == 'None':
-                return '0.0'
-            return name
-        elif isinstance(node, ast.Attribute):
-            return self._translate_attribute(node)
-        elif isinstance(node, ast.BinOp):
-            return self._translate_binop(node)
-        elif isinstance(node, ast.UnaryOp):
-            return self._translate_unaryop(node)
-        elif isinstance(node, ast.Compare):
-            return self._translate_compare(node)
-        elif isinstance(node, ast.BoolOp):
-            return self._translate_boolop(node)
-        elif isinstance(node, ast.Call):
-            return self._translate_call(node)
-        elif isinstance(node, ast.Subscript):
-            return self._translate_subscript(node)
-        elif isinstance(node, ast.Tuple):
-            return self._translate_tuple(node)
-        elif isinstance(node, ast.List):
-            return self._translate_list(node)
-        elif isinstance(node, ast.IfExp):
-            return self._translate_ifexp(node)
+            value = self.visit(node.value)
+            self.emit(f"return {value};")
         else:
-            raise WGSLTranslationError(
-                f"Unsupported node type: {type(node).__name__}. "
-                f"This construct is not supported in the material shader DSL.",
-                node
-            )
+            self.emit("return;")
 
-    def _translate_attribute(self, node: Any) -> str:
-        """Translate an attribute access with special mappings."""
-        import ast
+    def visit_Pass(self, node: ast.Pass) -> None:
+        """Visit pass statement (no-op in WGSL)."""
+        pass  # WGSL doesn't need explicit pass
 
-        attr = node.attr
+    def visit_BinOp(self, node: ast.BinOp) -> str:
+        """Visit binary operation."""
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        op_type = type(node.op)
 
-        # Handle special base objects
-        if isinstance(node.value, ast.Name):
-            base_name = node.value.id
-
-            # ctx.X -> mapped value
-            if base_name == 'ctx':
-                if attr in self.CTX_ATTR_MAP:
-                    # Track ctx.time usage for compatibility comments
-                    if attr == 'time':
-                        self.used_builtins.add('ctx.time')
-                    return self.CTX_ATTR_MAP[attr]
-                # Default: ctx.X -> in.X
-                return f"in.{attr}"
-
-            # out.X -> possibly mapped
-            if base_name == 'out':
-                if attr in self.OUT_ATTR_MAP:
-                    return self.OUT_ATTR_MAP[attr]
-                return f"out.{attr}"
-
-            # self.X -> material.X
-            if base_name == 'self':
-                return f"{self.SELF_PREFIX}.{attr}"
-
-        # Recursive translation for chained attributes
-        value = self._translate_expression(node.value)
-        return f"{value}.{attr}"
-
-    def _translate_constant(self, node: Any) -> str:
-        """Translate a constant value."""
-        value = node.value
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        elif isinstance(value, float):
-            s = repr(value)
-            if 'e' in s or 'E' in s:
-                return s
-            if '.' not in s:
-                s = s + '.0'
-            return s
-        elif isinstance(value, int):
-            return str(value)
-        elif isinstance(value, str):
-            return f'"{value}"'
-        elif value is None:
-            return "0.0"
-        else:
-            return str(value)
-
-    def _translate_binop(self, node: Any) -> str:
-        """Translate a binary operation."""
-        import ast
-
-        left = self._translate_expression(node.left)
-        right = self._translate_expression(node.right)
-        op_name = type(node.op).__name__
-
-        if op_name == 'Pow':
+        if op_type == ast.Pow:
             return f"pow({left}, {right})"
-        elif op_name == 'FloorDiv':
-            return f"floor({left} / {right})"
 
-        op = self.BINOP_MAP.get(op_name, '+')
+        op = self.BINOP_MAP.get(op_type, "+")
         return f"({left} {op} {right})"
 
-    def _translate_unaryop(self, node: Any) -> str:
-        """Translate a unary operation."""
-        operand = self._translate_expression(node.operand)
-        op = self.UNARYOP_MAP.get(type(node.op).__name__, '-')
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> str:
+        """Visit unary operation."""
+        operand = self.visit(node.operand)
+        op = self.UNARYOP_MAP.get(type(node.op), "-")
         return f"({op}{operand})"
 
-    def _translate_compare(self, node: Any) -> str:
-        """Translate a comparison operation."""
-        left = self._translate_expression(node.left)
+    def visit_Compare(self, node: ast.Compare) -> str:
+        """Visit comparison expression."""
+        left = self.visit(node.left)
         parts = [left]
 
         for op, comparator in zip(node.ops, node.comparators):
-            op_str = self.CMPOP_MAP.get(type(op).__name__, '==')
-            right = self._translate_expression(comparator)
-            parts.append(op_str)
-            parts.append(right)
+            op_str = self.CMPOP_MAP.get(type(op), "==")
+            comp = self.visit(comparator)
+            parts.append(f"{op_str} {comp}")
 
-        # For chained comparisons like a < b < c, we need to convert to (a < b) && (b < c)
-        if len(node.ops) > 1:
-            conditions = []
-            prev = left
-            for op, comparator in zip(node.ops, node.comparators):
-                op_str = self.CMPOP_MAP.get(type(op).__name__, '==')
-                right = self._translate_expression(comparator)
-                conditions.append(f"({prev} {op_str} {right})")
-                prev = right
-            return " && ".join(conditions)
+        return " ".join(parts)
 
-        return f"({parts[0]} {parts[1]} {parts[2]})"
+    def visit_BoolOp(self, node: ast.BoolOp) -> str:
+        """Visit boolean operation (and, or)."""
+        op = self.BOOLOP_MAP.get(type(node.op), "&&")
+        values = [self.visit(v) for v in node.values]
+        return f"({f' {op} '.join(values)})"
 
-    def _translate_boolop(self, node: Any) -> str:
-        """Translate a boolean operation."""
-        import ast
+    def visit_IfExp(self, node: ast.IfExp) -> str:
+        """Visit ternary expression (a if cond else b)."""
+        test = self.visit(node.test)
+        body = self.visit(node.body)
+        orelse = self.visit(node.orelse)
+        return f"select({orelse}, {body}, {test})"
 
-        op = "&&" if isinstance(node.op, ast.And) else "||"
-        values = [self._translate_expression(v) for v in node.values]
-        return f"({(' ' + op + ' ').join(values)})"
+    def visit_Call(self, node: ast.Call) -> str:
+        """Visit function/method call."""
+        # Check for super().surface() call FIRST, before visiting args
+        if self._is_super_call(node):
+            return self._emit_parent_surface_call()
 
-    # Texture sampling method mappings (ctx.sample() -> textureSample)
-    TEXTURE_METHOD_MAP = {
-        'sample': 'textureSample',
-        'sample_level': 'textureSampleLevel',
-        'sample_grad': 'textureSampleGrad',
-        'sample_cube': 'textureSample',
-        'load': 'textureLoad',
-        'noise': 'noise',
-    }
+        args = [self.visit(arg) for arg in node.args]
 
-    def _translate_call(self, node: Any) -> str:
-        """Translate a function/method call."""
-        import ast
-
-        # Handle method calls (obj.method())
         if isinstance(node.func, ast.Attribute):
-            args = [self._translate_expression(arg) for arg in node.args]
-
-            # Check for ctx method mappings
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == 'ctx':
-                method = node.func.attr
-
-                # Property-style methods that map to input attributes
-                if method in self.CTX_METHOD_MAP:
-                    return self.CTX_METHOD_MAP[method]
-
-                # Texture sampling methods
-                if method in self.TEXTURE_METHOD_MAP:
-                    wgsl_func = self.TEXTURE_METHOD_MAP[method]
-                    return f"{wgsl_func}({', '.join(args)})"
-
-            obj = self._translate_expression(node.func.value)
+            # Method call: obj.method(args)
+            obj = self.visit(node.func.value)
             method = node.func.attr
+
+            # Handle context methods
+            if obj == "ctx" and method in self.CONTEXT_METHOD_MAP:
+                wgsl_method = self.CONTEXT_METHOD_MAP[method]
+                if method in ("sample", "sample_cube", "sample_level"):
+                    # Texture sampling needs special handling
+                    return f"{wgsl_method}({', '.join(args)})"
+                elif callable(wgsl_method) or "(" in wgsl_method:
+                    return wgsl_method
+                else:
+                    return wgsl_method
+
+            # Handle vector constructors
+            if obj in ("Vec2", "Vec3", "Vec4"):
+                wgsl_type = f"vec{obj[-1]}<f32>"
+                return f"{wgsl_type}({', '.join(args)})"
+
+            # Generic method call
             return f"{obj}.{method}({', '.join(args)})"
 
-        # Handle function calls
-        func_name = self._translate_expression(node.func)
+        elif isinstance(node.func, ast.Name):
+            func_name = node.func.id
 
-        # Track custom builtins usage
-        if func_name in self.CUSTOM_BUILTINS:
-            self.used_builtins.add(func_name)
+            # Handle built-in functions
+            if func_name in self.BUILTIN_MAP:
+                wgsl_func = self.BUILTIN_MAP[func_name]
+                # Track custom builtins that need WGSL helper functions
+                if func_name in self.CUSTOM_BUILTINS:
+                    self.used_builtins.add(func_name)
+                return f"{wgsl_func}({', '.join(args)})"
 
-        # Map Python constructor names to WGSL
-        if func_name in self.TYPE_MAP:
-            func_name = self.TYPE_MAP[func_name]
+            # Handle vector constructors
+            if func_name in ("Vec2", "Vec3", "Vec4"):
+                wgsl_type = f"vec{func_name[-1]}<f32>"
+                return f"{wgsl_type}({', '.join(args)})"
 
-        # Map Python function names to WGSL equivalents
-        FUNC_MAP = {
-            'lerp': 'mix',  # WGSL uses mix for linear interpolation
-        }
-        if func_name in FUNC_MAP:
-            func_name = FUNC_MAP[func_name]
+            # Generic function call
+            return f"{func_name}({', '.join(args)})"
 
-        args = [self._translate_expression(arg) for arg in node.args]
-        return f"{func_name}({', '.join(args)})"
+        # Fallback
+        func = self.visit(node.func)
+        return f"{func}({', '.join(args)})"
 
-    def _translate_subscript(self, node: Any) -> str:
-        """Translate a subscript (index access)."""
-        value = self._translate_expression(node.value)
-        slice_expr = self._translate_expression(node.slice)
-        return f"{value}[{slice_expr}]"
+    def visit_Attribute(self, node: ast.Attribute) -> str:
+        """Visit attribute access."""
+        obj = self.visit(node.value)
+        attr = node.attr
 
-    def _translate_tuple(self, node: Any) -> str:
-        """Translate a tuple expression to WGSL vec type."""
-        elements = [self._translate_expression(e) for e in node.elts]
-        count = len(elements)
-        if count == 2:
-            return f"vec2<f32>({', '.join(elements)})"
-        elif count == 3:
-            return f"vec3<f32>({', '.join(elements)})"
-        elif count == 4:
-            return f"vec4<f32>({', '.join(elements)})"
+        # Handle output field mapping
+        if obj == "out" and attr in self.OUTPUT_FIELD_MAP:
+            return self.OUTPUT_FIELD_MAP[attr]
+
+        # Handle context property access
+        if obj == "ctx":
+            if attr in self.CONTEXT_METHOD_MAP:
+                wgsl = self.CONTEXT_METHOD_MAP[attr]
+                if "(" not in wgsl:
+                    return wgsl
+            # Direct property access
+            return f"in.{attr}"
+
+        # Handle self.texture references
+        if obj == "self":
+            return f"material.{attr}"
+
+        return f"{obj}.{attr}"
+
+    def visit_Name(self, node: ast.Name) -> str:
+        """Visit variable name."""
+        name = node.id
+
+        # Remap special names
+        if name == "True":
+            return "true"
+        elif name == "False":
+            return "false"
+        elif name == "None":
+            return "0.0"  # WGSL has no null
+
+        return name
+
+    def visit_Constant(self, node: ast.Constant) -> str:
+        """Visit literal constant."""
+        value = node.value
+
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            # Ensure floats have decimal point
+            s = str(value)
+            if isinstance(value, float) and "." not in s and "e" not in s.lower():
+                s += ".0"
+            return s
+        elif isinstance(value, str):
+            # Strings are used for texture paths in Python but not in WGSL
+            return f'"{value}"'
+        elif value is None:
+            return "0.0"
+
+        return str(value)
+
+    def visit_Subscript(self, node: ast.Subscript) -> str:
+        """Visit subscript (index) access."""
+        obj = self.visit(node.value)
+
+        if isinstance(node.slice, ast.Constant):
+            idx = self.visit(node.slice)
         else:
-            return f"({', '.join(elements)})"
+            idx = self.visit(node.slice)
 
-    def _translate_list(self, node: Any) -> str:
-        """Translate a list expression to WGSL vector.
+        return f"{obj}[{idx}]"
 
-        Lists with 2, 3, or 4 elements become vec2, vec3, vec4.
-        Other sizes become array<f32, N>.
+    def visit_Tuple(self, node: ast.Tuple) -> str:
+        """Visit tuple (treated as vec constructor in WGSL)."""
+        elements = [self.visit(e) for e in node.elts]
+        n = len(elements)
+
+        if n == 2:
+            return f"vec2<f32>({', '.join(elements)})"
+        elif n == 3:
+            return f"vec3<f32>({', '.join(elements)})"
+        elif n == 4:
+            return f"vec4<f32>({', '.join(elements)})"
+
+        # Fallback for other sizes
+        return f"({', '.join(elements)})"
+
+    def visit_List(self, node: ast.List) -> str:
+        """Visit list (same as tuple for vec construction)."""
+        return self.visit_Tuple(ast.Tuple(elts=node.elts, ctx=node.ctx))
+
+    def generic_visit(self, node: ast.AST) -> str:
+        """Fallback for unsupported node types."""
+        raise WGSLTranslationError(
+            f"Unsupported Python construct: {type(node).__name__}. "
+            f"Material DSL only supports a subset of Python for shader authoring."
+        )
+
+
+# =============================================================================
+# MATERIAL METACLASS
+# =============================================================================
+
+
+class MaterialMeta(type):
+    """Metaclass for material classes that compiles surface() to WGSL.
+
+    When a class is created with this metaclass, it:
+    1. Finds the surface() method (decorated with @surface or named 'surface')
+    2. Extracts its source code via inspect
+    3. Parses the source to a Python AST
+    4. Walks the AST to generate WGSL shader code
+    5. Stores the result on the class as _wgsl_source
+
+    The class also gets:
+    - _surface_method: The original Python method
+    - _compilation_error: Any error during compilation (or None)
+    - _texture_bindings: Dict of texture descriptors
+    - _inherited_textures: Dict of textures inherited from parent classes
+    - _parent_material: Reference to first parent with surface method (or None)
+    - _has_super_call: True if surface() calls super().surface()
+
+    Inheritance Support (T-MAT-5.2):
+    - Child classes inherit texture slots from parent classes
+    - Child can override surface method while calling super().surface()
+    - super().surface(ctx, out) inlines parent WGSL into child shader
+    - MRO is respected for multiple inheritance
+
+    Usage::
+
+        class MyMaterial(Material, metaclass=MaterialMeta):
+            albedo = Texture2D(default="white", srgb=True)
+
+            @surface
+            def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
+                color = ctx.sample(self.albedo, ctx.uv)
+                out.base_color = color.xyz
+                out.roughness = 0.5
+
+        # Inheritance example:
+        class ChildMaterial(MyMaterial, metaclass=MaterialMeta):
+            specular_map = Texture2D(default="white")
+
+            @surface
+            def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
+                super().surface(ctx, out)  # Apply parent shader
+                out.roughness *= ctx.sample(self.specular_map, ctx.uv).r
+
+        # Access compiled WGSL:
+        print(ChildMaterial._wgsl_source)
+    """
+
+    # Registry of all material classes
+    _registry: dict[str, type] = {}
+
+    def __new__(mcs, name: str, bases: tuple, namespace: dict, **kwargs):
+        """Create the material class and compile its surface shader."""
+        cls = super().__new__(mcs, name, bases, namespace)
+
+        # Skip compilation for the base Material class
+        if name == "Material" and not bases:
+            return cls
+
+        # Initialize class attributes
+        cls._wgsl_source = ""
+        cls._surface_method = None
+        cls._compilation_error = None
+        cls._texture_bindings = {}
+        cls._inherited_textures = {}
+        cls._used_builtins: set[str] = set()
+        cls._parent_material = None
+        cls._has_super_call = False
+
+        # =====================================================================
+        # INHERITANCE: Collect texture slots from parent classes (MRO order)
+        # =====================================================================
+        inherited_textures = {}
+        parent_material = None
+        parent_wgsl = None
+        parent_name = None
+
+        for base in bases:
+            # Collect inherited texture bindings
+            if hasattr(base, "_texture_bindings"):
+                for tex_name, tex_desc in base._texture_bindings.items():
+                    if tex_name not in inherited_textures:
+                        inherited_textures[tex_name] = tex_desc
+
+            # Also collect from _inherited_textures for multi-level inheritance
+            if hasattr(base, "_inherited_textures"):
+                for tex_name, tex_desc in base._inherited_textures.items():
+                    if tex_name not in inherited_textures:
+                        inherited_textures[tex_name] = tex_desc
+
+            # Find first parent with a surface method (for super() support)
+            if parent_material is None and hasattr(base, "_surface_method") and base._surface_method:
+                parent_material = base
+                parent_wgsl = getattr(base, "_wgsl_source", None)
+                parent_name = base.__name__
+
+        cls._inherited_textures = inherited_textures
+        cls._parent_material = parent_material
+
+        # =====================================================================
+        # Find surface method in this class or inherit from parent
+        # =====================================================================
+        surface_method = None
+        owns_surface = False  # True if this class defines its own surface()
+
+        for attr_name, attr_value in namespace.items():
+            if callable(attr_value):
+                # Check for @surface decorator
+                if getattr(attr_value, "_is_surface", False):
+                    surface_method = attr_value
+                    owns_surface = True
+                    break
+                # Or named 'surface'
+                elif attr_name == "surface" and attr_name != "__init__":
+                    surface_method = attr_value
+                    owns_surface = True
+                    break
+
+        # Inherit surface from parent if not overridden
+        if surface_method is None and parent_material is not None:
+            surface_method = parent_material._surface_method
+            owns_surface = False
+
+        if surface_method is not None:
+            cls._surface_method = surface_method
+
+            # =====================================================================
+            # Extract texture bindings (own + inherited)
+            # =====================================================================
+            # Start with inherited textures
+            cls._texture_bindings = dict(inherited_textures)
+
+            # Add/override with own texture bindings
+            for attr_name, attr_value in namespace.items():
+                if hasattr(attr_value, "_is_texture_descriptor"):
+                    cls._texture_bindings[attr_name] = attr_value
+
+            # =====================================================================
+            # Compile to WGSL (with inheritance support)
+            # =====================================================================
+            try:
+                if owns_surface:
+                    # This class has its own surface - compile with parent context
+                    cls._wgsl_source, cls._used_builtins, cls._has_super_call = mcs._compile_surface(
+                        cls, surface_method, parent_wgsl=parent_wgsl, parent_name=parent_name
+                    )
+                else:
+                    # Inherited surface - copy parent WGSL
+                    cls._wgsl_source = parent_wgsl or ""
+                    cls._used_builtins = getattr(parent_material, "_used_builtins", set()).copy()
+                    cls._has_super_call = getattr(parent_material, "_has_super_call", False)
+            except Exception as e:
+                cls._compilation_error = e
+                cls._wgsl_source = f"// Compilation error: {e}"
+
+        # Register the material class
+        mcs._registry[name] = cls
+
+        return cls
+
+    @staticmethod
+    def _compile_surface(
+        cls: type,
+        method: Callable,
+        parent_wgsl: Optional[str] = None,
+        parent_name: Optional[str] = None,
+    ) -> tuple[str, set[str], bool]:
+        """Compile a surface() method to WGSL shader code.
+
+        Args:
+            cls: The material class being created
+            method: The surface() method to compile
+            parent_wgsl: Optional WGSL source from parent material
+            parent_name: Optional name of parent material class
+
+        Returns:
+            Tuple of (WGSL shader code, set of used builtin function names, has_super_call)
         """
-        elements = [self._translate_expression(e) for e in node.elts]
-        count = len(elements)
-        if count == 2:
-            return f"vec2<f32>({', '.join(elements)})"
-        elif count == 3:
-            return f"vec3<f32>({', '.join(elements)})"
-        elif count == 4:
-            return f"vec4<f32>({', '.join(elements)})"
-        else:
-            return f"array<f32, {count}>({', '.join(elements)})"
+        # Get source code
+        try:
+            source = inspect.getsource(method)
+        except OSError as e:
+            raise WGSLTranslationError(f"Cannot retrieve source for {method}: {e}")
 
-    def _translate_ifexp(self, node: Any) -> str:
-        """Translate a ternary expression (a if cond else b)."""
-        cond = self._translate_expression(node.test)
-        body = self._translate_expression(node.body)
-        orelse = self._translate_expression(node.orelse)
-        return f"select({orelse}, {body}, {cond})"
+        # Dedent and parse
+        source = textwrap.dedent(source)
+        tree = ast.parse(source)
+
+        # Translate to WGSL with parent context for inheritance
+        translator = PythonToWGSLTranslator(parent_wgsl=parent_wgsl, parent_name=parent_name)
+        wgsl_body = translator.translate(tree)
+        used_builtins = translator.get_used_builtins()
+        has_super_call = translator.has_super_call
+
+        # If super() was called, inline parent WGSL
+        if has_super_call and parent_wgsl:
+            # Replace the super() comment with actual parent code
+            # The marker appears as "/* super().surface() -> ParentName */;" (with semicolon)
+            super_marker = f"/* super().surface() -> {parent_name} */"
+
+            # Indent parent code to match current context
+            parent_lines = parent_wgsl.strip().split("\n")
+            # Get parent body lines (skip empty lines)
+            indented_parent = "\n".join(f"    {line}" for line in parent_lines if line.strip())
+
+            # Replace marker with or without indentation/semicolon variations
+            # Pattern 1: "    marker;" (indented with semicolon)
+            if f"    {super_marker};" in wgsl_body:
+                wgsl_body = wgsl_body.replace(
+                    f"    {super_marker};",
+                    f"    // BEGIN parent material ({parent_name})\n{indented_parent}\n    // END parent material"
+                )
+            # Pattern 2: "marker;" (no indent, with semicolon)
+            elif f"{super_marker};" in wgsl_body:
+                wgsl_body = wgsl_body.replace(
+                    f"{super_marker};",
+                    f"// BEGIN parent material ({parent_name})\n{indented_parent}\n// END parent material"
+                )
+            # Pattern 3: just the marker (no semicolon)
+            elif super_marker in wgsl_body:
+                wgsl_body = wgsl_body.replace(
+                    super_marker,
+                    f"// BEGIN parent material ({parent_name})\n{indented_parent}\n// END parent material"
+                )
+
+            # Merge parent builtins
+            parent_builtins = getattr(cls._parent_material, "_used_builtins", set())
+            used_builtins = used_builtins.union(parent_builtins)
+
+        return wgsl_body, used_builtins, has_super_call
+
+    def __init_subclass__(cls, **kwargs):
+        """Hook called when a subclass is created."""
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def get_material(mcs, name: str) -> Optional[type]:
+        """Get a registered material class by name."""
+        return mcs._registry.get(name)
+
+    @classmethod
+    def all_materials(mcs) -> list[type]:
+        """Get all registered material classes."""
+        return list(mcs._registry.values())
+
+
+# =============================================================================
+# MATERIAL BASE CLASS
+# =============================================================================
+
+
+class Material:
+    """Base class for user-defined materials. Override surface().
+
+    Materials define how surfaces appear when rendered. The surface() method
+    is compiled to WGSL shader code that runs on the GPU.
+
+    Example::
+
+        class BrickMaterial(Material, metaclass=MaterialMeta):
+            albedo = Texture2D(path="textures/brick_albedo.png", srgb=True)
+            normal = Texture2D(path="textures/brick_normal.png")
+
+            @surface
+            def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
+                uv = ctx.uv
+                out.base_color = ctx.sample(self.albedo, uv).xyz
+                out.normal = ctx.sample(self.normal, uv).xyz * 2.0 - 1.0
+                out.roughness = 0.8
+                out.metallic = 0.0
+
+    Attributes:
+        _wgsl_source: Compiled WGSL shader code
+        _surface_method: The original Python surface() method
+        _compilation_error: Any error during compilation, or None
+        _texture_bindings: Dict mapping texture names to descriptors
+    """
+
+    def surface(self, ctx: SurfaceContext, out: SurfaceOutput) -> None:
+        """Override this method to define the material's appearance.
+
+        Args:
+            ctx: Input context with vertex attributes and sampling functions
+            out: Output structure to write PBR parameters
+        """
+        pass
+
+    @classmethod
+    def get_wgsl(cls) -> str:
+        """Get the compiled WGSL shader code.
+
+        Returns:
+            WGSL shader code string, or empty string if not compiled.
+
+        Raises:
+            RuntimeError: If compilation failed.
+        """
+        if hasattr(cls, "_compilation_error") and cls._compilation_error:
+            raise RuntimeError(f"Material compilation failed: {cls._compilation_error}")
+        return getattr(cls, "_wgsl_source", "")
+
+    @classmethod
+    def has_texture(cls, name: str) -> bool:
+        """Check if the material has a texture binding with the given name."""
+        return name in getattr(cls, "_texture_bindings", {})
+
+    @classmethod
+    def get_textures(cls) -> dict[str, Any]:
+        """Get all texture bindings for this material."""
+        return getattr(cls, "_texture_bindings", {}).copy()
+
+    @classmethod
+    def get_inherited_textures(cls) -> dict[str, Any]:
+        """Get texture bindings inherited from parent classes.
+
+        Returns:
+            Dict mapping texture names to descriptors inherited from parents.
+            Does not include textures defined directly on this class.
+        """
+        return getattr(cls, "_inherited_textures", {}).copy()
+
+    @classmethod
+    def get_own_textures(cls) -> dict[str, Any]:
+        """Get texture bindings defined directly on this class.
+
+        Returns:
+            Dict mapping texture names to descriptors defined on this class,
+            excluding inherited textures.
+        """
+        all_textures = getattr(cls, "_texture_bindings", {})
+        inherited = getattr(cls, "_inherited_textures", {})
+        return {k: v for k, v in all_textures.items() if k not in inherited}
+
+    @classmethod
+    def get_parent_material(cls) -> Optional[type]:
+        """Get the parent material class (first base with surface method).
+
+        Returns:
+            Parent material class, or None if no parent has a surface method.
+        """
+        return getattr(cls, "_parent_material", None)
+
+    @classmethod
+    def has_super_call(cls) -> bool:
+        """Check if this material's surface() calls super().surface().
+
+        Returns:
+            True if super().surface() is called in the surface method.
+        """
+        return getattr(cls, "_has_super_call", False)
+
+    @classmethod
+    def get_inheritance_chain(cls) -> list[type]:
+        """Get the chain of material classes in inheritance order.
+
+        Returns:
+            List of material classes from this class to the root parent,
+            following the MRO but only including classes with surface methods.
+        """
+        chain = [cls]
+        current = cls
+        while True:
+            parent = getattr(current, "_parent_material", None)
+            if parent is None:
+                break
+            chain.append(parent)
+            current = parent
+        return chain

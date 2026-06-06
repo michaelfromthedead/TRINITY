@@ -1,325 +1,231 @@
 """
-Economy/Inventory System.
+Economy System.
 
-Provides inventory containers, items, crafting, loot, and trading systems.
+Provides inventory, crafting, loot, equipment, and currency systems.
+
+Foundation Integration (T-GP-8.13):
+- @recipe decorator registers with Foundation Registry
+- @crafting_station decorator registers stations
+- @ingredient and @economy decorators for metadata
+- Runtime discovery via Registry.query(tag="recipe")
 """
 
-from __future__ import annotations
-
-# =============================================================================
-# Constants
-# =============================================================================
-
 from .constants import (
-    # Enums
-    Rarity,
-    ItemType,
-    EquipmentSlot,
+    AttributeType,
     ContainerType,
     CraftingQuality,
-    TradeState,
-    AttributeType,
-    ResistanceType,
-    EconomyEvent,
-    # Rarity data
-    RARITY_NAMES,
-    RARITY_COLORS,
-    RARITY_DROP_WEIGHTS,
-    RARITY_PITY_THRESHOLDS,
-    # Stack and weight limits
-    STACKABLE_TYPES,
-    SELLABLE_TYPES,
-    DEFAULT_STACK_LIMITS,
-    MAX_STACK_SIZE,
-    DEFAULT_CONTAINER_SLOTS,
-    DEFAULT_WEIGHT_LIMITS,
-    WEIGHT_UNIT,
-    EXCLUSIVE_SLOTS,
-    # Currency
-    MAX_GOLD,
-    MAX_PREMIUM_CURRENCY,
     CURRENCY_DENOMINATIONS,
-    # Trading
-    TRADE_TIMEOUT,
-    TRADE_MAX_DISTANCE,
-    # Crafting
-    QUALITY_STAT_MULTIPLIERS,
-    QUALITY_BASE_CHANCES,
-    SKILL_QUALITY_BONUS_PER_LEVEL,
-    # Loot
+    DEFAULT_CONTAINER_SLOTS,
+    DEFAULT_MAX_DURABILITY,
+    DEFAULT_MAX_LEVEL,
+    DEFAULT_MAX_VALUE,
+    DEFAULT_MIN_LEVEL,
+    DEFAULT_STACK_LIMITS,
+    DEFAULT_WEIGHT_LIMITS,
+    EconomyEvent,
+    EquipmentSlot,
+    EXCLUSIVE_SLOTS,
+    ItemType,
     LUCK_BONUS_PER_POINT,
+    MAX_GOLD,
     MAX_LUCK_BONUS,
+    MAX_PREMIUM_CURRENCY,
+    MAX_RESISTANCE_PERCENT,
+    MAX_STACK_SIZE,
     PITY_INCREMENT,
     PITY_RESET_ON_SUCCESS,
     PITY_WEIGHT_BOOST,
-    # Attributes
-    MAX_RESISTANCE_PERCENT,
+    QUALITY_BASE_CHANCES,
+    QUALITY_STAT_MULTIPLIERS,
+    Rarity,
+    RARITY_COLORS,
+    RARITY_DROP_WEIGHTS,
+    RARITY_NAMES,
+    RARITY_PITY_THRESHOLDS,
+    ResistanceType,
+    SELLABLE_TYPES,
+    SKILL_QUALITY_BONUS_PER_LEVEL,
+    STACKABLE_TYPES,
+    TRADE_MAX_DISTANCE,
+    TRADE_TIMEOUT,
+    TradeState,
     UPGRADE_BONUS_PER_LEVEL,
-    DEFAULT_MAX_DURABILITY,
-    # Limits
-    DEFAULT_MIN_LEVEL,
-    DEFAULT_MAX_LEVEL,
-    DEFAULT_MAX_VALUE,
-    DEFAULT_MAX_DROPS,
+    WEIGHT_UNIT,
 )
-
-# =============================================================================
-# Inventory
-# =============================================================================
 
 from .inventory import (
-    # Item definitions
+    ECONOMY_SCHEMA_VERSION,
+    InventoryContainer,
+    InventorySlot,
     ItemDefinition,
     ItemInstance,
-    # Containers
-    InventorySlot,
-    InventoryContainer,
-    InventoryEvent,
-    # Registry
-    ItemRegistry,
-    # Serialization
-    Serializer,
-    ECONOMY_SCHEMA_VERSION,
 )
 
-# =============================================================================
-# Crafting
-# =============================================================================
-
 from .crafting import (
-    # Stations
+    # Core classes
+    CraftingContext,
+    CraftingQueueEntry,
+    CraftingRegistry,
+    CraftingResult,
+    CraftingResultType,
     CraftingStation,
-    # Ingredients
+    CraftingSystem,
     Ingredient,
     IngredientCategory,
     IngredientRequirement,
-    # Recipes
+    Recipe,
+    RecipeBuilder,
     RecipeOutput,
     SkillRequirement,
-    Recipe,
-    # Results
-    CraftingResultType,
-    CraftingResult,
-    CraftingContext,
-    CraftingQueueEntry,
-    # System
-    CraftingSystem,
-    CraftingCallback,
-    # Builder
-    RecipeBuilder,
-    # Registry
-    CraftingRegistry,
-    # Factory
-    RecipeFactory,
-    # Decorators
+    # Foundation Registry decorators (T-GP-8.13)
     recipe,
     crafting_station,
     ingredient,
     economy,
     crafting,
-    # Query functions
+    # Factory methods
+    RecipeFactory,
+    # Helper functions
     get_registered_recipes,
     get_registered_stations,
-    get_economy_classes,
     get_recipes_for_station_from_registry,
     get_recipes_by_skill_from_registry,
     get_craftable_items,
-    clear_registered,
-    # Serialization helpers
+    get_economy_classes,
+    # Utilities
     ingredient_from_dict,
-    recipe_output_from_dict,
-    skill_requirement_from_dict,
-    recipe_from_dict,
-    crafting_station_from_dict,
+    serializable,
 )
 
-# =============================================================================
-# Loot
-# =============================================================================
+from .equipment import (
+    EquipmentContainer,
+    EquipmentDefinition,
+    EquipmentInstance,
+    EquipmentRegistry,
+    EquipmentSet,
+    EquipmentStats,
+    ResistanceModifier,
+    SetBonus,
+    SpecialEffect,
+    StatModifier,
+)
 
 from .loot import (
-    # Random sources
-    RandomSource,
-    DefaultRandomSource,
-    SeededRandomSource,
-    # Conditions
-    LootCondition,
-    LevelCondition,
-    QuestCondition,
-    FlagCondition,
-    AttributeCondition,
-    RandomChanceCondition,
-    # Entries
-    LootEntry,
-    NestedTableEntry,
-    CurrencyEntry,
-    LootTableEntry,
-    # Results
-    LootDrop,
     CurrencyDrop,
+    CurrencyEntry,
+    LootDrop,
+    LootEntry,
     LootResult,
-    # Pity
-    PityTracker,
-    # Tables
+    LootRoller,
     LootTable,
     LootTableBuilder,
     LootTableRegistry,
-    # Roller
-    LootRoller,
-    # Serialization
-    loot_entry_from_dict,
-    loot_table_from_dict,
-)
-
-# =============================================================================
-# Equipment
-# =============================================================================
-
-from .equipment import (
-    # Modifiers
-    StatModifier,
-    ResistanceModifier,
-    SpecialEffect,
-    # Stats
-    EquipmentStats,
-    # Definition and Instance
-    EquipmentDefinition,
-    EquipmentInstance,
-    # Sets
-    SetBonus,
-    EquipmentSet,
-    # Container
-    EquipmentContainer,
-    EquipChangeCallback,
+    NestedTableEntry,
+    PityTracker,
 )
 
 __all__ = [
-    # Constants - Enums
-    "Rarity",
-    "ItemType",
-    "EquipmentSlot",
+    # Constants
+    "AttributeType",
     "ContainerType",
     "CraftingQuality",
-    "TradeState",
-    "AttributeType",
-    "ResistanceType",
-    "EconomyEvent",
-    # Constants - Rarity
-    "RARITY_NAMES",
-    "RARITY_COLORS",
-    "RARITY_DROP_WEIGHTS",
-    "RARITY_PITY_THRESHOLDS",
-    # Constants - Stacking
-    "STACKABLE_TYPES",
-    "SELLABLE_TYPES",
-    "DEFAULT_STACK_LIMITS",
-    "MAX_STACK_SIZE",
-    "DEFAULT_CONTAINER_SLOTS",
-    "DEFAULT_WEIGHT_LIMITS",
-    "WEIGHT_UNIT",
-    "EXCLUSIVE_SLOTS",
-    # Constants - Currency
-    "MAX_GOLD",
-    "MAX_PREMIUM_CURRENCY",
     "CURRENCY_DENOMINATIONS",
-    # Constants - Trading
-    "TRADE_TIMEOUT",
-    "TRADE_MAX_DISTANCE",
-    # Constants - Crafting
-    "QUALITY_STAT_MULTIPLIERS",
-    "QUALITY_BASE_CHANCES",
-    "SKILL_QUALITY_BONUS_PER_LEVEL",
-    # Constants - Loot
+    "DEFAULT_CONTAINER_SLOTS",
+    "DEFAULT_MAX_DURABILITY",
+    "DEFAULT_MAX_LEVEL",
+    "DEFAULT_MAX_VALUE",
+    "DEFAULT_MIN_LEVEL",
+    "DEFAULT_STACK_LIMITS",
+    "DEFAULT_WEIGHT_LIMITS",
+    "EconomyEvent",
+    "EquipmentSlot",
+    "EXCLUSIVE_SLOTS",
+    "ItemType",
     "LUCK_BONUS_PER_POINT",
+    "MAX_GOLD",
     "MAX_LUCK_BONUS",
+    "MAX_PREMIUM_CURRENCY",
+    "MAX_RESISTANCE_PERCENT",
+    "MAX_STACK_SIZE",
     "PITY_INCREMENT",
     "PITY_RESET_ON_SUCCESS",
     "PITY_WEIGHT_BOOST",
-    # Constants - Attributes
-    "MAX_RESISTANCE_PERCENT",
+    "QUALITY_BASE_CHANCES",
+    "QUALITY_STAT_MULTIPLIERS",
+    "Rarity",
+    "RARITY_COLORS",
+    "RARITY_DROP_WEIGHTS",
+    "RARITY_NAMES",
+    "RARITY_PITY_THRESHOLDS",
+    "ResistanceType",
+    "SELLABLE_TYPES",
+    "SKILL_QUALITY_BONUS_PER_LEVEL",
+    "STACKABLE_TYPES",
+    "TRADE_MAX_DISTANCE",
+    "TRADE_TIMEOUT",
+    "TradeState",
     "UPGRADE_BONUS_PER_LEVEL",
-    "DEFAULT_MAX_DURABILITY",
-    # Constants - Limits
-    "DEFAULT_MIN_LEVEL",
-    "DEFAULT_MAX_LEVEL",
-    "DEFAULT_MAX_VALUE",
-    "DEFAULT_MAX_DROPS",
+    "WEIGHT_UNIT",
     # Inventory
+    "ECONOMY_SCHEMA_VERSION",
+    "InventoryContainer",
+    "InventorySlot",
     "ItemDefinition",
     "ItemInstance",
-    "InventorySlot",
-    "InventoryContainer",
-    "InventoryEvent",
-    "ItemRegistry",
-    "Serializer",
-    "ECONOMY_SCHEMA_VERSION",
-    # Crafting
+    # Crafting core
+    "CraftingContext",
+    "CraftingQueueEntry",
+    "CraftingRegistry",
+    "CraftingResult",
+    "CraftingResultType",
     "CraftingStation",
+    "CraftingSystem",
     "Ingredient",
     "IngredientCategory",
     "IngredientRequirement",
+    "Recipe",
+    "RecipeBuilder",
     "RecipeOutput",
     "SkillRequirement",
-    "Recipe",
-    "CraftingResultType",
-    "CraftingResult",
-    "CraftingContext",
-    "CraftingQueueEntry",
-    "CraftingSystem",
-    "CraftingCallback",
-    "RecipeBuilder",
-    "CraftingRegistry",
-    "RecipeFactory",
+    # Foundation Registry decorators (T-GP-8.13)
     "recipe",
     "crafting_station",
     "ingredient",
     "economy",
     "crafting",
+    # Factory methods
+    "RecipeFactory",
+    # Helper functions
     "get_registered_recipes",
     "get_registered_stations",
-    "get_economy_classes",
     "get_recipes_for_station_from_registry",
     "get_recipes_by_skill_from_registry",
     "get_craftable_items",
-    "clear_registered",
+    "get_economy_classes",
+    # Utilities
     "ingredient_from_dict",
-    "recipe_output_from_dict",
-    "skill_requirement_from_dict",
-    "recipe_from_dict",
-    "crafting_station_from_dict",
+    "serializable",
+    # Equipment
+    "EquipmentContainer",
+    "EquipmentDefinition",
+    "EquipmentInstance",
+    "EquipmentRegistry",
+    "EquipmentSet",
+    "EquipmentStats",
+    "ResistanceModifier",
+    "SetBonus",
+    "SpecialEffect",
+    "StatModifier",
     # Loot
-    "RandomSource",
-    "DefaultRandomSource",
-    "SeededRandomSource",
-    "LootCondition",
-    "LevelCondition",
-    "QuestCondition",
-    "FlagCondition",
-    "AttributeCondition",
-    "RandomChanceCondition",
-    "LootEntry",
-    "NestedTableEntry",
-    "CurrencyEntry",
-    "LootTableEntry",
-    "LootDrop",
     "CurrencyDrop",
+    "CurrencyEntry",
+    "LootDrop",
+    "LootEntry",
     "LootResult",
-    "PityTracker",
+    "LootRoller",
     "LootTable",
     "LootTableBuilder",
     "LootTableRegistry",
-    "LootRoller",
-    "loot_entry_from_dict",
-    "loot_table_from_dict",
-    # Equipment
-    "StatModifier",
-    "ResistanceModifier",
-    "SpecialEffect",
-    "EquipmentStats",
-    "EquipmentDefinition",
-    "EquipmentInstance",
-    "SetBonus",
-    "EquipmentSet",
-    "EquipmentContainer",
-    "EquipChangeCallback",
+    "NestedTableEntry",
+    "PityTracker",
 ]

@@ -24,6 +24,13 @@ const SHADOW_MAP_RESOLUTION: f32 = 2048.0;
 
 // ── Cascade selection ──
 
+// T-LIT-4.4: Cascade selection result with blend information for soft transitions.
+struct CascadeSelection {
+    primary_idx: u32,      // Primary cascade index
+    secondary_idx: u32,    // Secondary cascade for blending (if in blend zone)
+    blend_factor: f32,     // 0.0 = use primary only, 1.0 = use secondary only
+}
+
 /// Selects the cascade index based on view-space depth.
 /// Cascade split_depths are ordered from nearest (index 0) to farthest (index 3).
 fn select_cascade(
@@ -40,6 +47,50 @@ fn select_cascade(
         }
     }
     return 3u;
+}
+
+/// T-LIT-4.4: Selects cascade with blend information for soft transitions.
+/// Returns primary cascade index and blend factor towards next cascade.
+///
+/// Parameters:
+/// - world_pos: World-space position
+/// - view_matrix: Camera view matrix
+/// - cascades: Array of 4 cascade descriptors
+/// - blend_range: Distance over which to blend between cascades (default 2.0)
+///
+/// Returns: CascadeSelection with primary/secondary indices and blend factor.
+fn select_cascade_blended(
+    world_pos: vec3<f32>,
+    view_matrix: mat4x4<f32>,
+    cascades: array<CascadeData, 4>,
+    blend_range: f32,
+) -> CascadeSelection {
+    let view_pos = view_matrix * vec4<f32>(world_pos, 1.0);
+    let view_depth = abs(view_pos.z);
+
+    var result: CascadeSelection;
+    result.blend_factor = 0.0;
+    result.secondary_idx = 3u;
+
+    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+        let split_depth = cascades[i].split_depth;
+        if view_depth < split_depth {
+            result.primary_idx = i;
+
+            // Check if within blend range of cascade boundary
+            if blend_range > 0.0 && i < 3u {
+                let blend_start = split_depth - blend_range;
+                if view_depth > blend_start {
+                    // Linear interpolation within blend zone
+                    result.blend_factor = (view_depth - blend_start) / blend_range;
+                    result.secondary_idx = i + 1u;
+                }
+            }
+            return result;
+        }
+    }
+    result.primary_idx = 3u;
+    return result;
 }
 
 // ── Biased shadow UV computation ──
@@ -158,4 +209,67 @@ fn compute_shadow_factor(
     }
 
     return pcf_sample(shadow_uv, shadow_maps, shadow_sampler, pcf_radius);
+}
+
+/// T-LIT-4.4: Computes blended shadow factor with soft cascade transitions.
+///
+/// This version smoothly blends between cascades when the fragment is near
+/// a cascade boundary, eliminating visible seams.
+///
+/// Parameters:
+/// - world_pos: world-space surface position
+/// - normal: world-space surface normal (for normal bias)
+/// - light_dir: direction TO the light (normalized)
+/// - view_matrix: camera view matrix (for cascade selection)
+/// - cascades: array of 4 cascade descriptors
+/// - shadow_maps: texture_depth_2d_array with one layer per cascade
+/// - shadow_sampler: sampler_comparison for depth comparison
+/// - bias_params: (constant_bias, slope_bias, normal_bias, 0)
+/// - pcf_radius: PCF kernel radius (1 = 3x3, 2 = 5x5, etc.)
+/// - blend_range: distance in world units over which to blend (default 2.0)
+///
+/// Returns shadow factor in [0, 1] (1 = fully lit).
+fn compute_shadow_factor_blended(
+    world_pos: vec3<f32>,
+    normal: vec3<f32>,
+    light_dir: vec3<f32>,
+    view_matrix: mat4x4<f32>,
+    cascades: array<CascadeData, 4>,
+    shadow_maps: texture_depth_2d_array,
+    shadow_sampler: sampler_comparison,
+    bias_params: vec4<f32>,
+    pcf_radius: u32,
+    blend_range: f32,
+) -> f32 {
+    let selection = select_cascade_blended(world_pos, view_matrix, cascades, blend_range);
+
+    // Sample primary cascade.
+    let primary_cascade = cascades[selection.primary_idx];
+    let primary_uv = compute_shadow_uv(world_pos, normal, light_dir, primary_cascade, bias_params);
+
+    // Check for sentinel values.
+    if primary_uv.w < 0.0 {
+        return 1.0; // outside all cascades — fully lit
+    }
+
+    let primary_shadow = pcf_sample(primary_uv, shadow_maps, shadow_sampler, pcf_radius);
+
+    // If not in blend zone, return primary result only (fast path).
+    if selection.blend_factor <= 0.0 {
+        return primary_shadow;
+    }
+
+    // Sample secondary cascade for blending.
+    let secondary_cascade = cascades[selection.secondary_idx];
+    let secondary_uv = compute_shadow_uv(world_pos, normal, light_dir, secondary_cascade, bias_params);
+
+    // If secondary is invalid, use primary only.
+    if secondary_uv.w < 0.0 {
+        return primary_shadow;
+    }
+
+    let secondary_shadow = pcf_sample(secondary_uv, shadow_maps, shadow_sampler, pcf_radius);
+
+    // Linear interpolation between cascades for smooth transition.
+    return mix(primary_shadow, secondary_shadow, selection.blend_factor);
 }

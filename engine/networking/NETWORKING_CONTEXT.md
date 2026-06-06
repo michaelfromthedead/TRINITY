@@ -3,6 +3,15 @@
 > **Purpose**: Complete implementation reference for the engine/networking/ layer.  
 > Read this file and ONLY this file when implementing networking systems.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Replication, rollback, RPCs (~8K lines) |
+| Rust | ⚠️ 69% | GAPSET_16_NETWORKING — Transport wired |
+| Wired | ✅ Partial | Core networking functional |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

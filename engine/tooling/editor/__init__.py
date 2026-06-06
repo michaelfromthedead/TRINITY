@@ -11,6 +11,7 @@ This module provides the core editor framework including:
 - Keyboard shortcut manager with customization
 - User preferences system with categories
 - Plugin manager with hot-loading capability
+- Debug UI framework (imgui/egui-style)
 
 All editor classes use the @editor decorator and integrate with
 Foundation's Tracker for undo/redo and Mirror for property inspection.
@@ -112,6 +113,83 @@ from engine.tooling.editor.plugins import (
     PluginManifest,
 )
 
+from engine.tooling.editor.script_reload import (
+    ScriptReloader,
+    ScriptState,
+    ModuleSwapper,
+    StateSerializer,
+    ReloadState,
+    ReloadStrategy,
+    ReloadResult,
+    ReloadError,
+    ReloadErrorType,
+    ExecutionCheckpoint,
+    ModuleBackup,
+    reloadable_section,
+    get_script_reloader,
+)
+
+from engine.tooling.editor.debug_ui import (
+    # Core types
+    WidgetType,
+    UIState,
+    Vec2,
+    Vec3,
+    Vec4,
+    Color,
+    WidgetStyle,
+    WidgetConfig,
+    UIEvent,
+    # Base widgets
+    Widget,
+    ContainerWidget,
+    # Concrete widgets
+    LabelWidget,
+    TextInputWidget,
+    IntSliderWidget,
+    FloatSliderWidget,
+    IntInputWidget,
+    FloatInputWidget,
+    CheckboxWidget,
+    DropdownWidget,
+    ColorPickerWidget,
+    Vec2InputWidget,
+    Vec3InputWidget,
+    Vec4InputWidget,
+    ButtonWidget,
+    SeparatorWidget,
+    # Containers
+    CollapsibleSection,
+    PropertyPanel,
+    PropertyBinding,
+    # Registry and inspection
+    WidgetRegistry,
+    AutoInspector,
+    # Context and manager
+    DebugUIContext,
+    DebugUI,
+)
+
+from engine.tooling.editor.debuggable import (
+    # Core decorator
+    debuggable,
+    debug_field,
+    debug_section,
+    # Configuration classes
+    DebugConfig,
+    DebugFieldConfig,
+    DebugSectionConfig,
+    WidgetHint,
+    # Panel and inspector
+    DebuggablePanel,
+    DebuggableInspector,
+    DebuggableRegistry,
+    # Helper functions
+    is_debuggable,
+    get_debug_panel,
+    create_debug_ui_for,
+)
+
 __all__ = [
     # App Shell
     "EditorApplication",
@@ -191,4 +269,70 @@ __all__ = [
     "PluginDependency",
     "PluginExtensionPoint",
     "PluginManifest",
+    # Script Reload
+    "ScriptReloader",
+    "ScriptState",
+    "ModuleSwapper",
+    "StateSerializer",
+    "ReloadState",
+    "ReloadStrategy",
+    "ReloadResult",
+    "ReloadError",
+    "ReloadErrorType",
+    "ExecutionCheckpoint",
+    "ModuleBackup",
+    "reloadable_section",
+    "get_script_reloader",
+    # Debug UI - Core types
+    "WidgetType",
+    "UIState",
+    "Vec2",
+    "Vec3",
+    "Vec4",
+    "Color",
+    "WidgetStyle",
+    "WidgetConfig",
+    "UIEvent",
+    # Debug UI - Base widgets
+    "Widget",
+    "ContainerWidget",
+    # Debug UI - Concrete widgets
+    "LabelWidget",
+    "TextInputWidget",
+    "IntSliderWidget",
+    "FloatSliderWidget",
+    "IntInputWidget",
+    "FloatInputWidget",
+    "CheckboxWidget",
+    "DropdownWidget",
+    "ColorPickerWidget",
+    "Vec2InputWidget",
+    "Vec3InputWidget",
+    "Vec4InputWidget",
+    "ButtonWidget",
+    "SeparatorWidget",
+    # Debug UI - Containers
+    "CollapsibleSection",
+    "PropertyPanel",
+    "PropertyBinding",
+    # Debug UI - Registry and inspection
+    "WidgetRegistry",
+    "AutoInspector",
+    # Debug UI - Context and manager
+    "DebugUIContext",
+    "DebugUI",
+    # Debuggable decorator and inspector
+    "debuggable",
+    "debug_field",
+    "debug_section",
+    "DebugConfig",
+    "DebugFieldConfig",
+    "DebugSectionConfig",
+    "WidgetHint",
+    "DebuggablePanel",
+    "DebuggableInspector",
+    "DebuggableRegistry",
+    "is_debuggable",
+    "get_debug_panel",
+    "create_debug_ui_for",
 ]

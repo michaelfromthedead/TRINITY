@@ -42,10 +42,9 @@ class FilterType(Enum):
     ALLPASS = auto()
     PEAK = auto()          # Parametric EQ
     LOW_SHELF = auto()
+    LOWSHELF = LOW_SHELF   # Alias
     HIGH_SHELF = auto()
-    # Aliases for compatibility
-    LOWSHELF = LOW_SHELF
-    HIGHSHELF = HIGH_SHELF
+    HIGHSHELF = HIGH_SHELF  # Alias
 
 
 @dataclass
@@ -114,7 +113,6 @@ class BiquadFilter(DSPNode):
         self._gain_db = self.add_parameter('gain_db', gain_db)
 
         self._calculate_coefficients()
-        self._bypass = False
 
     @property
     def filter_type(self) -> FilterType:
@@ -265,47 +263,10 @@ class BiquadFilter(DSPNode):
 
         return output
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block of samples.
-
-        Can be called in two ways:
-        1. process_block(input, output) - fills output buffer, returns None
-        2. process_block(input) - returns processed array (for simple 1D arrays)
-        """
-        # Handle bypass mode
-        if getattr(self, '_bypass', False):
-            if output_buffer is not None:
-                np.copyto(output_buffer, input_buffer)
-                return None
-            return input_buffer.copy()
-
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples."""
         c = self._coeffs
-
-        # Handle 1D array input (simple mono processing)
-        if input_buffer.ndim == 1:
-            result = np.zeros_like(input_buffer, dtype=np.float32)
-            z1 = self._z1[0]
-            z2 = self._z2[0]
-
-            for i in range(len(input_buffer)):
-                x = input_buffer[i]
-                y = c.b0 * x + z1
-                z1 = c.b1 * x - c.a1 * y + z2
-                z2 = c.b2 * x - c.a2 * y
-                result[i] = y
-
-            self._z1[0] = z1
-            self._z2[0] = z2
-            return result
-
-        # Handle 2D array input (multi-channel)
         num_channels, num_samples = input_buffer.shape
-
-        if output_buffer is None:
-            output_buffer = np.zeros_like(input_buffer, dtype=np.float32)
-            return_output = True
-        else:
-            return_output = False
 
         for ch in range(num_channels):
             z1 = self._z1[ch]
@@ -321,10 +282,6 @@ class BiquadFilter(DSPNode):
             self._z1[ch] = z1
             self._z2[ch] = z2
 
-        if return_output:
-            return output_buffer
-        return None
-
     def reset(self) -> None:
         """Reset filter state."""
         self._z1.fill(0.0)
@@ -338,18 +295,6 @@ class BiquadFilter(DSPNode):
         """Resize state arrays when channel count changes."""
         self._z1 = np.zeros(self._state.num_channels, dtype=np.float64)
         self._z2 = np.zeros(self._state.num_channels, dtype=np.float64)
-
-    def get_coefficients(self) -> BiquadCoefficients:
-        """Return the current filter coefficients."""
-        return self._coeffs
-
-    def set_frequency(self, value: float) -> None:
-        """Set the filter frequency."""
-        self.frequency = value
-
-    def set_bypass(self, bypass: bool) -> None:
-        """Set bypass mode."""
-        self._bypass = bypass
 
     def get_frequency_response(
         self,
@@ -391,17 +336,14 @@ class LowPassFilter(BiquadFilter):
 
     def __init__(
         self,
-        frequency: float = 1000.0,
-        cutoff: Optional[float] = None,
+        cutoff: float = 1000.0,
         q: float = DEFAULT_Q,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        # Support both 'frequency' and 'cutoff' parameters
-        freq = cutoff if cutoff is not None else frequency
         super().__init__(
-            FilterType.LOWPASS, freq, q, 0.0,
+            FilterType.LOWPASS, cutoff, q, 0.0,
             sample_rate, block_size, num_channels
         )
 
@@ -419,17 +361,14 @@ class HighPassFilter(BiquadFilter):
 
     def __init__(
         self,
-        frequency: float = 100.0,
-        cutoff: Optional[float] = None,
+        cutoff: float = 100.0,
         q: float = DEFAULT_Q,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        # Support both 'frequency' and 'cutoff' parameters
-        freq = cutoff if cutoff is not None else frequency
         super().__init__(
-            FilterType.HIGHPASS, freq, q, 0.0,
+            FilterType.HIGHPASS, cutoff, q, 0.0,
             sample_rate, block_size, num_channels
         )
 
@@ -447,17 +386,14 @@ class BandPassFilter(BiquadFilter):
 
     def __init__(
         self,
-        frequency: float = 1000.0,
-        center_freq: Optional[float] = None,
+        center_freq: float = 1000.0,
         q: float = 1.0,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        # Support both 'frequency' and 'center_freq' parameters
-        freq = center_freq if center_freq is not None else frequency
         super().__init__(
-            FilterType.BANDPASS, freq, q, 0.0,
+            FilterType.BANDPASS, center_freq, q, 0.0,
             sample_rate, block_size, num_channels
         )
 
@@ -572,10 +508,10 @@ class PeakFilter(BiquadFilter):
 @dataclass
 class EQBand:
     """Configuration for a single EQ band."""
-    frequency: float = 1000.0
-    gain_db: float = 0.0
-    q: float = 1.0
-    filter_type: FilterType = FilterType.PEAK
+    filter_type: FilterType
+    frequency: float
+    gain_db: float
+    q: float
     enabled: bool = True
 
 
@@ -588,7 +524,7 @@ class ParametricEQ(DSPNode):
 
     def __init__(
         self,
-        num_bands: int = 0,
+        num_bands: int = 4,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
@@ -602,23 +538,21 @@ class ParametricEQ(DSPNode):
         super().__init__(sample_rate, block_size, num_channels)
 
         # Default band setup (similar to a typical 4-band EQ)
-        # Only create bands if num_bands > 0
-        if num_bands > 0:
-            default_bands = [
-                EQBand(frequency=100.0, gain_db=0.0, q=DEFAULT_Q, filter_type=FilterType.LOW_SHELF),
-                EQBand(frequency=400.0, gain_db=0.0, q=1.0, filter_type=FilterType.PEAK),
-                EQBand(frequency=2000.0, gain_db=0.0, q=1.0, filter_type=FilterType.PEAK),
-                EQBand(frequency=8000.0, gain_db=0.0, q=DEFAULT_Q, filter_type=FilterType.HIGH_SHELF),
-            ]
+        default_bands = [
+            EQBand(FilterType.LOW_SHELF, 100.0, 0.0, DEFAULT_Q),
+            EQBand(FilterType.PEAK, 400.0, 0.0, 1.0),
+            EQBand(FilterType.PEAK, 2000.0, 0.0, 1.0),
+            EQBand(FilterType.HIGH_SHELF, 8000.0, 0.0, DEFAULT_Q),
+        ]
 
-            for i in range(num_bands):
-                if i < len(default_bands):
-                    config = default_bands[i]
-                else:
-                    config = EQBand(frequency=1000.0, gain_db=0.0, q=1.0, filter_type=FilterType.PEAK)
+        for i in range(num_bands):
+            if i < len(default_bands):
+                config = default_bands[i]
+            else:
+                config = EQBand(FilterType.PEAK, 1000.0, 0.0, 1.0)
 
-                self._band_configs.append(config)
-                self._bands.append(self._create_band_filter(config))
+            self._band_configs.append(config)
+            self._bands.append(self._create_band_filter(config))
 
         # Intermediate buffer for cascading
         self._cascade_buffer = self._allocate_aligned_buffer(block_size, num_channels)
@@ -626,22 +560,17 @@ class ParametricEQ(DSPNode):
     def _create_band_filter(self, config: EQBand) -> BiquadFilter:
         """Create a filter for a band configuration."""
         return BiquadFilter(
-            config.filter_type,  # positional: filter_type
-            config.frequency,    # positional: frequency
-            config.q,            # positional: q
-            config.gain_db,      # positional: gain_db
-            self._state.sample_rate,
-            self._state.block_size,
-            self._state.num_channels,
+            filter_type=config.filter_type,
+            frequency=config.frequency,
+            q=config.q,
+            gain_db=config.gain_db,
+            sample_rate=self._state.sample_rate,
+            block_size=self._state.block_size,
+            num_channels=self._state.num_channels,
         )
 
     @property
     def num_bands(self) -> int:
-        return len(self._bands)
-
-    @property
-    def band_count(self) -> int:
-        """Alias for num_bands for compatibility."""
         return len(self._bands)
 
     def set_band(
@@ -687,23 +616,15 @@ class ParametricEQ(DSPNode):
         q: float = 1.0,
     ) -> int:
         """Add a new EQ band."""
-        config = EQBand(frequency=frequency, gain_db=gain_db, q=q, filter_type=filter_type)
+        config = EQBand(filter_type, frequency, gain_db, q)
         self._band_configs.append(config)
         self._bands.append(self._create_band_filter(config))
         return len(self._bands) - 1
 
     def remove_band(self, band_index: int) -> None:
-        """Remove an EQ band.
-
-        Raises:
-            IndexError: If band_index is out of range.
-            ValueError: If trying to remove the last band when num_bands was set in constructor.
-        """
-        if band_index < 0 or band_index >= len(self._bands):
-            raise IndexError(f"Band index {band_index} out of range")
-        # If EQ was created with initial bands (num_bands > 0), don't allow removing the last one
-        if self._num_bands_init > 0 and len(self._bands) <= 1:
-            raise ValueError("Cannot remove the last band")
+        """Remove an EQ band."""
+        if len(self._bands) <= 1:
+            raise ValueError("Cannot remove last band")
         self._band_configs.pop(band_index)
         self._bands.pop(band_index)
 
@@ -715,20 +636,13 @@ class ParametricEQ(DSPNode):
                 result = band.process_sample(result, channel)
         return result
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block through all bands in cascade.
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block through all bands in cascade."""
+        num_channels, num_samples = input_buffer.shape
 
-        Can be called in two ways:
-        1. process_block(input, output) - fills output buffer, returns None
-        2. process_block(input) - returns processed array
-        """
-        # Handle 1D array input
-        if input_buffer.ndim == 1:
-            result = input_buffer.copy()
-            for i, band in enumerate(self._bands):
-                if self._band_configs[i].enabled:
-                    result = band.process_block(result)
-            return result
+        # Ensure cascade buffer is large enough
+        if self._cascade_buffer.shape != (num_channels, num_samples):
+            self._cascade_buffer = self._allocate_aligned_buffer(num_samples, num_channels)
 
         # Find enabled bands
         enabled_bands = [
@@ -736,15 +650,9 @@ class ParametricEQ(DSPNode):
             if self._band_configs[i].enabled
         ]
 
-        if output_buffer is None:
-            output_buffer = np.zeros_like(input_buffer, dtype=np.float32)
-            return_output = True
-        else:
-            return_output = False
-
         if not enabled_bands:
             np.copyto(output_buffer, input_buffer)
-            return output_buffer if return_output else None
+            return
 
         # Process through enabled bands
         current_input = input_buffer
@@ -756,8 +664,6 @@ class ParametricEQ(DSPNode):
                 # Intermediate bands output to cascade buffer
                 band.process_block(current_input, self._cascade_buffer)
                 current_input = self._cascade_buffer
-
-        return output_buffer if return_output else None
 
     def reset(self) -> None:
         """Reset all bands."""
@@ -898,51 +804,9 @@ class StateVariableFilter(DSPNode):
         else:
             return v2  # Default to lowpass
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block of samples.
-
-        Can be called in two ways:
-        1. process_block(input, output) - fills output buffer, returns None
-        2. process_block(input) - returns processed array
-        """
-        # Handle 1D array input
-        if input_buffer.ndim == 1:
-            result = np.zeros_like(input_buffer, dtype=np.float32)
-            ic1eq = self._ic1eq[0]
-            ic2eq = self._ic2eq[0]
-
-            for i in range(len(input_buffer)):
-                x = input_buffer[i]
-                v3 = x - ic2eq
-                v1 = self._a1 * ic1eq + self._a2 * v3
-                v2 = ic2eq + self._a2 * ic1eq + self._a3 * v3
-
-                ic1eq = 2.0 * v1 - ic1eq
-                ic2eq = 2.0 * v2 - ic2eq
-
-                if self._output_mode == FilterType.LOWPASS:
-                    result[i] = v2
-                elif self._output_mode == FilterType.HIGHPASS:
-                    result[i] = x - self._k * v1 - v2
-                elif self._output_mode == FilterType.BANDPASS:
-                    result[i] = v1
-                elif self._output_mode == FilterType.NOTCH:
-                    result[i] = x - self._k * v1
-                else:
-                    result[i] = v2
-
-            self._ic1eq[0] = ic1eq
-            self._ic2eq[0] = ic2eq
-            return result
-
-        # Handle 2D array input
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples."""
         num_channels, num_samples = input_buffer.shape
-
-        if output_buffer is None:
-            output_buffer = np.zeros_like(input_buffer, dtype=np.float32)
-            return_output = True
-        else:
-            return_output = False
 
         for ch in range(num_channels):
             ic1eq = self._ic1eq[ch]
@@ -971,44 +835,6 @@ class StateVariableFilter(DSPNode):
 
             self._ic1eq[ch] = ic1eq
             self._ic2eq[ch] = ic2eq
-
-        return output_buffer if return_output else None
-
-    def process_block_multi(self, input_buffer: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Process a block and return all three filter outputs.
-
-        Args:
-            input_buffer: 1D input array
-
-        Returns:
-            Tuple of (lowpass, highpass, bandpass) outputs
-        """
-        n = len(input_buffer)
-        lp_out = np.zeros(n, dtype=np.float32)
-        hp_out = np.zeros(n, dtype=np.float32)
-        bp_out = np.zeros(n, dtype=np.float32)
-
-        ic1eq = self._ic1eq[0]
-        ic2eq = self._ic2eq[0]
-
-        for i in range(n):
-            x = input_buffer[i]
-            v3 = x - ic2eq
-            v1 = self._a1 * ic1eq + self._a2 * v3
-            v2 = ic2eq + self._a2 * ic1eq + self._a3 * v3
-
-            ic1eq = 2.0 * v1 - ic1eq
-            ic2eq = 2.0 * v2 - ic2eq
-
-            lp_out[i] = v2
-            hp_out[i] = x - self._k * v1 - v2
-            bp_out[i] = v1
-
-        self._ic1eq[0] = ic1eq
-        self._ic2eq[0] = ic2eq
-
-        return lp_out, hp_out, bp_out
 
     def get_all_outputs(
         self,
@@ -1065,7 +891,8 @@ class OnePoleFilter(DSPNode):
     ):
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._filter_type = filter_type
-        self._z1 = np.zeros(num_channels, dtype=np.float64)
+        self._z1 = np.zeros(num_channels, dtype=np.float64)  # prev input (HP) or state (LP)
+        self._z2 = np.zeros(num_channels, dtype=np.float64)  # prev output (HP only)
         self._b0 = 0.0
         self._a1 = 0.0
         self._init_frequency = frequency
@@ -1090,16 +917,18 @@ class OnePoleFilter(DSPNode):
         freq = self._frequency.target
         sr = self._state.sample_rate
 
-        # Coefficient calculation - use standard one-pole filter coefficient
-        # R = 1 - (2 * pi * fc / sr), clamped to avoid instability
+        # Coefficient calculation
         omega = 2.0 * math.pi * freq / sr
-        self._a1 = max(0.0, min(0.9999, 1.0 - omega))
 
         if self._filter_type == FilterType.LOWPASS:
+            self._a1 = math.exp(-omega)
             self._b0 = 1.0 - self._a1
-        else:  # HIGHPASS (DC blocker style)
-            # Standard DC blocker coefficient
-            self._b0 = (1.0 + self._a1) / 2.0
+        else:  # HIGHPASS - DC blocker formula: y[n] = x[n] - x[n-1] + R * y[n-1]
+            # R is the pole position, close to 1 for low cutoff frequencies
+            self._a1 = 1.0 - omega  # Approximation: 1 - 2*pi*fc/fs
+            if self._a1 > 0.9999:
+                self._a1 = 0.9999
+            self._b0 = 1.0  # Unity gain for difference term
 
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample."""
@@ -1107,60 +936,19 @@ class OnePoleFilter(DSPNode):
             self._z1[channel] = sample * self._b0 + self._z1[channel] * self._a1
             return self._z1[channel]
         else:
-            # DC blocker formula: y[n] = x[n] - x[n-1] + R * y[n-1]
-            # where R is close to 1 (the _a1 coefficient)
-            output = sample - self._z1[channel] + self._a1 * getattr(self, '_y1', np.zeros_like(self._z1))[channel]
+            # DC blocker: y[n] = x[n] - x[n-1] + R * y[n-1]
+            output = sample - self._z1[channel] + self._a1 * self._z2[channel]
             self._z1[channel] = sample
-            if not hasattr(self, '_y1'):
-                self._y1 = np.zeros_like(self._z1)
-            self._y1[channel] = output
+            self._z2[channel] = output
             return output
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block of samples.
-
-        Can be called in two ways:
-        1. process_block(input, output) - fills output buffer, returns None
-        2. process_block(input) - returns processed array
-        """
-        # Ensure _y1 exists for highpass
-        if not hasattr(self, '_y1'):
-            self._y1 = np.zeros_like(self._z1)
-
-        # Handle 1D array input
-        if input_buffer.ndim == 1:
-            result = np.zeros_like(input_buffer, dtype=np.float32)
-            z1 = self._z1[0]
-            y1 = self._y1[0]
-
-            if self._filter_type == FilterType.LOWPASS:
-                for i in range(len(input_buffer)):
-                    z1 = input_buffer[i] * self._b0 + z1 * self._a1
-                    result[i] = z1
-            else:
-                # DC blocker: y[n] = x[n] - x[n-1] + R * y[n-1]
-                for i in range(len(input_buffer)):
-                    output = input_buffer[i] - z1 + self._a1 * y1
-                    z1 = input_buffer[i]
-                    y1 = output
-                    result[i] = output
-
-            self._z1[0] = z1
-            self._y1[0] = y1
-            return result
-
-        # Handle 2D array input
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples."""
         num_channels, num_samples = input_buffer.shape
-
-        if output_buffer is None:
-            output_buffer = np.zeros_like(input_buffer, dtype=np.float32)
-            return_output = True
-        else:
-            return_output = False
 
         for ch in range(num_channels):
             z1 = self._z1[ch]
-            y1 = self._y1[ch]
+            z2 = self._z2[ch]
 
             if self._filter_type == FilterType.LOWPASS:
                 for i in range(num_samples):
@@ -1169,28 +957,25 @@ class OnePoleFilter(DSPNode):
             else:
                 # DC blocker: y[n] = x[n] - x[n-1] + R * y[n-1]
                 for i in range(num_samples):
-                    output = input_buffer[ch, i] - z1 + self._a1 * y1
+                    output = input_buffer[ch, i] - z1 + self._a1 * z2
                     z1 = input_buffer[ch, i]
-                    y1 = output
+                    z2 = output
                     output_buffer[ch, i] = output
 
             self._z1[ch] = z1
-            self._y1[ch] = y1
-
-        return output_buffer if return_output else None
+            self._z2[ch] = z2
 
     def reset(self) -> None:
         """Reset filter state."""
         self._z1.fill(0.0)
-        if hasattr(self, '_y1'):
-            self._y1.fill(0.0)
+        self._z2.fill(0.0)
 
     def _on_sample_rate_changed(self) -> None:
         self._update_coefficients()
 
     def _on_channels_changed(self) -> None:
         self._z1 = np.zeros(self._state.num_channels, dtype=np.float64)
-        self._y1 = np.zeros(self._state.num_channels, dtype=np.float64)
+        self._z2 = np.zeros(self._state.num_channels, dtype=np.float64)
 
 
 class DCBlocker(OnePoleFilter):

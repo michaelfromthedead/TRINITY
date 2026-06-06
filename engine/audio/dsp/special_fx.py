@@ -173,6 +173,10 @@ class RadioEffect(DSPNode):
         """Process a block through radio effect."""
         num_channels, num_samples = input_buffer.shape
 
+        # Ensure intermediate buffer is large enough
+        if self._intermediate.shape != (num_channels, num_samples):
+            self._intermediate = self._allocate_aligned_buffer(num_samples, num_channels)
+
         # High-pass filter
         self._high_pass.process_block(input_buffer, self._intermediate)
         # Low-pass filter
@@ -563,6 +567,12 @@ class PhoneEffect(DSPNode):
 
     def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
         """Process a block."""
+        num_channels, num_samples = input_buffer.shape
+
+        # Ensure intermediate buffer is large enough
+        if self._intermediate.shape != (num_channels, num_samples):
+            self._intermediate = self._allocate_aligned_buffer(num_samples, num_channels)
+
         self._high_pass.process_block(input_buffer, self._intermediate)
         self._low_pass.process_block(self._intermediate, output_buffer)
         self._compressor.process_block(output_buffer, self._intermediate)
@@ -617,6 +627,12 @@ class MegaphoneEffect(DSPNode):
 
     def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
         """Process a block."""
+        num_channels, num_samples = input_buffer.shape
+
+        # Ensure intermediate buffer is large enough
+        if self._intermediate.shape != (num_channels, num_samples):
+            self._intermediate = self._allocate_aligned_buffer(num_samples, num_channels)
+
         self._band_pass.process_block(input_buffer, self._intermediate)
         self._distortion.process_block(self._intermediate, output_buffer)
 
@@ -681,6 +697,13 @@ class CaveEffect(DSPNode):
 
     def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
         """Process a block."""
+        num_channels, num_samples = input_buffer.shape
+
+        # Ensure intermediate buffers are large enough
+        if self._intermediate1.shape != (num_channels, num_samples):
+            self._intermediate1 = self._allocate_aligned_buffer(num_samples, num_channels)
+            self._intermediate2 = self._allocate_aligned_buffer(num_samples, num_channels)
+
         self._low_pass.process_block(input_buffer, self._intermediate1)
         self._delay1.process_block(self._intermediate1, output_buffer)
         self._delay2.process_block(self._intermediate1, self._intermediate2)

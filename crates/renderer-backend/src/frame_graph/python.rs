@@ -11,10 +11,11 @@
 //! and produce correct defaults, but the stubs are not yet production-grade.
 
 use core::fmt;
+use std::sync::Arc;
 
 use super::{
     AttachmentLoadOp, AttachmentStoreOp, BufferDesc, ColorAttachment, DepthStencilAttachment,
-    DispatchSource, EmptyView, InstanceSource, IrPass, IrResource, PassIndex, PassType,
+    DispatchSource, EmptyView, InstanceSource, IrPass, IrResource, PassFlags, PassIndex, PassType,
     ResourceDesc, ResourceHandle, ResourceAccessSet, ResourceLifetime, ResourceState,
     Texture3DDesc, TextureDesc, View, ViewType,
 };
@@ -545,10 +546,9 @@ impl TryFrom<PyPassNode> for IrPass {
                     },
                 };
 
-                let pass_name = node.name.clone();
+                let pass_name = node.name;
                 Ok(IrPass {
                     index: PassIndex(0),
-                    name: node.name,
                     pass_type,
                     access_set: ResourceAccessSet { reads, writes },
                     color_attachments,
@@ -556,9 +556,10 @@ impl TryFrom<PyPassNode> for IrPass {
                     instance_source,
                     dispatch_source: None,
                     view_type,
+                    view: Arc::new(EmptyView { name: pass_name.clone() }),
+                    name: pass_name,
                     tags: Vec::new(),
-                    feature_flags: 0,
-                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
+                    flags: PassFlags::empty(),
                     })
             }
 
@@ -571,11 +572,10 @@ impl TryFrom<PyPassNode> for IrPass {
                     Some(ref src) => Some(convert_dispatch_source(src)?),
                     None => return Err(ConversionError::MissingDispatchSource),
                 };
+                let pass_name = node.name;
 
-                let pass_name = node.name.clone();
                 Ok(IrPass {
                     index: PassIndex(0),
-                    name: node.name,
                     pass_type,
                     access_set: ResourceAccessSet { reads, writes },
                     color_attachments: Vec::new(),
@@ -589,9 +589,10 @@ impl TryFrom<PyPassNode> for IrPass {
                     },
                     dispatch_source,
                     view_type,
+                    view: Arc::new(EmptyView { name: pass_name.clone() }),
+                    name: pass_name,
                     tags: Vec::new(),
-                    feature_flags: 0,
-                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
+                    flags: PassFlags::empty(),
                     })
             }
 
@@ -600,11 +601,10 @@ impl TryFrom<PyPassNode> for IrPass {
                 if !node.color_attachments.is_empty() || node.depth_stencil.is_some() {
                     return Err(ConversionError::AttachmentsNotAllowed(pass_type));
                 }
+                let pass_name = node.name;
 
-                let pass_name = node.name.clone();
                 Ok(IrPass {
                     index: PassIndex(0),
-                    name: node.name,
                     pass_type,
                     access_set: ResourceAccessSet { reads, writes },
                     color_attachments: Vec::new(),
@@ -618,9 +618,10 @@ impl TryFrom<PyPassNode> for IrPass {
                     },
                     dispatch_source: None,
                     view_type,
+                    view: Arc::new(EmptyView { name: pass_name.clone() }),
+                    name: pass_name,
                     tags: Vec::new(),
-                    feature_flags: 0,
-                    view: std::sync::Arc::new(super::EmptyView { name: pass_name }),
+                    flags: PassFlags::empty(),
                     })
             }
         }
@@ -864,6 +865,36 @@ impl TryFrom<PyResourceDesc> for IrResource {
         };
 
         Ok(IrResource::new(handle, py.name, resource_desc, lifetime, initial_state))
+    }
+}
+// ---------------------------------------------------------------------------
+// Test Helpers (available to integration tests)
+// ---------------------------------------------------------------------------
+
+/// Creates a minimal PyPassNode for testing purposes.
+/// This is doc-hidden but available to integration tests.
+#[doc(hidden)]
+pub fn minimal_py_pass_node(name: &str, pass_type: PyPassType) -> PyPassNode {
+    PyPassNode {
+        name: name.to_string(),
+        pass_type,
+        color_attachments: vec![PyColorAttachment {
+            resource: 0,
+            load_op: "clear".to_string(),
+            store_op: "store".to_string(),
+        }],
+        depth_stencil: Some(PyDepthStencilAttachment {
+            resource: 1,
+            depth_load_op: "clear".to_string(),
+            depth_store_op: "store".to_string(),
+            stencil_load_op: "load".to_string(),
+            stencil_store_op: "store".to_string(),
+        }),
+        reads: vec![],
+        writes: vec![],
+        instance_source: None,
+        dispatch_source: None,
+        view_type: PyViewType { kind: "default".to_string() },
     }
 }
 
@@ -1130,5 +1161,1062 @@ mod tests {
         };
         let ir_i: IrResource = imported.try_into().unwrap();
         assert_eq!(ir_i.lifetime, ResourceLifetime::Imported);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 Bindings (T-WGPU-P7.6.1)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "pyo3")]
+pub mod pyo3_bindings {
+    //! PyO3 bindings for the Frame Graph system.
+    //!
+    //! Provides Python-accessible wrappers for:
+    //! - `PyFrameGraph` — main graph builder
+    //! - `PyPassId` / `PyResourceId` — opaque handles
+    //! - `PyCompiledFrameGraph` — compiled graph for execution
+    //! - `PyFrameGraphCompiler` — graph compiler
+
+    use pyo3::prelude::*;
+    use pyo3::exceptions::{PyValueError, PyRuntimeError};
+
+    use crate::frame_graph::graph::{
+        FrameGraph, FrameGraphError, GraphResourceLifetime, PassId, PassType, ResourceAccess,
+        ResourceId, ResourceType,
+    };
+    use crate::frame_graph::execution::{CompiledFrameGraph, FrameGraphCompiler};
+
+    // -------------------------------------------------------------------------
+    // PyPassId
+    // -------------------------------------------------------------------------
+
+    /// Opaque handle identifying a pass in the frame graph.
+    ///
+    /// Pass IDs are returned by `add_*_pass` methods and can be used
+    /// to query pass information or set up dependencies.
+    #[pyclass(name = "PassId")]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct PyPassId(pub(crate) PassId);
+
+    #[pymethods]
+    impl PyPassId {
+        /// Returns the raw numeric ID.
+        #[getter]
+        pub fn raw(&self) -> u64 {
+            self.0.raw()
+        }
+
+        /// Returns true if this is the invalid/null ID.
+        pub fn is_invalid(&self) -> bool {
+            self.0.is_invalid()
+        }
+
+        fn __repr__(&self) -> String {
+            format!("PassId({})", self.0.raw())
+        }
+
+        fn __hash__(&self) -> u64 {
+            self.0.raw()
+        }
+
+        fn __eq__(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl From<PassId> for PyPassId {
+        fn from(id: PassId) -> Self {
+            Self(id)
+        }
+    }
+
+    impl From<PyPassId> for PassId {
+        fn from(py_id: PyPassId) -> Self {
+            py_id.0
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PyResourceId
+    // -------------------------------------------------------------------------
+
+    /// Opaque handle identifying a resource in the frame graph.
+    ///
+    /// Resource IDs are returned by `create_*` methods and used to
+    /// connect passes to resources.
+    #[pyclass(name = "ResourceId")]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct PyResourceId(pub(crate) ResourceId);
+
+    #[pymethods]
+    impl PyResourceId {
+        /// Returns the raw numeric ID.
+        #[getter]
+        pub fn raw(&self) -> u64 {
+            self.0.raw()
+        }
+
+        /// Returns true if this is the invalid/null ID.
+        pub fn is_invalid(&self) -> bool {
+            self.0.is_invalid()
+        }
+
+        fn __repr__(&self) -> String {
+            format!("ResourceId({})", self.0.raw())
+        }
+
+        fn __hash__(&self) -> u64 {
+            self.0.raw()
+        }
+
+        fn __eq__(&self, other: &Self) -> bool {
+            self.0 == other.0
+        }
+    }
+
+    impl From<ResourceId> for PyResourceId {
+        fn from(id: ResourceId) -> Self {
+            Self(id)
+        }
+    }
+
+    impl From<PyResourceId> for ResourceId {
+        fn from(py_id: PyResourceId) -> Self {
+            py_id.0
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PyFrameGraph
+    // -------------------------------------------------------------------------
+
+    /// High-level frame graph builder for organizing GPU workloads.
+    ///
+    /// The frame graph provides automatic dependency resolution, resource
+    /// lifetime tracking, and execution ordering for GPU passes.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// from trinity_renderer import FrameGraph
+    ///
+    /// graph = FrameGraph("main_frame")
+    ///
+    /// # Create resources
+    /// color = graph.create_texture("color", 1920, 1080, "rgba8unorm")
+    /// depth = graph.create_texture("depth", 1920, 1080, "depth32float")
+    ///
+    /// # Add passes
+    /// shadow_pass = graph.add_render_pass("shadow", [])
+    /// main_pass = graph.add_render_pass("main", [color])
+    /// ```
+    #[pyclass(name = "FrameGraph")]
+    pub struct PyFrameGraph {
+        inner: FrameGraph,
+        name: String,
+    }
+
+    #[pymethods]
+    impl PyFrameGraph {
+        /// Creates a new empty frame graph.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        #[new]
+        pub fn new(name: &str) -> Self {
+            Self {
+                inner: FrameGraph::new(),
+                name: name.to_string(),
+            }
+        }
+
+        /// Returns the name of this frame graph.
+        #[getter]
+        pub fn name(&self) -> &str {
+            &self.name
+        }
+
+        /// Adds a render pass to the graph.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `color_attachments` — List of resource IDs for color render targets.
+        ///
+        /// # Returns
+        ///
+        /// The unique pass ID for the new pass.
+        #[pyo3(signature = (name, color_attachments))]
+        pub fn add_render_pass(
+            &mut self,
+            name: &str,
+            color_attachments: Vec<PyResourceId>,
+        ) -> PyPassId {
+            let pass_id = self.inner.add_pass(name, PassType::Render);
+
+            // Connect color attachments as outputs (writes)
+            for color_res in color_attachments {
+                self.inner.connect(pass_id, color_res.into(), ResourceAccess::Write);
+            }
+
+            pass_id.into()
+        }
+
+        /// Adds a compute pass to the graph.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `reads` — Resources the pass reads from.
+        /// * `writes` — Resources the pass writes to.
+        ///
+        /// # Returns
+        ///
+        /// The unique pass ID for the new pass.
+        #[pyo3(signature = (name, reads, writes))]
+        pub fn add_compute_pass(
+            &mut self,
+            name: &str,
+            reads: Vec<PyResourceId>,
+            writes: Vec<PyResourceId>,
+        ) -> PyPassId {
+            let pass_id = self.inner.add_pass(name, PassType::Compute);
+
+            for read_res in reads {
+                self.inner.connect(pass_id, read_res.into(), ResourceAccess::Read);
+            }
+            for write_res in writes {
+                self.inner.connect(pass_id, write_res.into(), ResourceAccess::Write);
+            }
+
+            pass_id.into()
+        }
+
+        /// Adds a copy/transfer pass to the graph.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        ///
+        /// # Returns
+        ///
+        /// The unique pass ID for the new pass.
+        pub fn add_copy_pass(&mut self, name: &str) -> PyPassId {
+            self.inner.add_pass(name, PassType::Transfer).into()
+        }
+
+        /// Adds a ray-tracing pass to the graph.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `reads` — Resources the pass reads from.
+        /// * `writes` — Resources the pass writes to.
+        ///
+        /// # Returns
+        ///
+        /// The unique pass ID for the new pass.
+        #[pyo3(signature = (name, reads, writes))]
+        pub fn add_raytracing_pass(
+            &mut self,
+            name: &str,
+            reads: Vec<PyResourceId>,
+            writes: Vec<PyResourceId>,
+        ) -> PyPassId {
+            let pass_id = self.inner.add_pass(name, PassType::RayTracing);
+
+            for read_res in reads {
+                self.inner.connect(pass_id, read_res.into(), ResourceAccess::Read);
+            }
+            for write_res in writes {
+                self.inner.connect(pass_id, write_res.into(), ResourceAccess::Write);
+            }
+
+            pass_id.into()
+        }
+
+        /// Creates a 2D texture resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `width` — Texture width in texels.
+        /// * `height` — Texture height in texels.
+        /// * `format` — Texture format (e.g., "rgba8unorm", "depth32float").
+        ///
+        /// # Returns
+        ///
+        /// The unique resource ID for the new texture.
+        pub fn create_texture(
+            &mut self,
+            name: &str,
+            width: u32,
+            height: u32,
+            format: &str,
+        ) -> PyResourceId {
+            self.inner
+                .add_resource(name, ResourceType::Texture2D, GraphResourceLifetime::Transient)
+                .into()
+        }
+
+        /// Creates a 3D/volume texture resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `width` — Texture width in texels.
+        /// * `height` — Texture height in texels.
+        /// * `depth` — Texture depth in texels.
+        /// * `format` — Texture format.
+        ///
+        /// # Returns
+        ///
+        /// The unique resource ID for the new texture.
+        pub fn create_texture_3d(
+            &mut self,
+            name: &str,
+            width: u32,
+            height: u32,
+            depth: u32,
+            format: &str,
+        ) -> PyResourceId {
+            self.inner
+                .add_resource(name, ResourceType::Texture3D, GraphResourceLifetime::Transient)
+                .into()
+        }
+
+        /// Creates a cube map texture resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `size` — Width and height of each cube face in texels.
+        /// * `format` — Texture format.
+        ///
+        /// # Returns
+        ///
+        /// The unique resource ID for the new texture.
+        pub fn create_texture_cube(
+            &mut self,
+            name: &str,
+            size: u32,
+            format: &str,
+        ) -> PyResourceId {
+            self.inner
+                .add_resource(name, ResourceType::TextureCube, GraphResourceLifetime::Transient)
+                .into()
+        }
+
+        /// Creates a GPU buffer resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `size` — Buffer size in bytes.
+        ///
+        /// # Returns
+        ///
+        /// The unique resource ID for the new buffer.
+        pub fn create_buffer(&mut self, name: &str, size: u64) -> PyResourceId {
+            self.inner
+                .add_resource(name, ResourceType::Buffer, GraphResourceLifetime::Transient)
+                .into()
+        }
+
+        /// Imports an external resource (e.g., swapchain image).
+        ///
+        /// Imported resources are not allocated by the frame graph but
+        /// their state is tracked for barrier insertion.
+        ///
+        /// # Arguments
+        ///
+        /// * `name` — Human-readable name for debugging.
+        /// * `resource_type` — Type of resource ("texture2d", "buffer", etc.).
+        ///
+        /// # Returns
+        ///
+        /// The unique resource ID for the imported resource.
+        pub fn import_resource(&mut self, name: &str, resource_type: &str) -> PyResult<PyResourceId> {
+            let res_type = match resource_type.to_lowercase().as_str() {
+                "texture2d" | "texture" => ResourceType::Texture2D,
+                "texture3d" => ResourceType::Texture3D,
+                "texturecube" | "cubemap" => ResourceType::TextureCube,
+                "buffer" => ResourceType::Buffer,
+                other => {
+                    return Err(PyValueError::new_err(format!(
+                        "Unknown resource type: '{}'. Expected: texture2d, texture3d, texturecube, buffer",
+                        other
+                    )));
+                }
+            };
+
+            Ok(self
+                .inner
+                .add_resource(name, res_type, GraphResourceLifetime::Imported)
+                .into())
+        }
+
+        /// Connects a pass to a resource with read access.
+        ///
+        /// Creates a dependency: the pass reads from the resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `pass` — The pass that reads the resource.
+        /// * `resource` — The resource being read.
+        pub fn connect_read(&mut self, pass: PyPassId, resource: PyResourceId) {
+            self.inner.connect(pass.into(), resource.into(), ResourceAccess::Read);
+        }
+
+        /// Connects a pass to a resource with write access.
+        ///
+        /// Creates a dependency: the pass writes to the resource.
+        ///
+        /// # Arguments
+        ///
+        /// * `pass` — The pass that writes the resource.
+        /// * `resource` — The resource being written.
+        pub fn connect_write(&mut self, pass: PyPassId, resource: PyResourceId) {
+            self.inner.connect(pass.into(), resource.into(), ResourceAccess::Write);
+        }
+
+        /// Connects a pass to a resource with read-write access.
+        ///
+        /// Creates dependencies for both reading and writing.
+        ///
+        /// # Arguments
+        ///
+        /// * `pass` — The pass that reads and writes the resource.
+        /// * `resource` — The resource being accessed.
+        pub fn connect_read_write(&mut self, pass: PyPassId, resource: PyResourceId) {
+            self.inner.connect(pass.into(), resource.into(), ResourceAccess::ReadWrite);
+        }
+
+        /// Returns the number of passes in the graph.
+        pub fn pass_count(&self) -> usize {
+            self.inner.passes().count()
+        }
+
+        /// Returns the number of resources in the graph.
+        pub fn resource_count(&self) -> usize {
+            self.inner.resources().count()
+        }
+
+        /// Validates and compiles the frame graph.
+        ///
+        /// Performs topological sorting and cycle detection.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the graph contains cycles or invalid references.
+        pub fn validate(&mut self) -> PyResult<()> {
+            self.inner.compile().map_err(|e| match e {
+                FrameGraphError::CyclicDependency => {
+                    PyValueError::new_err("Frame graph contains a cyclic dependency")
+                }
+                FrameGraphError::MissingResource(id) => {
+                    PyValueError::new_err(format!("Missing resource: {}", id))
+                }
+                FrameGraphError::MissingPass(id) => {
+                    PyValueError::new_err(format!("Missing pass: {}", id))
+                }
+                FrameGraphError::InvalidAccess(msg) => {
+                    PyValueError::new_err(format!("Invalid access: {}", msg))
+                }
+                FrameGraphError::NotCompiled => {
+                    PyRuntimeError::new_err("Graph not compiled")
+                }
+                FrameGraphError::ExecutionFailed(msg) => {
+                    PyRuntimeError::new_err(format!("Execution failed: {}", msg))
+                }
+            })
+        }
+
+        /// Enables or disables a pass.
+        ///
+        /// Disabled passes are skipped during compilation and execution.
+        ///
+        /// # Arguments
+        ///
+        /// * `pass` — The pass to enable or disable.
+        /// * `enabled` — True to enable, false to disable.
+        pub fn set_pass_enabled(&mut self, pass: PyPassId, enabled: bool) -> PyResult<()> {
+            if let Some(p) = self.inner.get_pass_mut(pass.into()) {
+                p.enabled = enabled;
+                Ok(())
+            } else {
+                Err(PyValueError::new_err(format!("Pass not found: {:?}", pass)))
+            }
+        }
+
+        /// Returns whether a pass is enabled.
+        pub fn is_pass_enabled(&self, pass: PyPassId) -> PyResult<bool> {
+            if let Some(p) = self.inner.get_pass(pass.into()) {
+                Ok(p.enabled)
+            } else {
+                Err(PyValueError::new_err(format!("Pass not found: {:?}", pass)))
+            }
+        }
+
+        /// Resets the graph for the next frame.
+        ///
+        /// Clears the execution order but preserves passes and resources.
+        pub fn reset(&mut self) {
+            self.inner.reset();
+        }
+
+        fn __repr__(&self) -> String {
+            format!(
+                "FrameGraph('{}', passes={}, resources={})",
+                self.name,
+                self.pass_count(),
+                self.resource_count()
+            )
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PyCompiledFrameGraph
+    // -------------------------------------------------------------------------
+
+    /// A compiled frame graph ready for execution.
+    ///
+    /// Contains the execution order, barrier batches, and resource allocations
+    /// computed during compilation.
+    #[pyclass(name = "CompiledFrameGraph")]
+    pub struct PyCompiledFrameGraph {
+        inner: CompiledFrameGraph,
+    }
+
+    #[pymethods]
+    impl PyCompiledFrameGraph {
+        /// Returns the number of passes in the execution order.
+        pub fn pass_count(&self) -> usize {
+            self.inner.pass_count()
+        }
+
+        /// Returns the total number of barriers across all batches.
+        pub fn barrier_count(&self) -> usize {
+            self.inner.total_barrier_count()
+        }
+
+        /// Returns the total memory usage of all allocations.
+        pub fn memory_usage(&self) -> u64 {
+            self.inner.total_memory_usage()
+        }
+
+        /// Returns the memory savings from aliasing.
+        pub fn memory_savings(&self) -> u64 {
+            self.inner.memory_savings()
+        }
+
+        /// Returns true if the compiled graph is empty.
+        pub fn is_empty(&self) -> bool {
+            self.inner.is_empty()
+        }
+
+        /// Returns the execution order as a list of pass IDs.
+        pub fn execution_order(&self) -> Vec<PyPassId> {
+            self.inner
+                .execution_order
+                .iter()
+                .map(|&id| PyPassId(id))
+                .collect()
+        }
+
+        /// Returns the number of aliased resource groups.
+        pub fn alias_count(&self) -> usize {
+            self.inner.alias_info.len()
+        }
+
+        /// Returns the number of resource allocations.
+        pub fn allocation_count(&self) -> usize {
+            self.inner.resource_allocations.len()
+        }
+
+        fn __repr__(&self) -> String {
+            format!(
+                "CompiledFrameGraph(passes={}, barriers={}, memory={}B, savings={}B)",
+                self.pass_count(),
+                self.barrier_count(),
+                self.memory_usage(),
+                self.memory_savings()
+            )
+        }
+    }
+
+    impl From<CompiledFrameGraph> for PyCompiledFrameGraph {
+        fn from(compiled: CompiledFrameGraph) -> Self {
+            Self { inner: compiled }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PyFrameGraphCompiler
+    // -------------------------------------------------------------------------
+
+    /// Compiles frame graphs into an executable form.
+    ///
+    /// The compiler performs:
+    /// 1. Topological sorting for execution order
+    /// 2. Barrier resolution for synchronization
+    /// 3. Resource aliasing for memory optimization
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// from trinity_renderer import FrameGraph, FrameGraphCompiler
+    ///
+    /// graph = FrameGraph("frame")
+    /// # ... add passes and resources ...
+    /// graph.validate()
+    ///
+    /// compiler = FrameGraphCompiler()
+    /// compiled = compiler.compile(graph)
+    /// print(f"Passes: {compiled.pass_count()}, Memory: {compiled.memory_usage()}")
+    /// ```
+    #[pyclass(name = "FrameGraphCompiler")]
+    pub struct PyFrameGraphCompiler {
+        inner: FrameGraphCompiler,
+    }
+
+    #[pymethods]
+    impl PyFrameGraphCompiler {
+        /// Creates a new frame graph compiler with default settings.
+        #[new]
+        pub fn new() -> Self {
+            Self {
+                inner: FrameGraphCompiler::new(),
+            }
+        }
+
+        /// Compiles a frame graph into an executable form.
+        ///
+        /// The graph must be validated (via `graph.validate()`) before compilation.
+        ///
+        /// # Arguments
+        ///
+        /// * `graph` — The frame graph to compile.
+        ///
+        /// # Returns
+        ///
+        /// A compiled frame graph ready for execution.
+        pub fn compile(&mut self, graph: &PyFrameGraph) -> PyCompiledFrameGraph {
+            self.inner.compile(&graph.inner).into()
+        }
+
+        /// Resets the compiler state for reuse.
+        pub fn reset(&mut self) {
+            self.inner.reset();
+        }
+
+        fn __repr__(&self) -> String {
+            "FrameGraphCompiler()".to_string()
+        }
+    }
+
+    impl Default for PyFrameGraphCompiler {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Module Registration
+    // -------------------------------------------------------------------------
+
+    /// Registers the frame_graph Python module.
+    ///
+    /// Called from the parent `#[pymodule]` to register all frame graph types.
+    pub fn register_module(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
+        let m = PyModule::new(py, "frame_graph")?;
+
+        m.add_class::<PyFrameGraph>()?;
+        m.add_class::<PyPassId>()?;
+        m.add_class::<PyResourceId>()?;
+        m.add_class::<PyCompiledFrameGraph>()?;
+        m.add_class::<PyFrameGraphCompiler>()?;
+
+        parent.add_submodule(&m)?;
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Tests
+    // -------------------------------------------------------------------------
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        // -- PyPassId tests ---------------------------------------------------
+
+        #[test]
+        fn test_py_pass_id_creation() {
+            let id = PyPassId(PassId::new(42));
+            assert_eq!(id.raw(), 42);
+            assert!(!id.is_invalid());
+        }
+
+        #[test]
+        fn test_py_pass_id_invalid() {
+            let id = PyPassId(PassId::INVALID);
+            assert!(id.is_invalid());
+        }
+
+        #[test]
+        fn test_py_pass_id_equality() {
+            let a = PyPassId(PassId::new(1));
+            let b = PyPassId(PassId::new(1));
+            let c = PyPassId(PassId::new(2));
+            assert!(a.__eq__(&b));
+            assert!(!a.__eq__(&c));
+        }
+
+        #[test]
+        fn test_py_pass_id_hash() {
+            let id = PyPassId(PassId::new(123));
+            assert_eq!(id.__hash__(), 123);
+        }
+
+        #[test]
+        fn test_py_pass_id_repr() {
+            let id = PyPassId(PassId::new(7));
+            assert_eq!(id.__repr__(), "PassId(7)");
+        }
+
+        // -- PyResourceId tests -----------------------------------------------
+
+        #[test]
+        fn test_py_resource_id_creation() {
+            let id = PyResourceId(ResourceId::new(99));
+            assert_eq!(id.raw(), 99);
+            assert!(!id.is_invalid());
+        }
+
+        #[test]
+        fn test_py_resource_id_invalid() {
+            let id = PyResourceId(ResourceId::INVALID);
+            assert!(id.is_invalid());
+        }
+
+        #[test]
+        fn test_py_resource_id_equality() {
+            let a = PyResourceId(ResourceId::new(5));
+            let b = PyResourceId(ResourceId::new(5));
+            let c = PyResourceId(ResourceId::new(6));
+            assert!(a.__eq__(&b));
+            assert!(!a.__eq__(&c));
+        }
+
+        #[test]
+        fn test_py_resource_id_hash() {
+            let id = PyResourceId(ResourceId::new(456));
+            assert_eq!(id.__hash__(), 456);
+        }
+
+        #[test]
+        fn test_py_resource_id_repr() {
+            let id = PyResourceId(ResourceId::new(3));
+            assert_eq!(id.__repr__(), "ResourceId(3)");
+        }
+
+        // -- PyFrameGraph tests -----------------------------------------------
+
+        #[test]
+        fn test_py_frame_graph_creation() {
+            let graph = PyFrameGraph::new("test_frame");
+            assert_eq!(graph.name(), "test_frame");
+            assert_eq!(graph.pass_count(), 0);
+            assert_eq!(graph.resource_count(), 0);
+        }
+
+        #[test]
+        fn test_py_frame_graph_create_texture() {
+            let mut graph = PyFrameGraph::new("test");
+            let tex = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            assert!(!tex.is_invalid());
+            assert_eq!(graph.resource_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_create_buffer() {
+            let mut graph = PyFrameGraph::new("test");
+            let buf = graph.create_buffer("storage", 4096);
+            assert!(!buf.is_invalid());
+            assert_eq!(graph.resource_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_add_render_pass() {
+            let mut graph = PyFrameGraph::new("test");
+            let color = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            let pass = graph.add_render_pass("main", vec![color]);
+            assert!(!pass.is_invalid());
+            assert_eq!(graph.pass_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_add_compute_pass() {
+            let mut graph = PyFrameGraph::new("test");
+            let input = graph.create_texture("input", 256, 256, "rgba8unorm");
+            let output = graph.create_texture("output", 256, 256, "rgba8unorm");
+            let pass = graph.add_compute_pass("process", vec![input], vec![output]);
+            assert!(!pass.is_invalid());
+            assert_eq!(graph.pass_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_add_copy_pass() {
+            let mut graph = PyFrameGraph::new("test");
+            let pass = graph.add_copy_pass("copy");
+            assert!(!pass.is_invalid());
+            assert_eq!(graph.pass_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_add_raytracing_pass() {
+            let mut graph = PyFrameGraph::new("test");
+            let input = graph.create_buffer("scene", 1024);
+            let output = graph.create_texture("output", 1920, 1080, "rgba8unorm");
+            let pass = graph.add_raytracing_pass("trace", vec![input], vec![output]);
+            assert!(!pass.is_invalid());
+            assert_eq!(graph.pass_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_create_texture_3d() {
+            let mut graph = PyFrameGraph::new("test");
+            let tex = graph.create_texture_3d("volume", 128, 128, 64, "rgba8unorm");
+            assert!(!tex.is_invalid());
+            assert_eq!(graph.resource_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_create_texture_cube() {
+            let mut graph = PyFrameGraph::new("test");
+            let tex = graph.create_texture_cube("env", 512, "rgba16float");
+            assert!(!tex.is_invalid());
+            assert_eq!(graph.resource_count(), 1);
+        }
+
+        #[test]
+        fn test_py_frame_graph_validate_empty() {
+            let mut graph = PyFrameGraph::new("empty");
+            // Empty graph should validate successfully
+            assert!(graph.validate().is_ok());
+        }
+
+        #[test]
+        fn test_py_frame_graph_validate_simple() {
+            let mut graph = PyFrameGraph::new("simple");
+            let color = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            let _ = graph.add_render_pass("main", vec![color]);
+            assert!(graph.validate().is_ok());
+        }
+
+        #[test]
+        fn test_py_frame_graph_repr() {
+            let mut graph = PyFrameGraph::new("test");
+            let _ = graph.create_texture("tex", 256, 256, "rgba8unorm");
+            let repr = graph.__repr__();
+            assert!(repr.contains("test"));
+            assert!(repr.contains("passes=0"));
+            assert!(repr.contains("resources=1"));
+        }
+
+        #[test]
+        fn test_py_frame_graph_reset() {
+            let mut graph = PyFrameGraph::new("test");
+            let color = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            let _ = graph.add_render_pass("main", vec![color]);
+            assert!(graph.validate().is_ok());
+            graph.reset();
+            // After reset, the graph needs to be recompiled
+            // but passes and resources are preserved
+            assert_eq!(graph.pass_count(), 1);
+            assert_eq!(graph.resource_count(), 1);
+        }
+
+        // -- PyFrameGraphCompiler tests ---------------------------------------
+
+        #[test]
+        fn test_py_compiler_creation() {
+            let compiler = PyFrameGraphCompiler::new();
+            assert_eq!(compiler.__repr__(), "FrameGraphCompiler()");
+        }
+
+        #[test]
+        fn test_py_compiler_compile_empty() {
+            let mut compiler = PyFrameGraphCompiler::new();
+            let mut graph = PyFrameGraph::new("empty");
+            graph.validate().unwrap();
+            let compiled = compiler.compile(&graph);
+            assert_eq!(compiled.pass_count(), 0);
+            assert!(compiled.is_empty());
+        }
+
+        #[test]
+        fn test_py_compiler_compile_simple() {
+            let mut compiler = PyFrameGraphCompiler::new();
+            let mut graph = PyFrameGraph::new("simple");
+            let color = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            let _ = graph.add_render_pass("main", vec![color]);
+            graph.validate().unwrap();
+            let compiled = compiler.compile(&graph);
+            assert_eq!(compiled.pass_count(), 1);
+            assert!(!compiled.is_empty());
+        }
+
+        #[test]
+        fn test_py_compiler_reset() {
+            let mut compiler = PyFrameGraphCompiler::new();
+            let mut graph = PyFrameGraph::new("test");
+            graph.validate().unwrap();
+            let _ = compiler.compile(&graph);
+            compiler.reset();
+            // Should be able to compile again after reset
+            let compiled = compiler.compile(&graph);
+            assert_eq!(compiled.pass_count(), 0);
+        }
+
+        // -- PyCompiledFrameGraph tests ---------------------------------------
+
+        #[test]
+        fn test_py_compiled_graph_empty() {
+            let compiled = PyCompiledFrameGraph::from(CompiledFrameGraph::new());
+            assert_eq!(compiled.pass_count(), 0);
+            assert_eq!(compiled.barrier_count(), 0);
+            assert_eq!(compiled.memory_usage(), 0);
+            assert_eq!(compiled.memory_savings(), 0);
+            assert!(compiled.is_empty());
+            assert_eq!(compiled.alias_count(), 0);
+            assert_eq!(compiled.allocation_count(), 0);
+        }
+
+        #[test]
+        fn test_py_compiled_graph_execution_order() {
+            let compiled = PyCompiledFrameGraph::from(CompiledFrameGraph::new());
+            let order = compiled.execution_order();
+            assert!(order.is_empty());
+        }
+
+        #[test]
+        fn test_py_compiled_graph_repr() {
+            let compiled = PyCompiledFrameGraph::from(CompiledFrameGraph::new());
+            let repr = compiled.__repr__();
+            assert!(repr.contains("CompiledFrameGraph"));
+            assert!(repr.contains("passes=0"));
+        }
+
+        // -- Integration tests ------------------------------------------------
+
+        #[test]
+        fn test_full_pipeline_shadow_main() {
+            let mut graph = PyFrameGraph::new("shadow_main");
+
+            // Create resources
+            let shadow_map = graph.create_texture("shadow_map", 2048, 2048, "depth32float");
+            let color_rt = graph.create_texture("color", 1920, 1080, "rgba8unorm");
+            let depth_rt = graph.create_texture("depth", 1920, 1080, "depth32float");
+
+            // Shadow pass writes to shadow map
+            let shadow_pass = graph.add_render_pass("shadow", vec![]);
+            graph.connect_write(shadow_pass, shadow_map);
+
+            // Main pass reads shadow map, writes color and depth
+            let main_pass = graph.add_render_pass("main", vec![color_rt]);
+            graph.connect_read(main_pass, shadow_map);
+            graph.connect_write(main_pass, depth_rt);
+
+            // Post-process reads color, writes to new buffer
+            let output = graph.create_texture("output", 1920, 1080, "rgba8unorm");
+            let post_pass = graph.add_compute_pass("post", vec![color_rt], vec![output]);
+
+            // Validate the graph
+            assert!(graph.validate().is_ok());
+
+            // Compile
+            let mut compiler = PyFrameGraphCompiler::new();
+            let compiled = compiler.compile(&graph);
+
+            assert_eq!(compiled.pass_count(), 3);
+            assert!(!compiled.is_empty());
+
+            // Verify execution order respects dependencies
+            let order = compiled.execution_order();
+            assert_eq!(order.len(), 3);
+
+            // Shadow pass must come before main pass
+            let shadow_idx = order.iter().position(|&p| p.__eq__(&shadow_pass)).unwrap();
+            let main_idx = order.iter().position(|&p| p.__eq__(&main_pass)).unwrap();
+            let post_idx = order.iter().position(|&p| p.__eq__(&post_pass)).unwrap();
+
+            assert!(shadow_idx < main_idx, "shadow must execute before main");
+            assert!(main_idx < post_idx, "main must execute before post");
+        }
+
+        #[test]
+        fn test_import_resource() {
+            let mut graph = PyFrameGraph::new("test");
+
+            // Valid resource types
+            let tex = graph.import_resource("swapchain", "texture2d").unwrap();
+            assert!(!tex.is_invalid());
+
+            let buf = graph.import_resource("staging", "buffer").unwrap();
+            assert!(!buf.is_invalid());
+
+            let cube = graph.import_resource("env", "cubemap").unwrap();
+            assert!(!cube.is_invalid());
+
+            assert_eq!(graph.resource_count(), 3);
+        }
+
+        #[test]
+        fn test_import_resource_invalid_type() {
+            let mut graph = PyFrameGraph::new("test");
+            let result = graph.import_resource("bad", "unknown_type");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_pass_enable_disable() {
+            let mut graph = PyFrameGraph::new("test");
+            let pass = graph.add_copy_pass("copy");
+
+            // Default enabled
+            assert!(graph.is_pass_enabled(pass).unwrap());
+
+            // Disable
+            graph.set_pass_enabled(pass, false).unwrap();
+            assert!(!graph.is_pass_enabled(pass).unwrap());
+
+            // Re-enable
+            graph.set_pass_enabled(pass, true).unwrap();
+            assert!(graph.is_pass_enabled(pass).unwrap());
+        }
+
+        #[test]
+        fn test_pass_enable_invalid_pass() {
+            let graph = PyFrameGraph::new("test");
+            let invalid_pass = PyPassId(PassId::new(999));
+            assert!(graph.is_pass_enabled(invalid_pass).is_err());
+        }
+
+        #[test]
+        fn test_connect_read_write() {
+            let mut graph = PyFrameGraph::new("test");
+            let buf = graph.create_buffer("data", 1024);
+            let pass = graph.add_compute_pass("process", vec![], vec![]);
+
+            // Connect with read-write access
+            graph.connect_read_write(pass, buf);
+
+            // Should still validate
+            assert!(graph.validate().is_ok());
+        }
     }
 }

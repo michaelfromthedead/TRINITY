@@ -557,7 +557,7 @@ class BarkSystem:
             if speaker_id and line.speaker_id != speaker_id:
                 # Try to find a line from the right speaker
                 pool = self._manager.get_pool(bark_type)
-                if pool:
+                if pool is not None:
                     for pool_line in pool.lines:
                         if pool_line.speaker_id == speaker_id:
                             if self._manager.is_line_available(

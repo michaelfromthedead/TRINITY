@@ -2,18 +2,57 @@
   "version": 1,
   "tasks": [
     {
+      "id": "python-sdlc-pipeline",
+      "cron": "*/5 * * * *",
+      "prompt": "**SDLC_WORKFLOW CRON — Python Docs Pipeline**\n\nYou are the SDLC orchestrator (QUEEN). Execute ONE task from docs/PYTHON_DOCS/ directories.\n\n**STEP 1: Check for running workers**\nRun: ps aux | grep -E 'Agent.*subagent' | grep -v grep\nIf workers running, report 'Workers active, skipping' and EXIT.\n\n**STEP 2: Find next task**\n1. Read docs/PYTHON_DOCS/ subdirectories in order\n2. For each directory, read PHASE_*_TODO.md files\n3. Find first unchecked task '- [ ]'\n4. If all tasks checked, move to next directory\n\n**STEP 3: Execute SDLC Pipeline**\nFor task found (e.g., T-FG-1.1):\n\n3a. DEV Phase — Spawn coder agent (run_in_background:true)\n3b. TEST_UNIT — Spawn WHITEBOX + BLACKBOX in parallel\n3c. QA_UNIT — Sequential: JUNIOR → SANITY → FINAL\n\n**STEP 4: Execute Verdict**\n- GREEN_LIGHT: Mark task [x] in TODO, report completion\n- FIX: Re-run DEV+TEST with findings (max 3 cycles)\n- REWRITE: Archive, amend ARCH, fresh attempt (max 2)\n- ESCALATE: Pause, report to human\n\n**CONSTRAINTS:** Max 8 agents, sequential pipeline, background agents\n**TRACKER:** docs/PYTHON_DOCS/ — 35 directories, ~140 phases",
+      "recurring": true,
+      "spawn_if_busy": false,
+      "description": "Python SDLC Pipeline - runs every 5 min, processes docs/PYTHON_DOCS/ tasks",
+      "status": "ACTIVE",
+      "expires": "2026-06-07T00:00:00Z"
+    },
+    {
+      "id": "sdlc-workflow-loop",
+      "cron": "*/5 * * * *",
+      "prompt": "SDLC WORKFLOW LOOP — PAUSED. Python pipeline now active. Resume for RUST_DOCS when Python work complete.",
+      "recurring": false,
+      "spawn_if_busy": false,
+      "description": "[PAUSED 2026-05-31] RUST_DOCS gapset loop - paused for Python work",
+      "status": "PAUSED",
+      "expires": "2026-06-01T00:00:00Z"
+    },
+    {
       "id": "sdlc-starter",
       "cron": "17 */1 * * *",
-      "prompt": "SDLC STARTER — Check for work\n\n1. Read workflows/SDLC/FOLDER_TODO_TRACKER.json\n2. If current_directory is set: Report \"IN PROGRESS: <name>\" and stop\n3. If no current_directory:\n   - Find first PENDING directory\n   - Set it to IN_PROGRESS\n   - Set current_directory, current_phase=1, current_task=null\n   - Update tracker\n   - Report: \"STARTED: <name>. Phases: N. Progress: X/35.\"\n4. If no PENDING directories: Report \"ALL COMPLETE: 35/35\"",
-      "recurring": true,
-      "description": "Pick next pending SDLC directory"
+      "prompt": "SDLC STARTER — WORK COMPLETE. All 35/35 directories done. No action needed.",
+      "recurring": false,
+      "description": "[COMPLETED 2026-05-24] Pick next pending SDLC directory",
+      "status": "COMPLETE"
     },
     {
       "id": "sdlc-progressor",
       "cron": "*/7 * * * *",
-      "prompt": "SDLC PROGRESSOR — Execute next task\n\n**CRITICAL: Python 3.13 Required** — Use `uv run python` for ALL Python commands.\n\n1. Read workflows/SDLC/FOLDER_TODO_TRACKER.json\n2. If current_directory is null: Report \"NO WORK. Waiting for Starter.\" and stop\n3. If current_directory is set:\n   a. Read docs/INVESTIGATION_PHASE_X_OUTPUT_CORRECTED/<current_directory>/PHASE_<N>_TODO.md\n   b. Find next pending task\n   c. Execute ONE task:\n      - DEV: Implement the code\n      - TEST: Run tests with `uv run python -m pytest <path> -v`\n      - QA: Syntax check with `uv run python -m py_compile <file>`\n   d. Update FOLDER_TODO_TRACKER.json:\n      - Increment tasks_done\n      - If phase complete: increment phases_done, advance current_phase\n      - If all phases complete: set status=DONE, clear current_directory\n   e. Report: \"TASK: <name>. Phase: X/Y. Directory: <name>. Overall: Z/35.\"\n\nReference: workflows/SDLC/DIRECTORY_SDLC_PROMPT.md for full instructions.",
-      "recurring": true,
-      "description": "Execute next task in current SDLC directory"
+      "prompt": "SDLC PROGRESSOR — WORK COMPLETE. All 35/35 directories done. No action needed.",
+      "recurring": false,
+      "description": "[COMPLETED 2026-05-24] Execute next task in current SDLC directory",
+      "status": "COMPLETE"
+    }
+  ],
+  "completed_jobs": [
+    {
+      "name": "WGPU SDLC 7-Phase Implementation",
+      "completed": "2026-05-31",
+      "result": "256/256 tasks GREEN_LIGHT: Core(20), Resources(33), Pipelines(42), Sync(31), RayTracing(43), Advanced(37), Integration(53). 151 new tests, 10 Python binding modules."
+    },
+    {
+      "name": "Python SDLC Directory Processing",
+      "completed": "2026-05-24",
+      "result": "35/35 directories with full RDC output in docs/phase_output/"
+    },
+    {
+      "name": "RDC Batch Gapset Processing",
+      "completed": "2026-05-24",
+      "result": "20/20 gapsets SDLC-READY with PROJECT.md"
     }
   ]
 }

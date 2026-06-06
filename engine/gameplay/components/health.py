@@ -255,7 +255,7 @@ class HealthComponent:
             timestamp=timestamp,
         )
 
-        # Check invulnerability - blocks ALL damage types including TRUE
+        # Check invulnerability - blocks ALL damage including TRUE damage
         if self.is_invulnerable:
             event.final_damage = 0.0
             return event

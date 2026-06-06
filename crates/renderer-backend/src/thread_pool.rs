@@ -223,4 +223,350 @@ mod tests {
         let pool = ThreadPool::new_auto();
         pool.shutdown();
     }
+
+    // =========================================================================
+    // parallel_for tests (25+)
+    // =========================================================================
+
+    #[test]
+    fn parallel_for_single_element() {
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..1, 0, move |i| {
+            r.lock().push(i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, vec![0]);
+    }
+
+    #[test]
+    fn parallel_for_zero_elements() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..0, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn parallel_for_large_range() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..10000, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 10000);
+    }
+
+    #[test]
+    fn parallel_for_chunk_size_1() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..100, 1, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn parallel_for_chunk_size_larger_than_range() {
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..5, 100, move |i| {
+            r.lock().push(i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn parallel_for_explicit_chunk_size() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..100, 10, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn parallel_for_auto_chunk_size() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..100, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn parallel_for_closure_captures_values() {
+        let pool = ThreadPool::new(4);
+        let multiplier = 3;
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..10, 0, move |i| {
+            r.lock().push(i * multiplier);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, vec![0, 3, 6, 9, 12, 15, 18, 21, 24, 27]);
+    }
+
+    #[test]
+    fn parallel_for_non_zero_start() {
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 50..60, 0, move |i| {
+            r.lock().push(i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, (50..60).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn parallel_for_thread_safety_no_data_race() {
+        let pool = ThreadPool::new(8);
+        let sum = Arc::new(AtomicUsize::new(0));
+        let s = Arc::clone(&sum);
+        parallel_for(&pool, 0..1000, 0, move |i| {
+            s.fetch_add(i, Ordering::Relaxed);
+        });
+        // Sum of 0..1000 = 999*1000/2 = 499500
+        assert_eq!(sum.load(Ordering::Relaxed), 499500);
+    }
+
+    #[test]
+    fn parallel_for_all_indices_visited_exactly_once() {
+        let pool = ThreadPool::new(4);
+        let visited = Arc::new(Mutex::new(vec![false; 100]));
+        let v = Arc::clone(&visited);
+        parallel_for(&pool, 0..100, 0, move |i| {
+            let mut guard = v.lock();
+            assert!(!guard[i], "Index {} visited more than once", i);
+            guard[i] = true;
+        });
+        let guard = visited.lock();
+        for (i, &b) in guard.iter().enumerate() {
+            assert!(b, "Index {} was never visited", i);
+        }
+    }
+
+    #[test]
+    fn parallel_for_single_worker_pool() {
+        let pool = ThreadPool::new(1);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..50, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 50);
+    }
+
+    #[test]
+    fn parallel_for_many_workers_few_items() {
+        let pool = ThreadPool::new(16);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..3, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn parallel_for_uneven_chunk_distribution() {
+        // 7 items with chunk_size=3 => 3 chunks: [0,1,2], [3,4,5], [6]
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..7, 3, move |i| {
+            r.lock().push(i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, vec![0, 1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn parallel_for_very_small_chunk_size() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..1000, 1, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 1000);
+    }
+
+    #[test]
+    fn parallel_for_accumulate_into_vec() {
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::with_capacity(100)));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..100, 0, move |i| {
+            r.lock().push(i * i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        let expected: Vec<_> = (0..100).map(|i| i * i).collect();
+        assert_eq!(v, expected);
+    }
+
+    #[test]
+    fn parallel_for_sequential_pools() {
+        // Use separate pools for nested-style work to avoid deadlock
+        let pool1 = ThreadPool::new(4);
+        let pool2 = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        // First level
+        let c1 = Arc::clone(&counter);
+        parallel_for(&pool1, 0..4, 0, move |i| {
+            c1.fetch_add(i * 10, Ordering::Relaxed);
+        });
+
+        // Second level (sequential, not nested)
+        let c2 = Arc::clone(&counter);
+        parallel_for(&pool2, 0..10, 0, move |_| {
+            c2.fetch_add(1, Ordering::Relaxed);
+        });
+
+        // 0+10+20+30 + 10 = 60 + 10 = 70
+        assert_eq!(counter.load(Ordering::Relaxed), 70);
+    }
+
+    #[test]
+    fn parallel_for_preserves_order_within_chunk() {
+        // Each chunk processes indices sequentially
+        let pool = ThreadPool::new(1); // Single worker to guarantee chunk order
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..10, 5, move |i| {
+            r.lock().push(i);
+        });
+        let v = results.lock().clone();
+        // With 1 worker and chunk_size=5, order should be sequential
+        assert_eq!(v, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn parallel_for_empty_range_with_offset() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 100..100, 0, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn parallel_for_stress_concurrent_access() {
+        let pool = ThreadPool::new(8);
+        let data = Arc::new(Mutex::new(vec![0i64; 1000]));
+        let d = Arc::clone(&data);
+        parallel_for(&pool, 0..1000, 10, move |i| {
+            let mut guard = d.lock();
+            guard[i] = i as i64 + 1;
+        });
+        let guard = data.lock();
+        for (i, &val) in guard.iter().enumerate() {
+            assert_eq!(val, i as i64 + 1);
+        }
+    }
+
+    #[test]
+    fn parallel_for_modifies_shared_state_atomically() {
+        let pool = ThreadPool::new(4);
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let m = Arc::clone(&max_seen);
+        parallel_for(&pool, 1..101, 0, move |i| {
+            loop {
+                let current = m.load(Ordering::Relaxed);
+                if i <= current {
+                    break;
+                }
+                if m.compare_exchange_weak(current, i, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                    break;
+                }
+            }
+        });
+        assert_eq!(max_seen.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn parallel_for_with_two_elements() {
+        let pool = ThreadPool::new(4);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let r = Arc::clone(&results);
+        parallel_for(&pool, 0..2, 0, move |i| {
+            r.lock().push(i);
+        });
+        let mut v = results.lock().clone();
+        v.sort();
+        assert_eq!(v, vec![0, 1]);
+    }
+
+    #[test]
+    fn parallel_for_chunk_size_equals_range_length() {
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..50, 50, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 50);
+    }
+
+    #[test]
+    fn parallel_for_prime_number_elements() {
+        // 97 elements with various chunk sizes
+        let pool = ThreadPool::new(4);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        parallel_for(&pool, 0..97, 7, move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        assert_eq!(counter.load(Ordering::Relaxed), 97);
+    }
+
+    #[test]
+    fn parallel_for_multiple_sequential_calls() {
+        let pool = ThreadPool::new(4);
+
+        for round in 0..5 {
+            let counter = Arc::new(AtomicUsize::new(0));
+            let c = Arc::clone(&counter);
+            parallel_for(&pool, 0..100, 0, move |_| {
+                c.fetch_add(1, Ordering::Relaxed);
+            });
+            assert_eq!(counter.load(Ordering::Relaxed), 100, "Round {} failed", round);
+        }
+    }
+
+    #[test]
+    fn parallel_for_high_contention() {
+        let pool = ThreadPool::new(8);
+        let shared = Arc::new(Mutex::new(0u64));
+        let s = Arc::clone(&shared);
+        parallel_for(&pool, 0..10000, 1, move |i| {
+            let mut guard = s.lock();
+            *guard += i as u64;
+        });
+        // Sum of 0..10000 = 9999*10000/2 = 49995000
+        assert_eq!(*shared.lock(), 49995000);
+    }
 }

@@ -3,6 +3,16 @@
 > **Purpose**: Complete implementation reference for the engine/tooling/ layer.
 > Read this file and ONLY this file when implementing tooling and editor systems.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Editor framework, inspectors |
+| Rust | ⚠️ 39% | GAPSET_13_TOOLING — FlowForge spec only |
+| Wired | ⚠️ Partial | Basic editor hooks working |
+
+*FlowForge (Blueprint analog) is spec only — no runtime implementation yet.*
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

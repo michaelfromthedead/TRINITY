@@ -368,6 +368,68 @@ class TestBakedLightmap:
         assert result.x == pytest.approx(1.0, abs=0.1)
 
 
+class TestReflectionProbeConfig:
+    """Tests for ReflectionProbeConfig new parameters."""
+
+    def test_config_defaults(self) -> None:
+        """Test default values for all config parameters."""
+        config = ReflectionProbeConfig()
+        assert config.capture_mode == CaptureMode.BAKED
+        assert config.resolution == 256
+        assert config.update_rate == pytest.approx(0.0)
+        assert config.importance == pytest.approx(1.0)
+        assert config.box_extents == Vec3(10.0, 10.0, 10.0)
+        assert config.inner_radius == pytest.approx(0.0)
+        assert config.outer_radius == pytest.approx(10.0)
+        assert config.roughness_levels == 8
+        assert config.capture_lod_bias == pytest.approx(0.0)
+        assert config.include_layers == 0xFFFFFFFF
+        assert config.exclude_actors == []
+
+    def test_config_custom_importance(self) -> None:
+        """Test config with custom importance."""
+        config = ReflectionProbeConfig(importance=2.0)
+        assert config.importance == pytest.approx(2.0)
+
+    def test_config_custom_box_extents(self) -> None:
+        """Test config with custom box extents."""
+        config = ReflectionProbeConfig(box_extents=Vec3(5.0, 10.0, 15.0))
+        assert config.box_extents == Vec3(5.0, 10.0, 15.0)
+
+    def test_config_custom_radii(self) -> None:
+        """Test config with custom inner/outer radii."""
+        config = ReflectionProbeConfig(inner_radius=5.0, outer_radius=20.0)
+        assert config.inner_radius == pytest.approx(5.0)
+        assert config.outer_radius == pytest.approx(20.0)
+
+    def test_config_custom_roughness_levels(self) -> None:
+        """Test config with custom roughness levels."""
+        config = ReflectionProbeConfig(roughness_levels=16)
+        assert config.roughness_levels == 16
+
+    def test_config_custom_capture_lod_bias(self) -> None:
+        """Test config with custom capture LOD bias."""
+        config = ReflectionProbeConfig(capture_lod_bias=2.0)
+        assert config.capture_lod_bias == pytest.approx(2.0)
+
+    def test_config_custom_include_layers(self) -> None:
+        """Test config with custom include layers mask."""
+        config = ReflectionProbeConfig(include_layers=0x000000FF)
+        assert config.include_layers == 0x000000FF
+
+    def test_config_custom_exclude_actors(self) -> None:
+        """Test config with custom exclude actors list."""
+        config = ReflectionProbeConfig(exclude_actors=["actor1", "actor2"])
+        assert config.exclude_actors == ["actor1", "actor2"]
+
+    def test_config_exclude_actors_isolation(self) -> None:
+        """Test that exclude_actors lists are independent per config."""
+        config1 = ReflectionProbeConfig()
+        config2 = ReflectionProbeConfig()
+        config1.exclude_actors.append("test")
+        assert "test" not in config2.exclude_actors
+
+
 class TestReflectionProbe:
     """Tests for reflection probes."""
 
@@ -442,6 +504,49 @@ class TestReflectionProbe:
         probe.mark_dirty()
         assert probe._dirty is True
 
+    def test_probe_box_min_max_default(self) -> None:
+        """Test box_min/box_max computed from default box_extents."""
+        probe = ReflectionProbe(position=Vec3(0, 0, 0))
+        # Default box_extents is Vec3(10, 10, 10)
+        assert probe.box_min == Vec3(-10.0, -10.0, -10.0)
+        assert probe.box_max == Vec3(10.0, 10.0, 10.0)
+
+    def test_probe_box_min_max_with_position(self) -> None:
+        """Test box_min/box_max computed with non-zero position."""
+        config = ReflectionProbeConfig(box_extents=Vec3(5.0, 5.0, 5.0))
+        probe = ReflectionProbe(position=Vec3(10, 20, 30), config=config)
+        assert probe.box_min == Vec3(5.0, 15.0, 25.0)
+        assert probe.box_max == Vec3(15.0, 25.0, 35.0)
+
+    def test_probe_box_min_max_asymmetric_extents(self) -> None:
+        """Test box_min/box_max with asymmetric box_extents."""
+        config = ReflectionProbeConfig(box_extents=Vec3(2.0, 4.0, 6.0))
+        probe = ReflectionProbe(position=Vec3(0, 0, 0), config=config)
+        assert probe.box_min == Vec3(-2.0, -4.0, -6.0)
+        assert probe.box_max == Vec3(2.0, 4.0, 6.0)
+
+    def test_probe_config_new_params_accessible(self) -> None:
+        """Test all new config params are accessible through probe."""
+        config = ReflectionProbeConfig(
+            importance=2.5,
+            box_extents=Vec3(15.0, 15.0, 15.0),
+            inner_radius=3.0,
+            outer_radius=20.0,
+            roughness_levels=12,
+            capture_lod_bias=1.0,
+            include_layers=0x0000FFFF,
+            exclude_actors=["excluded_actor"],
+        )
+        probe = ReflectionProbe(config=config)
+        assert probe.config.importance == pytest.approx(2.5)
+        assert probe.config.box_extents == Vec3(15.0, 15.0, 15.0)
+        assert probe.config.inner_radius == pytest.approx(3.0)
+        assert probe.config.outer_radius == pytest.approx(20.0)
+        assert probe.config.roughness_levels == 12
+        assert probe.config.capture_lod_bias == pytest.approx(1.0)
+        assert probe.config.include_layers == 0x0000FFFF
+        assert probe.config.exclude_actors == ["excluded_actor"]
+
 
 class TestReflectionProbeDecorator:
     """Tests for reflection_probe decorator."""
@@ -467,6 +572,109 @@ class TestReflectionProbeDecorator:
         assert DefaultProbe._reflection_capture_mode == CaptureMode.BAKED
         assert DefaultProbe._reflection_resolution == 256
         assert DefaultProbe._reflection_update_rate == 0.0
+
+    def test_decorator_new_params_defaults(self) -> None:
+        """Test new decorator parameters have correct defaults."""
+        @reflection_probe()
+        class DefaultProbe:
+            pass
+
+        assert DefaultProbe._reflection_importance == pytest.approx(1.0)
+        assert DefaultProbe._reflection_box_extents == Vec3(10.0, 10.0, 10.0)
+        assert DefaultProbe._reflection_inner_radius == pytest.approx(0.0)
+        assert DefaultProbe._reflection_outer_radius == pytest.approx(10.0)
+        assert DefaultProbe._reflection_roughness_levels == 8
+        assert DefaultProbe._reflection_capture_lod_bias == pytest.approx(0.0)
+        assert DefaultProbe._reflection_include_layers == 0xFFFFFFFF
+        assert DefaultProbe._reflection_exclude_actors == []
+
+    def test_decorator_custom_importance(self) -> None:
+        """Test decorator with custom importance."""
+        @reflection_probe(importance=2.5)
+        class HighPriorityProbe:
+            pass
+
+        assert HighPriorityProbe._reflection_importance == pytest.approx(2.5)
+
+    def test_decorator_custom_box_extents(self) -> None:
+        """Test decorator with custom box extents."""
+        @reflection_probe(box_extents=Vec3(5.0, 8.0, 12.0))
+        class CustomBoxProbe:
+            pass
+
+        assert CustomBoxProbe._reflection_box_extents == Vec3(5.0, 8.0, 12.0)
+
+    def test_decorator_custom_radii(self) -> None:
+        """Test decorator with custom inner/outer radii."""
+        @reflection_probe(inner_radius=2.0, outer_radius=15.0)
+        class CustomRadiiProbe:
+            pass
+
+        assert CustomRadiiProbe._reflection_inner_radius == pytest.approx(2.0)
+        assert CustomRadiiProbe._reflection_outer_radius == pytest.approx(15.0)
+
+    def test_decorator_custom_roughness_levels(self) -> None:
+        """Test decorator with custom roughness levels."""
+        @reflection_probe(roughness_levels=12)
+        class HighQualityProbe:
+            pass
+
+        assert HighQualityProbe._reflection_roughness_levels == 12
+
+    def test_decorator_custom_capture_lod_bias(self) -> None:
+        """Test decorator with custom capture LOD bias."""
+        @reflection_probe(capture_lod_bias=1.5)
+        class BiasedProbe:
+            pass
+
+        assert BiasedProbe._reflection_capture_lod_bias == pytest.approx(1.5)
+
+    def test_decorator_custom_include_layers(self) -> None:
+        """Test decorator with custom layer mask."""
+        @reflection_probe(include_layers=0x0000FF00)
+        class FilteredProbe:
+            pass
+
+        assert FilteredProbe._reflection_include_layers == 0x0000FF00
+
+    def test_decorator_custom_exclude_actors(self) -> None:
+        """Test decorator with custom exclude actors list."""
+        @reflection_probe(exclude_actors=["player", "ui_element"])
+        class ExclusionProbe:
+            pass
+
+        assert ExclusionProbe._reflection_exclude_actors == ["player", "ui_element"]
+
+    def test_decorator_all_params(self) -> None:
+        """Test decorator with all parameters specified."""
+        @reflection_probe(
+            capture_mode="mixed",
+            resolution=512,
+            update_rate=30.0,
+            importance=1.5,
+            box_extents=Vec3(20.0, 15.0, 20.0),
+            inner_radius=3.0,
+            outer_radius=25.0,
+            roughness_levels=10,
+            capture_lod_bias=0.5,
+            include_layers=0x00FFFFFF,
+            exclude_actors=["dynamic_object"],
+        )
+        class FullyConfiguredProbe:
+            pass
+
+        config = FullyConfiguredProbe._reflection_config
+        assert config.capture_mode == CaptureMode.MIXED
+        assert config.resolution == 512
+        assert config.update_rate == pytest.approx(30.0)
+        assert config.importance == pytest.approx(1.5)
+        assert config.box_extents == Vec3(20.0, 15.0, 20.0)
+        assert config.inner_radius == pytest.approx(3.0)
+        assert config.outer_radius == pytest.approx(25.0)
+        assert config.roughness_levels == 10
+        assert config.capture_lod_bias == pytest.approx(0.5)
+        assert config.include_layers == 0x00FFFFFF
+        assert config.exclude_actors == ["dynamic_object"]
 
 
 class TestLightmapTexel:

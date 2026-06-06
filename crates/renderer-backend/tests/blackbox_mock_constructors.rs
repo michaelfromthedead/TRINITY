@@ -595,7 +595,7 @@ fn mocks_produce_barriers_on_dependent_chain() {
     let has_h0_barrier = compiled
         .barriers
         .iter()
-        .any(|(_from, _to, _handle, _edge_type, _before, _after)| true);
+        .any(|(_from, _to, _before, _after, _handle)| true);
     assert!(has_h0_barrier, "Barrier record present");
 }
 

@@ -31,7 +31,7 @@ def temp_validation_dir():
     path = Path(tempfile.mkdtemp())
 
     # Create test files
-    (path / "valid_texture.png").write_bytes(b"png data")
+    (path / "valid_texture.png").write_bytes(b"x" * 2048)
     (path / "large_texture.png").write_bytes(b"x" * (60 * 1024 * 1024))  # 60MB
     (path / "model.fbx").write_text("fbx data")
     (path / "material.mat").write_text("{}")

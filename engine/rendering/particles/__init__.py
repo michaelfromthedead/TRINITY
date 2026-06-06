@@ -203,6 +203,29 @@ from engine.rendering.particles.decal_system import (
     DecalSystem,
 )
 
+# Deterministic emitter (T-CC-2.1: Fixed32 particle system)
+from engine.rendering.particles.deterministic_emitter import (
+    # Fixed32 types
+    Fixed32Vec3,
+    # Particle
+    DeterministicParticle,
+    # Pool
+    DeterministicParticlePool,
+    # Module base
+    DeterministicSpawnModule,
+    # Spawn modules
+    DeterministicEmitterShape,
+    DeterministicShapeEmitter,
+    DeterministicRateEmitter,
+    DeterministicLifetimeModule,
+    DeterministicVelocityModule,
+    DeterministicSizeModule,
+    # Update modules
+    DeterministicGravityModule,
+    # Emitter
+    DeterministicEmitter,
+)
+
 
 __all__ = [
     # =========================================================================
@@ -354,4 +377,26 @@ __all__ = [
     "DecalSorting",
     # System
     "DecalSystem",
+    # =========================================================================
+    # DETERMINISTIC EMITTER (T-CC-2.1: Fixed32 particle system)
+    # =========================================================================
+    # Fixed32 types
+    "Fixed32Vec3",
+    # Particle
+    "DeterministicParticle",
+    # Pool
+    "DeterministicParticlePool",
+    # Module base
+    "DeterministicSpawnModule",
+    # Spawn modules
+    "DeterministicEmitterShape",
+    "DeterministicShapeEmitter",
+    "DeterministicRateEmitter",
+    "DeterministicLifetimeModule",
+    "DeterministicVelocityModule",
+    "DeterministicSizeModule",
+    # Update modules
+    "DeterministicGravityModule",
+    # Emitter
+    "DeterministicEmitter",
 ]

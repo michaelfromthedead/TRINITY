@@ -142,7 +142,7 @@ class AudioEngine:
 
         # State
         self._state = EngineState.UNINITIALIZED
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
 
         # Managers
         self._clip_manager = AudioClipManager()

@@ -592,7 +592,7 @@ class MusicPlayer:
         """Update fade state."""
         current_time = time.perf_counter() * 1000
         elapsed = current_time - self._fade_start_time
-        progress = min(1.0, elapsed / self._fade_duration_ms)
+        progress = 1.0 if self._fade_duration_ms <= 0 else min(1.0, elapsed / self._fade_duration_ms)
 
         # Linear interpolation
         self._volume = (

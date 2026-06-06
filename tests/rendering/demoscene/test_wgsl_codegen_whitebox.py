@@ -597,7 +597,7 @@ class TestEmitSceneEntry:
         full = "\n".join(lines)
         assert "let d0 = " in full
         assert "let d1 = " in full
-        assert "let result = d0" in full
+        assert "var result = d0" in full
         assert "select(d1, result, result.x < d1.x)" in full
 
     def test_multi_primitive_with_pipeline_uses_p_d(self) -> None:
@@ -1267,7 +1267,7 @@ class TestGeneratedHeader:
         assert "SPDX-License-Identifier: MIT" in GENERATED_HEADER
 
     def test_header_contains_t_demo_tag(self) -> None:
-        assert "T-DEMO-2.6" in GENERATED_HEADER
+        assert "T-DEMO-2.3" in GENERATED_HEADER
 
     def test_header_contains_auto_generated_note(self) -> None:
         assert "Auto-generated" in GENERATED_HEADER

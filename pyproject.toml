@@ -3,6 +3,16 @@ name = "trinity-engine"
 version = "0.1.0"
 description = "TRINITY Game Engine - Python subsystem"
 requires-python = ">=3.13,<3.14"
+dependencies = [
+    "watchdog>=4.0.0",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
 
 # CRITICAL: This project targets a statically-linked Python 3.13 interpreter.
 # The system may have Python 3.14, but this project MUST use 3.13.
@@ -11,4 +21,16 @@ requires-python = ">=3.13,<3.14"
 #   uv run python script.py   # Correct
 #   python script.py          # WRONG - may use system 3.14
 #
-# See: docs/PYTHON_VERSION_PLAN.md
+# See: docs/plans/PYTHON_VERSION_PLAN.md
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

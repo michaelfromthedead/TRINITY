@@ -3,6 +3,19 @@
 > **Purpose**: Complete implementation reference for the engine/rendering/ layer.  
 > Read this file and ONLY this file when implementing rendering systems.
 
+**Implementation Status:**
+| Subsystem | Python | Rust | Gapset |
+|-----------|--------|------|--------|
+| Frame Graph | ✅ | ⚠️ 28% | GAPSET_2 |
+| Materials | ✅ | ❌ 6% | GAPSET_4 |
+| Lighting | ✅ | ❌ 3% | GAPSET_5 |
+| GI/Reflections | ✅ | ❌ 0% | GAPSET_6 |
+| Post-Process | ✅ | ⚠️ 29% | GAPSET_7 |
+| Ray Tracing | BUILD TARGET | ❌ 9% | GAPSET_9 |
+
+*Python algorithms COMPLETE (35K lines). Rust rendering subsystems BLOCKED on frame graph wiring.*
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

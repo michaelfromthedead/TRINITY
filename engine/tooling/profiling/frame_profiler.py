@@ -267,9 +267,7 @@ class SpikeDetector:
         if self.adaptive and len(self._history) >= 5:
             avg = sum(self._history) / len(self._history)
             adaptive_threshold = avg * self.sensitivity
-            # When adaptive mode is enabled, use the adaptive threshold
-            # (not the max with the fixed threshold)
-            threshold = adaptive_threshold
+            threshold = min(self.threshold_ms, adaptive_threshold)
         else:
             threshold = self.threshold_ms
 
@@ -280,7 +278,7 @@ class SpikeDetector:
         """Get the current effective threshold."""
         if self.adaptive and len(self._history) >= 5:
             avg = sum(self._history) / len(self._history)
-            return max(self.threshold_ms, avg * self.sensitivity)
+            return min(self.threshold_ms, avg * self.sensitivity)
         return self.threshold_ms
 
 

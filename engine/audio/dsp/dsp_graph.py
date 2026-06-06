@@ -320,6 +320,15 @@ class DSPParallel(DSPNode):
             np.copyto(output_buffer, input_buffer)
             return
 
+        num_channels, num_samples = input_buffer.shape
+
+        # Ensure node buffers are large enough
+        if self._node_buffers and self._node_buffers[0].shape != (num_channels, num_samples):
+            self._node_buffers = [
+                self._allocate_aligned_buffer(num_samples, num_channels)
+                for _ in self._nodes
+            ]
+
         output_buffer.fill(0.0)
         active_count = 0
 
@@ -713,7 +722,15 @@ class EffectRack(DSPNode):
 
     def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
         """Process a block through the rack."""
-        num_samples = input_buffer.shape[1]
+        num_channels, num_samples = input_buffer.shape
+
+        # Ensure buffers are large enough
+        if self._dry_buffer.shape != (num_channels, num_samples):
+            self._dry_buffer = self._allocate_aligned_buffer(num_samples, num_channels)
+            self._send_buffers = [
+                self._allocate_aligned_buffer(num_samples, num_channels)
+                for _ in self._sends
+            ]
 
         # Save dry signal
         np.copyto(self._dry_buffer, input_buffer)

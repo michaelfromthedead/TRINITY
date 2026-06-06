@@ -272,8 +272,8 @@ class TestKeyframeTrack:
     def test_interpolate_tuple(self) -> None:
         """Should interpolate tuples (colors)."""
         track = KeyframeTrack("color", keyframes=[
-            Keyframe(0.0, (0, 0, 0), "linear"),
-            Keyframe(1.0, (255, 255, 255)),
+            Keyframe(0.0, (0.0, 0.0, 0.0), "linear"),  # Use floats for float interpolation
+            Keyframe(1.0, (255.0, 255.0, 255.0)),
         ])
 
         result = track.get_value_at(0.5)

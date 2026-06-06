@@ -125,7 +125,8 @@ class TriggerBase(ABC):
     @property
     def is_active(self) -> bool:
         """Whether the trigger is currently active."""
-        return self._state == TriggerState.ACTIVE
+        # PENDING means waiting for reset delay, still considered active
+        return self._state in (TriggerState.ACTIVE, TriggerState.PENDING)
 
     @property
     def enabled(self) -> bool:
@@ -392,10 +393,10 @@ class EventTrigger(TriggerBase):
 
         if self._auto_reset:
             if self._reset_delay > 0:
-                # Schedule reset but keep ACTIVE state during delay
                 self._pending_reset = True
                 self._reset_timer = self._reset_delay
-                # Stay ACTIVE during the delay period
+                # Use PENDING state to indicate waiting for reset
+                self._set_state(TriggerState.PENDING)
             else:
                 self._set_state(TriggerState.INACTIVE)
                 self._event_fired = False
@@ -550,12 +551,13 @@ class DataTrigger(TriggerBase, Generic[T]):
         Returns:
             Self for chaining
         """
+        # Try weak reference first, fall back to strong reference for types
+        # that don't support weak references (like dict)
         try:
             self._data_source = ref(source)
         except TypeError:
-            # Some objects (like dicts) can't be weakly referenced
-            # Store a direct reference in that case
-            self._data_source = lambda: source  # type: ignore
+            # Can't create weak reference, store direct reference
+            self._data_source = lambda: source
         return self
 
     def unbind(self) -> DataTrigger[T]:

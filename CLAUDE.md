@@ -59,24 +59,41 @@ Agent({ prompt: "...", subagent_type: "coder", run_in_background: true })
 
 **CRITICAL: Include this block in EVERY context compaction.**
 
+### CRON Job
+
+- **Schedule:** Every 5 minutes (`*/5 * * * *`)
+- **Type:** Durable, recurring
+- **Spawn if busy:** YES — spawn new work thread even if current worker exists
+- **Auto-expires:** 2026-06-09
+
 ### Mission
 
-Execute SDLC_WORKFLOW continuously across GAPSET 1-20:
-- After each **task** → spawn next task
-- After each **phase** → start next phase  
-- After each **gapset** → start next gapset (1→2→...→20, skip 3=DONE)
+Fix NEEDS_WORK directories from MEGA_PYTHON_REPORT_V2 until all reach GREEN_LIGHT (>99%):
+- Read `docs/PYTHON_DOCS/MEGA_PYTHON_REPORT_V2.md` for current status
+- For each NEEDS_WORK directory: DIAGNOSE → FIX → VERIFY
+- Mark GREEN_LIGHT when >99% pass rate achieved
 
-### Pipeline Per Task
+### Pipeline Per Directory
 
 ```
-DEV → WHITEBOX∥BLACKBOX → JUNIOR_QA → SANITY → FINAL → GREEN_LIGHT
+DIAGNOSE (find failures) → FIX (code fixes) → VERIFY (run tests) → GREEN_LIGHT
 ```
 
-### Current Work
+### Current Work (2026-06-02)
 
-- **Active:** GAPSET_1_CORE (T-CORE-3.1 ThreadPool)
-- **Docs:** `docs/RUST_DOCS/GAPSET_*/`, `workflows/SDLC/`
-- **Code:** `crates/renderer-backend/src/`, `omega/src/`
+**PYTHON_DOCS SDLC: 27/35 GREEN_LIGHT (77%)**
+
+| Priority | Directory | Pass% | Issue |
+|----------|-----------|-------|-------|
+| P2 | dialogue_dsp | 85.9% | DSP time effects |
+| P2 | mixing_spatial | 95.1% | Mixer RMS |
+| P3 | crowds_facial | 98.8% | FaceCaptureRetargeter |
+| P3 | abilities_ai_camera | 99.0% | Camera edge cases |
+| P3 | world | 99.0% | Phase1 verification |
+| P3 | trinity_decorators_part1 | 98.4% | ECS relation tests |
+| P3 | trinity_descriptors | 99.8% | Version decoder |
+
+**Tracker:** `docs/PYTHON_DOCS/MEGA_PYTHON_REPORT_V2.md`
 
 ### Rules
 
@@ -85,3 +102,13 @@ DEV → WHITEBOX∥BLACKBOX → JUNIOR_QA → SANITY → FINAL → GREEN_LIGHT
 3. Background agents: `run_in_background: true`
 4. Disk-first: Read state from files
 5. On worker completion → spawn next worker immediately
+6. **Spawn regardless of existing workers** — each cron tick spawns unblocked work
+
+### On Cron Wake-Up
+
+1. Read `docs/PYTHON_DOCS/MEGA_PYTHON_REPORT_V2.md` for NEEDS_WORK list
+2. Pick lowest pass% directory that isn't being worked on
+3. Spawn DIAGNOSE agent: run tests, identify failing test patterns
+4. Spawn FIX agent: fix code based on diagnosis
+5. Run VERIFY: `uv run pytest tests/<dir>/ -q --tb=short`
+6. If >99%: mark GREEN_LIGHT. Else: re-run FIX cycle

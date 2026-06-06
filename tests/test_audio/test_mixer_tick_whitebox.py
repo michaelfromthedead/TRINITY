@@ -425,11 +425,10 @@ class TestTickPipeline:
         assert np.all(output <= 1.0)
 
     def test_tick_returns_none_if_not_initialized(self):
-        """Tick should return zeros if mixer not initialized."""
+        """Tick should return None if mixer not initialized."""
         m = Mixer()
         output = m.tick(64)
-        assert output.shape == (MIXER_NUM_CHANNELS, 64)
-        assert np.all(output == 0.0)
+        assert output is None
 
     def test_tick_returns_correct_shape(self, mixer):
         """Tick should return (channels, samples) array."""
@@ -798,10 +797,10 @@ class TestTickPipelineDeep:
     """Deep tests for tick pipeline stages."""
 
     def test_tick_default_buffer_size(self, mixer):
-        """tick(0) should use default MIXER_BUFFER_SIZE."""
+        """tick(0) should return empty (2, 0) array."""
         result = mixer.tick(0)
         assert result is not None
-        assert result.shape[1] == MIXER_BUFFER_SIZE
+        assert result.shape == (MIXER_NUM_CHANNELS, 0)
 
     def test_tick_silent_when_volume_zero(self, mixer):
         """tick should produce silence when bus volume is 0."""
@@ -812,11 +811,11 @@ class TestTickPipelineDeep:
         assert np.all(result == 0.0)
 
     def test_tick_uninitialized_size_zero(self):
-        """tick(0) on uninitialized mixer should return silence."""
+        """tick(0) on uninitialized mixer should return empty (2, 0) array."""
         m = Mixer()
         result = m.tick(0)
         assert result is not None
-        assert result.shape == (MIXER_NUM_CHANNELS, 512)
+        assert result.shape == (MIXER_NUM_CHANNELS, 0)
 
     def test_master_output_none_after_shutdown(self, mixer):
         """read_master_output should return None after shutdown."""

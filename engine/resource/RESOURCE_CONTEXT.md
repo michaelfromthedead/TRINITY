@@ -3,6 +3,15 @@
 > **Purpose**: Complete implementation reference for the engine/resource/ layer.
 > Read this file and ONLY this file when implementing resource management systems.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Asset pipeline, handles, streaming |
+| Rust | ❌ 0% | GAPSET_12_ASSETS — BUILD TARGET |
+| Wired | ❌ No | Blocked on Rust asset pipeline |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

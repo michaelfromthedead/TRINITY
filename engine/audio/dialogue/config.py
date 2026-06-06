@@ -17,8 +17,8 @@ class VOPriority(IntEnum):
     CRITICAL = 100    # Never interrupted (story critical)
     HIGH = 75         # Story dialogue
     NORMAL = 50       # Standard VO
-    LOW = 40          # Low priority dialogue
-    BARK = 25         # Combat barks (lower than LOW)
+    BARK = 40         # Combat barks
+    LOW = 25          # Ambient chatter
     AMBIENT = 10      # Background ambient
 
 
@@ -38,7 +38,7 @@ DEFAULT_INTERRUPT_PRIORITY: Final[int] = 60
 # Queue Configuration
 # =============================================================================
 
-MAX_QUEUE_SIZE: Final[int] = 256
+MAX_QUEUE_SIZE: Final[int] = 16
 QUEUE_TIMEOUT_MS: Final[float] = 5000.0
 QUEUE_PROCESS_INTERVAL_MS: Final[float] = 16.0  # ~60fps
 
@@ -181,12 +181,13 @@ class DialogueState(str, Enum):
     """States for the dialogue manager."""
     IDLE = "idle"
     PENDING = "pending"
-    ACTIVE = "active"
     PLAYING = "playing"
+    ACTIVE = "active"  # Alias for PLAYING
     PAUSED = "paused"
-    COMPLETE = "complete"
     TRANSITIONING = "transitioning"
     INTERRUPTED = "interrupted"
+    COMPLETE = "complete"
+    COMPLETED = "completed"
 
 
 # =============================================================================

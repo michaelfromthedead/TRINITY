@@ -7,3 +7,30 @@ members = [
     "crates/trinity-contracts-macros",
 ]
 resolver = "2"
+
+# Demoscene 64K build profile (T-DEMO-5.6)
+# Aggressive size optimization for 64KB demoscene binaries
+[profile.demoscene]
+inherits = "release"
+opt-level = "z"        # Optimize for size
+lto = true             # Link-time optimization
+codegen-units = 1      # Maximum optimization (single codegen unit)
+panic = "abort"        # No unwinding code
+strip = "symbols"      # Remove debug symbols
+debug = false          # No debug info
+debug-assertions = false
+overflow-checks = false
+incremental = false    # Disable incremental for smaller binary
+
+# Additional size optimizations for dependencies
+[profile.demoscene.package."*"]
+opt-level = "z"
+codegen-units = 1
+
+# Demoscene-minimal profile for ultra-small binaries
+[profile.demoscene-minimal]
+inherits = "demoscene"
+# Even more aggressive - may break some code
+opt-level = "z"
+lto = "fat"            # Full LTO
+codegen-units = 1

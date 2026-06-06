@@ -392,6 +392,7 @@ class VoiceManager:
                 self.on_voice_virtualized(victim.source)
 
         victim.is_virtual = True
+        victim.is_active = False  # Mark as inactive so slot can be reused
         self._active_voices.discard(victim.id)
         self._virtual_voices.add(victim.id)
 
@@ -404,7 +405,14 @@ class VoiceManager:
             )
 
         # Now allocate from pool
-        return self._allocate_from_pool(requester)
+        result = self._allocate_from_pool(requester)
+        if result.success:
+            return VoiceAllocationResult(
+                success=True,
+                voice_id=result.voice_id,
+                made_virtual=True,
+            )
+        return result
 
     def _get_steal_candidates(self, requester: AudioSource) -> list[Voice]:
         """Get voices that can be stolen by requester."""
@@ -492,7 +500,11 @@ class VoiceManager:
                     voice.distance = self._calculate_distance(voice.source)
 
             # Update virtual voice tracker
-            self._virtual_tracker.update(delta_time)
+            source_lookup = {
+                vid: v.source for vid, v in self._voices.items()
+                if v.source is not None and vid in self._virtual_voices
+            }
+            self._virtual_tracker.update(delta_time, source_lookup)
 
             # Check for completed sources (active only)
             to_release = []

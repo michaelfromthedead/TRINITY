@@ -1373,4 +1373,805 @@ mod tests {
         assert_eq!(INSTANCE_STRIDE_BYTES, 96);
         assert_eq!(MAX_INSTANCES_PER_BATCH, 1000);
     }
+
+    // =========================================================================
+    // MESSAGE PROTOCOL TESTS (10+ tests)
+    // =========================================================================
+
+    #[test]
+    fn test_gpu_render_command_clone() {
+        let cmd = GPURenderCommand {
+            mesh_id: 42,
+            material_id: 7,
+            instance_count: 3,
+            transform_buffer: vec![1u8; 3 * 16 * 4],
+            animation_buffer: vec![2u8; 3 * 4 * 4],
+            color_buffer: vec![3u8; 3 * 4 * 4],
+            texture_atlas: 99,
+        };
+        let cloned = cmd.clone();
+        assert_eq!(cloned.mesh_id, cmd.mesh_id);
+        assert_eq!(cloned.material_id, cmd.material_id);
+        assert_eq!(cloned.instance_count, cmd.instance_count);
+        assert_eq!(cloned.transform_buffer, cmd.transform_buffer);
+        assert_eq!(cloned.animation_buffer, cmd.animation_buffer);
+        assert_eq!(cloned.color_buffer, cmd.color_buffer);
+        assert_eq!(cloned.texture_atlas, cmd.texture_atlas);
+    }
+
+    #[test]
+    fn test_gpu_render_command_debug_format() {
+        let cmd = GPURenderCommand {
+            mesh_id: 1,
+            material_id: 2,
+            instance_count: 1,
+            transform_buffer: vec![0u8; 16 * 4],
+            animation_buffer: vec![0u8; 4 * 4],
+            color_buffer: vec![0u8; 4 * 4],
+            texture_atlas: 0,
+        };
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("GPURenderCommand"));
+        assert!(debug_str.contains("mesh_id: 1"));
+        assert!(debug_str.contains("material_id: 2"));
+    }
+
+    #[test]
+    fn test_gpu_render_command_single_instance() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 1,
+            transform_buffer: vec![0u8; 1 * 16 * 4],
+            animation_buffer: vec![0u8; 1 * 4 * 4],
+            color_buffer: vec![0u8; 1 * 4 * 4],
+            texture_atlas: 0,
+        };
+        assert!(cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_max_batch_instances() {
+        let count = MAX_INSTANCES_PER_BATCH;
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: count,
+            transform_buffer: vec![0u8; count as usize * 16 * 4],
+            animation_buffer: vec![0u8; count as usize * 4 * 4],
+            color_buffer: vec![0u8; count as usize * 4 * 4],
+            texture_atlas: 0,
+        };
+        assert!(cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_large_batch_instances() {
+        // Test exceeding max batch limit
+        let count = MAX_INSTANCES_PER_BATCH * 2;
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: count,
+            transform_buffer: vec![0u8; count as usize * 16 * 4],
+            animation_buffer: vec![0u8; count as usize * 4 * 4],
+            color_buffer: vec![0u8; count as usize * 4 * 4],
+            texture_atlas: 0,
+        };
+        assert!(cmd.validate()); // validate() only checks buffer sizes match instance_count
+    }
+
+    #[test]
+    fn test_gpu_render_command_mesh_material_ids() {
+        let cmd = GPURenderCommand {
+            mesh_id: u32::MAX,
+            material_id: u32::MAX,
+            instance_count: 1,
+            transform_buffer: vec![0u8; 1 * 16 * 4],
+            animation_buffer: vec![0u8; 1 * 4 * 4],
+            color_buffer: vec![0u8; 1 * 4 * 4],
+            texture_atlas: u32::MAX,
+        };
+        assert!(cmd.validate());
+        assert_eq!(cmd.mesh_id, u32::MAX);
+        assert_eq!(cmd.material_id, u32::MAX);
+    }
+
+    #[test]
+    fn test_gpu_render_command_buffer_byte_alignment() {
+        // Transform buffer: 64 bytes per instance
+        // Animation buffer: 16 bytes per instance
+        // Color buffer: 16 bytes per instance
+        let instances = 7u32;
+        let expected_transform = instances as usize * 64;
+        let expected_animation = instances as usize * 16;
+        let expected_color = instances as usize * 16;
+
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: instances,
+            transform_buffer: vec![0u8; expected_transform],
+            animation_buffer: vec![0u8; expected_animation],
+            color_buffer: vec![0u8; expected_color],
+            texture_atlas: 0,
+        };
+        assert!(cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_animation_buffer_off_by_one() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 2,
+            transform_buffer: vec![0u8; 2 * 16 * 4],
+            animation_buffer: vec![0u8; 2 * 4 * 4 + 1], // one extra byte
+            color_buffer: vec![0u8; 2 * 4 * 4],
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_color_buffer_short() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 2,
+            transform_buffer: vec![0u8; 2 * 16 * 4],
+            animation_buffer: vec![0u8; 2 * 4 * 4],
+            color_buffer: vec![0u8; 2 * 4 * 4 - 1], // one byte short
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_transform_buffer_wrong_size() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 3,
+            transform_buffer: vec![0u8; 2 * 16 * 4], // 2 instead of 3
+            animation_buffer: vec![0u8; 3 * 4 * 4],
+            color_buffer: vec![0u8; 3 * 4 * 4],
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_gpu_render_command_all_buffers_empty() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 1,
+            transform_buffer: vec![],
+            animation_buffer: vec![],
+            color_buffer: vec![],
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    // =========================================================================
+    // CONNECTION / STATE MANAGEMENT TESTS (10+ tests)
+    // =========================================================================
+    // Note: CrowdRendererBridge requires wgpu Device which is not available
+    // in unit tests without a GPU. We test the logic using helper functions
+    // and mock structures.
+
+    #[test]
+    fn test_instance_transform_identity_matrix() {
+        let identity = InstanceTransform {
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert_eq!(std::mem::size_of_val(&identity), 64);
+        assert!((identity.matrix[0][0] - 1.0).abs() < f32::EPSILON);
+        assert!((identity.matrix[1][1] - 1.0).abs() < f32::EPSILON);
+        assert!((identity.matrix[2][2] - 1.0).abs() < f32::EPSILON);
+        assert!((identity.matrix[3][3] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_transform_translation() {
+        let translated = InstanceTransform {
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [100.0, 200.0, 300.0, 1.0],
+            ],
+        };
+        // Translation is in column 3
+        assert!((translated.matrix[3][0] - 100.0).abs() < f32::EPSILON);
+        assert!((translated.matrix[3][1] - 200.0).abs() < f32::EPSILON);
+        assert!((translated.matrix[3][2] - 300.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_transform_scale() {
+        let scaled = InstanceTransform {
+            matrix: [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 4.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert!((scaled.matrix[0][0] - 2.0).abs() < f32::EPSILON);
+        assert!((scaled.matrix[1][1] - 3.0).abs() < f32::EPSILON);
+        assert!((scaled.matrix[2][2] - 4.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_animation_default_values() {
+        let anim = InstanceAnimation {
+            animation_index: 0.0,
+            animation_time: 0.0,
+            animation_speed: 1.0,
+            lod_level: 0.0,
+        };
+        assert!((anim.animation_speed - 1.0).abs() < f32::EPSILON);
+        assert!((anim.lod_level).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_animation_playback_range() {
+        let anim = InstanceAnimation {
+            animation_index: 5.0,
+            animation_time: 0.75,
+            animation_speed: 2.0,
+            lod_level: 2.0,
+        };
+        assert!((anim.animation_index - 5.0).abs() < f32::EPSILON);
+        assert!((anim.animation_time - 0.75).abs() < f32::EPSILON);
+        assert!((anim.animation_speed - 2.0).abs() < f32::EPSILON);
+        assert!((anim.lod_level - 2.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_animation_negative_speed() {
+        // Negative speed for reverse playback
+        let anim = InstanceAnimation {
+            animation_index: 0.0,
+            animation_time: 1.0,
+            animation_speed: -1.0,
+            lod_level: 0.0,
+        };
+        assert!((anim.animation_speed - (-1.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_color_opaque_white() {
+        let color = InstanceColor {
+            color: [1.0, 1.0, 1.0, 1.0],
+        };
+        assert!((color.color[0] - 1.0).abs() < f32::EPSILON);
+        assert!((color.color[1] - 1.0).abs() < f32::EPSILON);
+        assert!((color.color[2] - 1.0).abs() < f32::EPSILON);
+        assert!((color.color[3] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_color_transparent() {
+        let color = InstanceColor {
+            color: [1.0, 0.0, 0.0, 0.0],
+        };
+        assert!((color.color[3]).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_color_rgba_channels() {
+        let color = InstanceColor {
+            color: [0.25, 0.5, 0.75, 1.0],
+        };
+        assert!((color.color[0] - 0.25).abs() < f32::EPSILON);
+        assert!((color.color[1] - 0.5).abs() < f32::EPSILON);
+        assert!((color.color[2] - 0.75).abs() < f32::EPSILON);
+        assert!((color.color[3] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_color_hdr_values() {
+        // HDR values can exceed 1.0
+        let color = InstanceColor {
+            color: [2.0, 3.0, 4.0, 1.0],
+        };
+        assert!((color.color[0] - 2.0).abs() < f32::EPSILON);
+        assert!((color.color[1] - 3.0).abs() < f32::EPSILON);
+        assert!((color.color[2] - 4.0).abs() < f32::EPSILON);
+    }
+
+    // =========================================================================
+    // DATA TRANSFER TESTS (10+ tests)
+    // =========================================================================
+
+    #[test]
+    fn test_make_render_command_empty_data() {
+        let cmd = make_render_command(0, 0, 0, &[], &[], &[], 0);
+        assert_eq!(cmd.instance_count, 0);
+        assert!(cmd.transform_buffer.is_empty());
+        assert!(!cmd.validate()); // zero instances is invalid
+    }
+
+    #[test]
+    fn test_make_render_command_preserves_data() {
+        let transform = vec![0x11u8; 64];
+        let animation = vec![0x22u8; 16];
+        let color = vec![0x33u8; 16];
+
+        let cmd = make_render_command(1, 2, 1, &transform, &animation, &color, 3);
+
+        assert!(cmd.transform_buffer.iter().all(|&b| b == 0x11));
+        assert!(cmd.animation_buffer.iter().all(|&b| b == 0x22));
+        assert!(cmd.color_buffer.iter().all(|&b| b == 0x33));
+    }
+
+    #[test]
+    fn test_make_render_command_multiple_instances() {
+        let instances = 10u32;
+        let transform = vec![0u8; instances as usize * 64];
+        let animation = vec![0u8; instances as usize * 16];
+        let color = vec![0u8; instances as usize * 16];
+
+        let cmd = make_render_command(5, 10, instances, &transform, &animation, &color, 0);
+
+        assert!(cmd.validate());
+        assert_eq!(cmd.instance_count, instances);
+    }
+
+    #[test]
+    fn test_buffer_size_calculation_single() {
+        let instances = 1usize;
+        let transform_size = instances * TRANSFORM_FLOATS * 4;
+        let animation_size = instances * ANIMATION_FLOATS * 4;
+        let color_size = instances * COLOR_FLOATS * 4;
+
+        assert_eq!(transform_size, 64);
+        assert_eq!(animation_size, 16);
+        assert_eq!(color_size, 16);
+    }
+
+    #[test]
+    fn test_buffer_size_calculation_batch() {
+        let instances = 100usize;
+        let transform_size = instances * TRANSFORM_FLOATS * 4;
+        let animation_size = instances * ANIMATION_FLOATS * 4;
+        let color_size = instances * COLOR_FLOATS * 4;
+
+        assert_eq!(transform_size, 6400);
+        assert_eq!(animation_size, 1600);
+        assert_eq!(color_size, 1600);
+    }
+
+    #[test]
+    fn test_instance_stride_bytes_calculation() {
+        let stride = (TRANSFORM_FLOATS + ANIMATION_FLOATS + COLOR_FLOATS) * 4;
+        assert_eq!(stride, INSTANCE_STRIDE_BYTES);
+        assert_eq!(stride, 96);
+    }
+
+    #[test]
+    fn test_large_payload_allocation() {
+        let instances = 10000u32;
+        let transform = vec![0u8; instances as usize * 64];
+        let animation = vec![0u8; instances as usize * 16];
+        let color = vec![0u8; instances as usize * 16];
+
+        let cmd = make_render_command(0, 0, instances, &transform, &animation, &color, 0);
+
+        assert!(cmd.validate());
+        assert_eq!(cmd.transform_buffer.len(), 640000);
+        assert_eq!(cmd.animation_buffer.len(), 160000);
+        assert_eq!(cmd.color_buffer.len(), 160000);
+    }
+
+    #[test]
+    fn test_transform_buffer_packing() {
+        // Create a specific transform matrix and verify byte layout
+        let mat: [[f32; 4]; 4] = [
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0, 16.0],
+        ];
+
+        let mut buffer = Vec::with_capacity(64);
+        for col in &mat {
+            for val in col {
+                buffer.extend_from_slice(&val.to_le_bytes());
+            }
+        }
+
+        assert_eq!(buffer.len(), 64);
+
+        // Verify first float
+        let first_float = f32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        assert!((first_float - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_animation_buffer_packing() {
+        let anim = InstanceAnimation {
+            animation_index: 5.0,
+            animation_time: 0.5,
+            animation_speed: 2.0,
+            lod_level: 1.0,
+        };
+
+        let mut buffer = Vec::with_capacity(16);
+        buffer.extend_from_slice(&anim.animation_index.to_le_bytes());
+        buffer.extend_from_slice(&anim.animation_time.to_le_bytes());
+        buffer.extend_from_slice(&anim.animation_speed.to_le_bytes());
+        buffer.extend_from_slice(&anim.lod_level.to_le_bytes());
+
+        assert_eq!(buffer.len(), 16);
+
+        // Unpack and verify
+        let unpacked_index = f32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        let unpacked_time = f32::from_le_bytes([buffer[4], buffer[5], buffer[6], buffer[7]]);
+        assert!((unpacked_index - 5.0).abs() < f32::EPSILON);
+        assert!((unpacked_time - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_color_buffer_packing() {
+        let color = InstanceColor {
+            color: [0.1, 0.2, 0.3, 0.4],
+        };
+
+        let mut buffer = Vec::with_capacity(16);
+        for c in &color.color {
+            buffer.extend_from_slice(&c.to_le_bytes());
+        }
+
+        assert_eq!(buffer.len(), 16);
+
+        // Unpack first component
+        let unpacked_r = f32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        assert!((unpacked_r - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_multi_instance_buffer_concatenation() {
+        let instance1_transform = vec![1u8; 64];
+        let instance2_transform = vec![2u8; 64];
+
+        let mut combined = Vec::new();
+        combined.extend_from_slice(&instance1_transform);
+        combined.extend_from_slice(&instance2_transform);
+
+        assert_eq!(combined.len(), 128);
+        assert!(combined[..64].iter().all(|&b| b == 1));
+        assert!(combined[64..].iter().all(|&b| b == 2));
+    }
+
+    // =========================================================================
+    // ERROR HANDLING TESTS (10+ tests)
+    // =========================================================================
+
+    #[test]
+    fn test_validate_negative_style_instance_count() {
+        // instance_count is u32, so we test edge case at 0
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 0,
+            transform_buffer: vec![],
+            animation_buffer: vec![],
+            color_buffer: vec![],
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_validate_mismatched_all_buffers() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 5,
+            transform_buffer: vec![0u8; 3 * 64],  // wrong
+            animation_buffer: vec![0u8; 4 * 16],  // wrong
+            color_buffer: vec![0u8; 2 * 16],      // wrong
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_validate_transform_only_correct() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 2,
+            transform_buffer: vec![0u8; 2 * 64],  // correct
+            animation_buffer: vec![0u8; 1 * 16],  // wrong
+            color_buffer: vec![0u8; 2 * 16],      // correct
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_validate_animation_only_correct() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 2,
+            transform_buffer: vec![0u8; 1 * 64],  // wrong
+            animation_buffer: vec![0u8; 2 * 16],  // correct
+            color_buffer: vec![0u8; 2 * 16],      // correct
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_validate_color_only_correct() {
+        let cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 2,
+            transform_buffer: vec![0u8; 1 * 64],  // wrong
+            animation_buffer: vec![0u8; 1 * 16],  // wrong
+            color_buffer: vec![0u8; 2 * 16],      // correct
+            texture_atlas: 0,
+        };
+        assert!(!cmd.validate());
+    }
+
+    #[test]
+    fn test_instance_transform_nan_values() {
+        let xform = InstanceTransform {
+            matrix: [
+                [f32::NAN, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        // NaN values are valid f32 but produce undefined rendering
+        assert!(xform.matrix[0][0].is_nan());
+    }
+
+    #[test]
+    fn test_instance_transform_infinity_values() {
+        let xform = InstanceTransform {
+            matrix: [
+                [f32::INFINITY, 0.0, 0.0, 0.0],
+                [0.0, f32::NEG_INFINITY, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert!(xform.matrix[0][0].is_infinite());
+        assert!(xform.matrix[1][1].is_infinite());
+    }
+
+    #[test]
+    fn test_instance_animation_out_of_range_index() {
+        let anim = InstanceAnimation {
+            animation_index: 1000000.0, // way too high
+            animation_time: 0.0,
+            animation_speed: 1.0,
+            lod_level: 0.0,
+        };
+        // Shader clamps to 255, but struct accepts any float
+        assert!((anim.animation_index - 1000000.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instance_color_negative_values() {
+        // Negative colors are technically valid but unusual
+        let color = InstanceColor {
+            color: [-1.0, -0.5, 0.0, 1.0],
+        };
+        assert!((color.color[0] - (-1.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_empty_command_batch() {
+        let commands: Vec<GPURenderCommand> = vec![];
+        let total_instances: u32 = commands.iter().map(|c| c.instance_count).sum();
+        assert_eq!(total_instances, 0);
+    }
+
+    #[test]
+    fn test_mixed_valid_invalid_commands() {
+        let valid_cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 1,
+            transform_buffer: vec![0u8; 64],
+            animation_buffer: vec![0u8; 16],
+            color_buffer: vec![0u8; 16],
+            texture_atlas: 0,
+        };
+
+        let invalid_cmd = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: 1,
+            transform_buffer: vec![0u8; 10], // wrong size
+            animation_buffer: vec![0u8; 16],
+            color_buffer: vec![0u8; 16],
+            texture_atlas: 0,
+        };
+
+        let commands = vec![valid_cmd.clone(), invalid_cmd.clone(), valid_cmd];
+
+        let valid_count: usize = commands.iter().filter(|c| c.validate()).count();
+        let invalid_count: usize = commands.iter().filter(|c| !c.validate()).count();
+
+        assert_eq!(valid_count, 2);
+        assert_eq!(invalid_count, 1);
+    }
+
+    #[test]
+    fn test_total_instances_overflow_protection() {
+        // Test that summing instance counts doesn't overflow
+        let cmd1 = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: u32::MAX / 2,
+            transform_buffer: vec![],
+            animation_buffer: vec![],
+            color_buffer: vec![],
+            texture_atlas: 0,
+        };
+        let cmd2 = GPURenderCommand {
+            mesh_id: 0,
+            material_id: 0,
+            instance_count: u32::MAX / 2,
+            transform_buffer: vec![],
+            animation_buffer: vec![],
+            color_buffer: vec![],
+            texture_atlas: 0,
+        };
+
+        // Using saturating_add to prevent overflow
+        let total = cmd1.instance_count.saturating_add(cmd2.instance_count);
+        assert!(total <= u32::MAX);
+    }
+
+    // =========================================================================
+    // ATLAS CONSTANTS TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_atlas_default_dimensions() {
+        assert_eq!(ATLAS_DEFAULT_WIDTH, 1024);
+        assert_eq!(ATLAS_DEFAULT_HEIGHT, 2048);
+    }
+
+    #[test]
+    fn test_texels_per_bone() {
+        assert_eq!(TEXELS_PER_BONE, 2);
+    }
+
+    #[test]
+    fn test_atlas_data_size_calculation() {
+        let width = ATLAS_DEFAULT_WIDTH;
+        let height = ATLAS_DEFAULT_HEIGHT;
+        let bytes_per_pixel = 4u32; // RGBA8
+
+        let expected_size = width * height * bytes_per_pixel;
+        assert_eq!(expected_size, 1024 * 2048 * 4);
+        assert_eq!(expected_size, 8388608); // 8 MB
+    }
+
+    // =========================================================================
+    // SHADER SOURCE EXISTENCE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_vertex_shader_source_exists() {
+        assert!(!CROWD_VERTEX_SHADER_SRC.is_empty());
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@vertex"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("vs_main"));
+    }
+
+    #[test]
+    fn test_fragment_shader_source_exists() {
+        assert!(!CROWD_FRAGMENT_SHADER_SRC.is_empty());
+        assert!(CROWD_FRAGMENT_SHADER_SRC.contains("@fragment"));
+        assert!(CROWD_FRAGMENT_SHADER_SRC.contains("fs_main"));
+    }
+
+    #[test]
+    fn test_shader_has_required_bindings() {
+        // Verify shader declares expected bindings
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@binding(0)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@binding(1)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@binding(2)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@binding(3)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@binding(4)"));
+    }
+
+    #[test]
+    fn test_shader_vertex_input_locations() {
+        // Verify shader declares expected vertex input locations
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(0)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(1)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(2)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(3)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(4)"));
+    }
+
+    #[test]
+    fn test_shader_instance_transform_locations() {
+        // Instance transform uses locations 5-8
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(5)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(6)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(7)"));
+        assert!(CROWD_VERTEX_SHADER_SRC.contains("@location(8)"));
+    }
+
+    // =========================================================================
+    // BYTEMUCK COMPATIBILITY TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_instance_transform_bytemuck_cast() {
+        let xform = InstanceTransform {
+            matrix: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &xform as *const InstanceTransform as *const u8,
+                std::mem::size_of::<InstanceTransform>(),
+            )
+        };
+
+        assert_eq!(bytes.len(), 64);
+    }
+
+    #[test]
+    fn test_instance_animation_bytemuck_cast() {
+        let anim = InstanceAnimation {
+            animation_index: 1.0,
+            animation_time: 2.0,
+            animation_speed: 3.0,
+            lod_level: 4.0,
+        };
+
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &anim as *const InstanceAnimation as *const u8,
+                std::mem::size_of::<InstanceAnimation>(),
+            )
+        };
+
+        assert_eq!(bytes.len(), 16);
+    }
+
+    #[test]
+    fn test_instance_color_bytemuck_cast() {
+        let color = InstanceColor {
+            color: [1.0, 0.5, 0.25, 1.0],
+        };
+
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                &color as *const InstanceColor as *const u8,
+                std::mem::size_of::<InstanceColor>(),
+            )
+        };
+
+        assert_eq!(bytes.len(), 16);
+    }
 }

@@ -3,6 +3,15 @@
 > **Purpose**: Complete implementation reference for the engine/simulation/ layer.  
 > Read this file and ONLY this file when implementing simulation and physics systems.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | GJK/EPA, XPBD, SPH fluids, cloth, vehicles (~49K lines) |
+| Rust | ⚠️ 65% | GAPSET_19_PHYSICS — Core solvers wired |
+| Wired | ✅ Partial | Rigid body and collision mostly functional |
+
+*See `docs/STATUS.md` for current progress. See `docs/gap_sets/GAPSET_19_PHYSICS/` for tasks.*
+
 ---
 
 ## 1. Architecture Summary

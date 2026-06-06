@@ -29,6 +29,7 @@ T = TypeVar('T')
 class DropdownState(Enum):
     """Visual interaction states for the dropdown."""
     NORMAL = auto()
+    CLOSED = NORMAL
     HOVERED = auto()
     FOCUSED = auto()
     OPEN = auto()
@@ -137,6 +138,16 @@ class SelectionChangeEvent(Generic[T]):
     previous_values: list[T]
     is_user_action: bool = True
 
+    @property
+    def new_value(self) -> Optional[T]:
+        """Get the new value (first if multi-select)."""
+        return self.selected_values[0] if self.selected_values else None
+
+    @property
+    def previous_value(self) -> Optional[T]:
+        """Get the previous value (first if multi-select)."""
+        return self.previous_values[0] if self.previous_values else None
+
 
 @dataclass(slots=True)
 class OpenStateChangeEvent:
@@ -192,7 +203,7 @@ class Dropdown(Generic[T]):
         '_visual_state', '_style',
         '_x', '_y', '_width', '_height',
         '_filter_text', '_highlighted_index', '_scroll_offset',
-        '_on_selection_change_handlers', '_on_open_handlers',
+        '_on_selection_change_handlers', '_on_open_handlers', '_on_close_handlers',
         '_custom_renderer',
         '_is_hovered', '_is_focused',
         '_dirty', '_cached_mesh'
@@ -237,7 +248,7 @@ class Dropdown(Generic[T]):
         self._id = Dropdown._next_id
         Dropdown._next_id += 1
 
-        self._options: list[DropdownOption[T]] = options or []
+        self._options: list[DropdownOption[T]] = self._normalize_options(options) if options else []
         self._placeholder = placeholder
         self._is_open = False
         self._multi_select = multi_select
@@ -271,6 +282,7 @@ class Dropdown(Generic[T]):
 
         self._on_selection_change_handlers: list[Callable[[SelectionChangeEvent[T]], None]] = []
         self._on_open_handlers: list[Callable[[OpenStateChangeEvent], None]] = []
+        self._on_close_handlers: list[Callable[[OpenStateChangeEvent], None]] = []
         self._custom_renderer: Optional[Callable[[DropdownOption[T], bool, bool], Any]] = None
 
         self._is_hovered = False
@@ -284,6 +296,24 @@ class Dropdown(Generic[T]):
         """Reset the ID counter. Used for testing."""
         cls._next_id = 0
 
+    def _normalize_option(self, opt) -> DropdownOption[T]:
+        """Convert option to DropdownOption if needed."""
+        if isinstance(opt, DropdownOption):
+            return opt
+        return DropdownOption(value=opt, label=str(opt))
+
+    def _normalize_options(self, options: list) -> list[DropdownOption[T]]:
+        """Convert all options to DropdownOption objects."""
+        return [self._normalize_option(o) for o in options] if options else []
+
+    def _get_option_value(self, opt) -> T:
+        """Get the value from an option (handles both DropdownOption and plain values)."""
+        return opt.value if isinstance(opt, DropdownOption) else opt
+
+    def _get_option_label(self, opt) -> str:
+        """Get the label from an option (handles both DropdownOption and plain values)."""
+        return opt.label if isinstance(opt, DropdownOption) else str(opt)
+
     def _find_option_index(self, value: T) -> int:
         """Find the index of an option by value.
 
@@ -294,7 +324,7 @@ class Dropdown(Generic[T]):
             Index of the option, or -1 if not found
         """
         for i, opt in enumerate(self._options):
-            if opt.value == value:
+            if self._get_option_value(opt) == value:
                 return i
         return -1
 
@@ -311,20 +341,63 @@ class Dropdown(Generic[T]):
     @options.setter
     def options(self, value: list[DropdownOption[T]]) -> None:
         """Set the options list."""
-        self._options = value
+        self._options = self._normalize_options(value)
         # Validate current selection
         valid_indices = []
         for idx in self._selected_indices:
-            if 0 <= idx < len(value):
+            if 0 <= idx < len(self._options):
                 valid_indices.append(idx)
         self._selected_indices = valid_indices
         self._highlighted_index = -1
         self._scroll_offset = 0
         self._dirty = True
 
+    def add_option(self, option) -> None:
+        """Add an option to the dropdown."""
+        self._options.append(self._normalize_option(option))
+        self._dirty = True
+
+    def remove_option(self, value: T) -> None:
+        """Remove an option by value."""
+        idx = self._find_option_index(value)
+        if idx >= 0:
+            self._options.pop(idx)
+            # Adjust selection indices
+            self._selected_indices = [
+                i - 1 if i > idx else i
+                for i in self._selected_indices
+                if i != idx
+            ]
+            self._dirty = True
+
+    def clear_options(self) -> None:
+        """Clear all options."""
+        self._options = []
+        self._selected_indices = []
+        self._highlighted_index = -1
+        self._scroll_offset = 0
+        self._dirty = True
+
+    def set_options(self, options: list) -> None:
+        """Replace all options."""
+        self.options = options
+
+    def get_option(self, value: T):
+        """Get an option by value."""
+        idx = self._find_option_index(value)
+        if idx >= 0:
+            return self._options[idx]
+        return None
+
+    def _matches_filter(self, opt, filter_text: str) -> bool:
+        """Check if option matches filter text."""
+        if isinstance(opt, DropdownOption):
+            return opt.matches_filter(filter_text)
+        return filter_text.lower() in str(opt).lower()
+
     @property
-    def filtered_options(self) -> list[tuple[int, DropdownOption[T]]]:
-        """Get options filtered by current search text.
+    def _filtered_options_with_indices(self) -> list[tuple[int, DropdownOption[T]]]:
+        """Get options filtered by current search text with indices.
 
         Returns:
             List of (original_index, option) tuples
@@ -333,14 +406,41 @@ class Dropdown(Generic[T]):
             return list(enumerate(self._options))
         return [
             (i, opt) for i, opt in enumerate(self._options)
-            if opt.matches_filter(self._filter_text)
+            if self._matches_filter(opt, self._filter_text)
         ]
+
+    @property
+    def filtered_options(self) -> list[DropdownOption[T]]:
+        """Get options filtered by current search text."""
+        if not self._filter_text:
+            return self._options[:]
+        return [
+            opt for opt in self._options
+            if self._matches_filter(opt, self._filter_text)
+        ]
+
+    @property
+    def grouped_options(self) -> dict[str, list[DropdownOption[T]]]:
+        """Get options grouped by their group attribute."""
+        groups: dict[str, list[DropdownOption[T]]] = {}
+        for opt in self._options:
+            group = getattr(opt, 'group', None)
+            if group:
+                if group not in groups:
+                    groups[group] = []
+                groups[group].append(opt)
+        return groups
+
+    @property
+    def has_groups(self) -> bool:
+        """Check if any options have a group defined."""
+        return any(getattr(opt, 'group', None) for opt in self._options)
 
     @property
     def selected_value(self) -> Optional[T]:
         """Get the selected value (first if multi-select)."""
         if self._selected_indices:
-            return self._options[self._selected_indices[0]].value
+            return self._get_option_value(self._options[self._selected_indices[0]])
         return None
 
     @selected_value.setter
@@ -350,13 +450,14 @@ class Dropdown(Generic[T]):
             self._set_selection([], is_user_action=False)
         else:
             idx = self._find_option_index(value)
-            if idx >= 0:
-                self._set_selection([idx], is_user_action=False)
+            if idx < 0:
+                raise ValueError(f"Value {value!r} not in options")
+            self._set_selection([idx], is_user_action=False)
 
     @property
     def selected_values(self) -> list[T]:
         """Get all selected values."""
-        return [self._options[i].value for i in self._selected_indices]
+        return [self._get_option_value(self._options[i]) for i in self._selected_indices]
 
     @selected_values.setter
     def selected_values(self, values: list[T]) -> None:
@@ -381,6 +482,13 @@ class Dropdown(Generic[T]):
         return [self._options[i] for i in self._selected_indices]
 
     @property
+    def selected_label(self) -> Optional[str]:
+        """Get the label of the selected option (first if multi-select)."""
+        if self._selected_indices:
+            return self._get_option_label(self._options[self._selected_indices[0]])
+        return None
+
+    @property
     def display_text(self) -> str:
         """Get the text to display in the dropdown button."""
         if not self._selected_indices:
@@ -389,10 +497,10 @@ class Dropdown(Generic[T]):
         if self._multi_select:
             count = len(self._selected_indices)
             if count == 1:
-                return self._options[self._selected_indices[0]].label
+                return self._get_option_label(self._options[self._selected_indices[0]])
             return f"{count} selected"
         else:
-            return self._options[self._selected_indices[0]].label
+            return self._get_option_label(self._options[self._selected_indices[0]])
 
     @property
     def placeholder(self) -> str:
@@ -454,9 +562,26 @@ class Dropdown(Generic[T]):
             self._dirty = True
 
     @property
+    def search_text(self) -> str:
+        """Alias for filter_text."""
+        return self._filter_text
+
+    @search_text.setter
+    def search_text(self, value: str) -> None:
+        """Alias for filter_text."""
+        self.filter_text = value
+
+    @property
     def highlighted_index(self) -> int:
         """Get the currently highlighted option index."""
         return self._highlighted_index
+
+    @highlighted_index.setter
+    def highlighted_index(self, value: int) -> None:
+        """Set the highlighted option index."""
+        if 0 <= value < len(self._options):
+            self._highlighted_index = value
+            self._dirty = True
 
     @property
     def enabled(self) -> bool:
@@ -631,7 +756,7 @@ class Dropdown(Generic[T]):
             is_user_action: Whether this is a user action
         """
         # Validate indices
-        valid = [i for i in indices if 0 <= i < len(self._options) and not self._options[i].disabled]
+        valid = [i for i in indices if 0 <= i < len(self._options) and not getattr(self._options[i], 'disabled', False)]
 
         if self._selected_indices != valid:
             previous_values = self.selected_values
@@ -658,8 +783,12 @@ class Dropdown(Generic[T]):
             timestamp=time(),
             is_open=self._is_open,
         )
-        for handler in self._on_open_handlers:
-            handler(event)
+        if self._is_open:
+            for handler in self._on_open_handlers:
+                handler(event)
+        else:
+            for handler in self._on_close_handlers:
+                handler(event)
 
     def contains_point(self, x: float, y: float) -> bool:
         """Check if a point is within the widget bounds.
@@ -742,10 +871,22 @@ class Dropdown(Generic[T]):
         self._on_open_handlers.append(handler)
         return lambda: self._on_open_handlers.remove(handler)
 
+    def on_close(self, handler: Callable[[OpenStateChangeEvent], None]) -> Callable[[], None]:
+        """Subscribe to close state change events.
+
+        Args:
+            handler: Callback function
+
+        Returns:
+            Unsubscribe function
+        """
+        self._on_close_handlers.append(handler)
+        return lambda: self._on_close_handlers.remove(handler)
+
     # Dropdown control methods
     def open(self) -> None:
         """Open the dropdown."""
-        if not self._enabled or self._is_open:
+        if not self._enabled or self._is_open or not self._options:
             return
 
         self._is_open = True
@@ -783,6 +924,32 @@ class Dropdown(Generic[T]):
         else:
             self.open()
 
+    def navigate_down(self) -> None:
+        """Navigate to the next option, wrapping and skipping disabled."""
+        if not self._options:
+            return
+        start = self._highlighted_index
+        count = len(self._options)
+        for _ in range(count):
+            self._highlighted_index = (self._highlighted_index + 1) % count
+            if not getattr(self._options[self._highlighted_index], 'disabled', False):
+                self._dirty = True
+                return
+        self._highlighted_index = start
+
+    def navigate_up(self) -> None:
+        """Navigate to the previous option, wrapping and skipping disabled."""
+        if not self._options:
+            return
+        start = self._highlighted_index
+        count = len(self._options)
+        for _ in range(count):
+            self._highlighted_index = (self._highlighted_index - 1) % count
+            if not getattr(self._options[self._highlighted_index], 'disabled', False):
+                self._dirty = True
+                return
+        self._highlighted_index = start
+
     def select_option(self, index: int) -> None:
         """Select an option by index.
 
@@ -815,7 +982,7 @@ class Dropdown(Generic[T]):
         """Select the currently highlighted option."""
         if self._highlighted_index >= 0:
             # Map filtered index to real index
-            filtered = self.filtered_options
+            filtered = self._filtered_options_with_indices
             for i, (real_idx, _) in enumerate(filtered):
                 if i == self._highlighted_index:
                     self.select_option(real_idx)
@@ -947,6 +1114,20 @@ class Dropdown(Generic[T]):
         """
         if not self._enabled:
             return False
+        return self.contains_point_in_button(x, y) or (self._is_open and self.contains_point_in_dropdown(x, y))
+
+    def handle_mouse_up(self, x: float, y: float) -> bool:
+        """Handle mouse button release.
+
+        Args:
+            x: Mouse X position
+            y: Mouse Y position
+
+        Returns:
+            True if event was consumed
+        """
+        if not self._enabled:
+            return False
 
         # Click on button
         if self.contains_point_in_button(x, y):
@@ -957,11 +1138,7 @@ class Dropdown(Generic[T]):
         if self._is_open and self.contains_point_in_dropdown(x, y):
             item_idx = self.get_item_at_position(x, y)
             if item_idx >= 0:
-                # Map to real index and select
-                filtered = self.filtered_options
-                if item_idx < len(filtered):
-                    real_idx = filtered[item_idx][0]
-                    self.select_option(real_idx)
+                self.select_option(item_idx)
             return True
 
         # Click outside - close
@@ -970,6 +1147,21 @@ class Dropdown(Generic[T]):
             return True
 
         return False
+
+    def handle_click_outside(self) -> None:
+        """Handle click outside the dropdown."""
+        if self._is_open:
+            self.close()
+
+    def handle_option_click(self, index: int) -> None:
+        """Handle click on an option by index."""
+        self.select_option(index)
+
+    def handle_option_hover(self, index: int) -> None:
+        """Handle hover over an option by index."""
+        if 0 <= index < len(self._options):
+            self._highlighted_index = index
+            self._dirty = True
 
     def handle_mouse_move(self, x: float, y: float) -> bool:
         """Handle mouse movement.
@@ -1042,14 +1234,15 @@ class Dropdown(Generic[T]):
         Returns:
             True if event was consumed
         """
-        if not self._enabled or not self._is_focused:
+        if not self._enabled:
             return False
 
+        # When open, keys work even without focus
         if self._is_open:
             if key == "escape":
                 self.close()
                 return True
-            elif key in ("enter", "return"):
+            if key in ("enter", "return"):
                 self.select_highlighted()
                 if not self._multi_select:
                     self.close()
@@ -1080,6 +1273,8 @@ class Dropdown(Generic[T]):
             elif ctrl and key == "a" and self._multi_select:
                 self.select_all()
                 return True
+            elif key == "backspace" and self._searchable:
+                return self.handle_search_backspace()
         else:
             # Dropdown closed
             if key in ("enter", "return", "space", "down"):
@@ -1174,11 +1369,11 @@ class Dropdown(Generic[T]):
         if filtered_index < 0:
             return self._style.dropdown_background
 
-        filtered = self.filtered_options
+        filtered = self._filtered_options_with_indices
         if filtered_index >= len(filtered):
             return self._style.dropdown_background
 
-        real_idx = filtered[filtered_index][0]
+        real_idx, _ = filtered[filtered_index]
         is_selected = real_idx in self._selected_indices
         is_highlighted = filtered_index == self._highlighted_index
 
@@ -1195,7 +1390,7 @@ class Dropdown(Generic[T]):
         Returns:
             List of (real_index, option, is_selected, is_highlighted) tuples
         """
-        filtered = self.filtered_options
+        filtered = self._filtered_options_with_indices
         start = self._scroll_offset
         end = min(start + self._style.max_visible_items, len(filtered))
 
@@ -1206,3 +1401,64 @@ class Dropdown(Generic[T]):
             is_highlighted = i == self._highlighted_index
             result.append((real_idx, opt, is_selected, is_highlighted))
         return result
+
+    def to_dict(self) -> dict:
+        """Serialize dropdown state to dictionary."""
+        options_data = []
+        for opt in self._options:
+            if isinstance(opt, DropdownOption):
+                options_data.append({
+                    "value": opt.value,
+                    "label": opt.label,
+                    "disabled": opt.disabled,
+                    "icon": opt.icon,
+                    "group": opt.group,
+                })
+            else:
+                options_data.append({"value": opt, "label": str(opt)})
+
+        return {
+            "options": options_data,
+            "selected_value": self.selected_value,
+            "selected_values": self.selected_values,
+            "placeholder": self._placeholder,
+            "multi_select": self._multi_select,
+            "searchable": self._searchable,
+            "enabled": self._enabled,
+            "visible": self._visible,
+            "x": self._x,
+            "y": self._y,
+            "width": self._width,
+            "height": self._height,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Dropdown[T]":
+        """Create dropdown from dictionary."""
+        options = []
+        for opt_data in data.get("options", []):
+            if isinstance(opt_data, dict):
+                options.append(DropdownOption(
+                    value=opt_data.get("value"),
+                    label=opt_data.get("label", ""),
+                    disabled=opt_data.get("disabled", False),
+                    icon=opt_data.get("icon"),
+                    group=opt_data.get("group"),
+                ))
+            else:
+                options.append(opt_data)
+
+        return cls(
+            options=options,
+            selected_value=data.get("selected_value"),
+            selected_values=data.get("selected_values"),
+            placeholder=data.get("placeholder", "Select..."),
+            multi_select=data.get("multi_select", False),
+            searchable=data.get("searchable", False),
+            enabled=data.get("enabled", True),
+            visible=data.get("visible", True),
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            width=data.get("width", 200.0),
+            height=data.get("height", 40.0),
+        )

@@ -6,6 +6,7 @@ Supports:
 - Decorator nodes: Invert, Repeat, Timeout, Cooldown, Retry, ForceSuccess, ForceFailure
 - Leaf nodes: Action, Condition
 - Tick-based execution with abort on condition change
+- Foundation Registry integration for runtime discovery
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING, Type
 
 from .blackboard import Blackboard
 from .constants import (
@@ -29,16 +30,37 @@ from .constants import (
     BT_INFINITE_REPEAT,
 )
 
+# Import Foundation Registry and EventLog
+from foundation import registry, Registry
+
+# Import AI events for EventLog integration
+from .ai_events import get_ai_event_logger, AIEventLogger
+
 if TYPE_CHECKING:
     from .blackboard import BlackboardKey
 
-# Import Foundation registry
-try:
-    from foundation import registry
-    FOUNDATION_AVAILABLE = True
-except ImportError:
-    registry = None
-    FOUNDATION_AVAILABLE = False
+
+# =============================================================================
+# Valid BT Node Types for @bt_node decorator
+# =============================================================================
+
+VALID_BT_NODE_TYPES: Set[str] = {
+    "selector",
+    "sequence",
+    "parallel",
+    "action",
+    "condition",
+    "decorator",
+}
+
+
+# =============================================================================
+# Registry-backed Factory Storage
+# =============================================================================
+
+class BTNodeTypeError(ValueError):
+    """Raised when an invalid BT node type is specified."""
+    pass
 
 
 @dataclass
@@ -52,9 +74,8 @@ class BTContext:
     abort_requested: bool = False
     debug_trace: bool = False
     trace_log: List[str] = field(default_factory=list)
-    # Event logging callback: (entity_id, bt_name, node, is_enter, status) -> None
-    event_callback: Optional[Callable[..., None]] = None
-    bt_name: str = ""
+    bt_name: str = ""  # Name of the behavior tree for event logging
+    event_logger: Optional[AIEventLogger] = None  # Event logger for AI decisions
 
     def child_context(self) -> "BTContext":
         """Create a child context with incremented depth."""
@@ -67,8 +88,8 @@ class BTContext:
             abort_requested=self.abort_requested,
             debug_trace=self.debug_trace,
             trace_log=self.trace_log,
-            event_callback=self.event_callback,
             bt_name=self.bt_name,
+            event_logger=self.event_logger,
         )
 
     def log_trace(self, node: "BTNode", status: BTStatus) -> None:
@@ -78,41 +99,10 @@ class BTContext:
             self.trace_log.append(f"{indent}{node.name}: {status.name}")
 
     def get_entity_id(self) -> int:
-        """Get the entity ID for event logging.
-
-        Returns:
-            The entity's id attribute if present, id(entity) if not,
-            or 0 if no entity is set.
-        """
+        """Get entity ID for event logging."""
         if self.entity is None:
             return 0
-        if hasattr(self.entity, 'id'):
-            return self.entity.id
-        return id(self.entity)
-
-    def log_node_enter(self, node: "BTNode") -> None:
-        """Log node entry event if callback is set."""
-        if self.event_callback is not None:
-            self.event_callback(
-                self.get_entity_id(),
-                self.bt_name,
-                node.name,
-                node.node_type.name if hasattr(node.node_type, 'name') else str(node.node_type),
-                True,  # is_enter
-                None,  # status (not yet known)
-            )
-
-    def log_node_exit(self, node: "BTNode", status: BTStatus) -> None:
-        """Log node exit event if callback is set."""
-        if self.event_callback is not None:
-            self.event_callback(
-                self.get_entity_id(),
-                self.bt_name,
-                node.name,
-                node.node_type.name if hasattr(node.node_type, 'name') else str(node.node_type),
-                False,  # is_enter
-                status.name if hasattr(status, 'name') else str(status),
-            )
+        return getattr(self.entity, 'id', id(self.entity))
 
 
 class BTNode(ABC):
@@ -135,9 +125,34 @@ class BTNode(ABC):
         pass
 
     @abstractmethod
-    def tick(self, context: BTContext) -> BTStatus:
-        """Execute one tick of this node."""
+    def _execute(self, context: BTContext) -> BTStatus:
+        """Internal execution method to be implemented by subclasses."""
         pass
+
+    def tick(self, context: BTContext) -> BTStatus:
+        """Execute one tick of this node with event logging."""
+        # Log node entry
+        if context.event_logger is not None:
+            context.event_logger.log_bt_node_entered(
+                entity_id=context.get_entity_id(),
+                bt_name=context.bt_name,
+                node_name=self.name,
+                node_type=self.node_type.name,
+            )
+
+        # Execute the node
+        result = self._execute(context)
+
+        # Log node exit
+        if context.event_logger is not None:
+            context.event_logger.log_bt_node_exited(
+                entity_id=context.get_entity_id(),
+                bt_name=context.bt_name,
+                node_name=self.name,
+                result=result.name,
+            )
+
+        return result
 
     def reset(self) -> None:
         """Reset this node to its initial state."""
@@ -220,7 +235,7 @@ class Sequence(CompositeNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.SEQUENCE
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if context.depth > BT_MAX_DEPTH:
             self._status = BTStatus.FAILURE
             return self._status
@@ -233,9 +248,7 @@ class Sequence(CompositeNode):
 
         while self._current_index < len(self._children):
             child = self._children[self._current_index]
-            child_context.log_node_enter(child)
             status = child.tick(child_context)
-            child_context.log_node_exit(child, status)
             context.log_trace(child, status)
 
             if status == BTStatus.RUNNING:
@@ -278,7 +291,7 @@ class Selector(CompositeNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.SELECTOR
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if context.depth > BT_MAX_DEPTH:
             self._status = BTStatus.FAILURE
             return self._status
@@ -291,9 +304,7 @@ class Selector(CompositeNode):
 
         while self._current_index < len(self._children):
             child = self._children[self._current_index]
-            child_context.log_node_enter(child)
             status = child.tick(child_context)
-            child_context.log_node_exit(child, status)
             context.log_trace(child, status)
 
             if status == BTStatus.RUNNING:
@@ -342,7 +353,7 @@ class Parallel(CompositeNode):
     def policy(self) -> ParallelPolicy:
         return self._policy
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if context.depth > BT_MAX_DEPTH:
             self._status = BTStatus.FAILURE
             return self._status
@@ -361,9 +372,7 @@ class Parallel(CompositeNode):
         running_count = 0
 
         for child in self._children:
-            child_context.log_node_enter(child)
             status = child.tick(child_context)
-            child_context.log_node_exit(child, status)
             context.log_trace(child, status)
 
             if status == BTStatus.SUCCESS:
@@ -437,7 +446,7 @@ class Invert(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.INVERT
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         child_context = context.child_context()
         status = self._child.tick(child_context)
         context.log_trace(self._child, status)
@@ -479,7 +488,7 @@ class Repeat(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.REPEAT
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         child_context = context.child_context()
         status = self._child.tick(child_context)
         context.log_trace(self._child, status)
@@ -536,7 +545,7 @@ class Timeout(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.TIMEOUT
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if self._start_time is None:
             self._start_time = context.current_time
 
@@ -582,7 +591,7 @@ class Cooldown(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.COOLDOWN
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if self._last_run_time is not None:
             elapsed = context.current_time - self._last_run_time
             if elapsed < self._cooldown:
@@ -623,7 +632,7 @@ class Retry(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.RETRY
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         child_context = context.child_context()
         status = self._child.tick(child_context)
         context.log_trace(self._child, status)
@@ -660,7 +669,7 @@ class ForceSuccess(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.FORCE_SUCCESS
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         child_context = context.child_context()
         status = self._child.tick(child_context)
         context.log_trace(self._child, status)
@@ -680,7 +689,7 @@ class ForceFailure(DecoratorNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.FORCE_FAILURE
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         child_context = context.child_context()
         status = self._child.tick(child_context)
         context.log_trace(self._child, status)
@@ -723,7 +732,7 @@ class Action(LeafNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.ACTION
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         try:
             self._status = self._action(context)
         except Exception as e:
@@ -754,7 +763,7 @@ class Condition(LeafNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.CONDITION
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         try:
             result = self._condition(context)
             self._status = BTStatus.SUCCESS if result else BTStatus.FAILURE
@@ -808,7 +817,7 @@ class Wait(LeafNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.ACTION
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         if self._start_time is None:
             self._start_time = context.current_time
 
@@ -848,7 +857,7 @@ class SetBlackboard(LeafNode):
     def node_type(self) -> BTNodeType:
         return BTNodeType.ACTION
 
-    def tick(self, context: BTContext) -> BTStatus:
+    def _execute(self, context: BTContext) -> BTStatus:
         try:
             if self._value_func:
                 value = self._value_func(context)
@@ -917,10 +926,8 @@ class BehaviorTree:
         """Execute one tick of the behavior tree."""
         current_time = time.time()
 
-        # Set up event callback if logging is enabled
-        event_callback = None
-        if enable_event_logging and entity is not None:
-            event_callback = self._create_event_callback()
+        # Get event logger for AI decision tracking
+        event_logger = get_ai_event_logger() if enable_event_logging else None
 
         context = BTContext(
             blackboard=self._blackboard,
@@ -929,19 +936,11 @@ class BehaviorTree:
             current_time=current_time,
             abort_requested=self._aborted,
             debug_trace=debug_trace,
-            event_callback=event_callback,
             bt_name=self.name,
+            event_logger=event_logger,
         )
 
-        # Log root entry
-        context.log_node_enter(self._root)
-
-        # Execute the tree
         status = self._root.tick(context)
-
-        # Log root exit
-        context.log_node_exit(self._root, status)
-
         self._running = status == BTStatus.RUNNING
         self._last_tick_time = current_time
 
@@ -949,39 +948,6 @@ class BehaviorTree:
             context.log_trace(self._root, status)
 
         return status
-
-    def _create_event_callback(self) -> Callable[..., None]:
-        """Create the event callback for logging."""
-        try:
-            from .ai_events import get_ai_event_logger
-            logger = get_ai_event_logger()
-
-            def callback(
-                entity_id: int,
-                bt_name: str,
-                node_name: str,
-                node_type: str,
-                is_enter: bool,
-                status: Optional[str],
-            ) -> None:
-                if is_enter:
-                    logger.log_bt_node_entered(
-                        entity_id=entity_id,
-                        bt_name=bt_name,
-                        node_name=node_name,
-                        node_type=node_type,
-                    )
-                else:
-                    logger.log_bt_node_exited(
-                        entity_id=entity_id,
-                        bt_name=bt_name,
-                        node_name=node_name,
-                        result=status or "UNKNOWN",
-                    )
-
-            return callback
-        except ImportError:
-            return lambda *args, **kwargs: None
 
     def reset(self) -> None:
         """Reset the behavior tree."""
@@ -1000,112 +966,173 @@ class BehaviorTree:
         cls,
         name: str,
         blackboard: Optional[Blackboard] = None,
+        tick_interval: float = BT_DEFAULT_TICK_INTERVAL,
         **kwargs: Any,
     ) -> "BehaviorTree":
         """
-        Create a BehaviorTree instance from a registered behavior tree class.
+        Factory method to instantiate a behavior tree from the Foundation Registry.
+
+        This method looks up a registered behavior tree class by name and
+        instantiates it. The registered class must either:
+        1. Be a subclass of BehaviorTree that can be instantiated directly
+        2. Have a `build()` class method that returns a BehaviorTree instance
+        3. Have a `create_root()` class method that returns a BTNode
+
+        Usage:
+            @behavior_tree(name="patrol", description="Patrol AI")
+            class PatrolBehavior:
+                @classmethod
+                def create_root(cls) -> BTNode:
+                    return Sequence([
+                        MoveToWaypoint(),
+                        Wait(1.0),
+                    ])
+
+            # Later, instantiate from registry:
+            bt = BehaviorTree.from_registry("patrol")
 
         Args:
-            name: The registered name of the behavior tree class.
-            blackboard: Optional blackboard to use.
-            **kwargs: Additional keyword arguments passed to create_root/build method.
+            name: The registered name of the behavior tree
+            blackboard: Optional blackboard to use
+            tick_interval: How often to tick the tree
+            **kwargs: Additional arguments passed to the BT class
 
         Returns:
-            A new BehaviorTree instance.
+            An instantiated BehaviorTree
 
         Raises:
-            KeyError: If the behavior tree name is not found in registry.
-            TypeError: If the registered class doesn't have create_root or build method.
+            KeyError: If no behavior tree with the given name is registered
+            TypeError: If the registered class cannot be instantiated as a BehaviorTree
         """
-        if not FOUNDATION_AVAILABLE or registry is None:
-            raise KeyError(f"Behavior tree '{name}' not found (Foundation not available)")
-
         # Look up in registry
         registry_name = f"bt.{name}"
         bt_class = registry.get(registry_name)
 
         if bt_class is None:
-            raise KeyError(f"Behavior tree '{name}' not found in registry")
+            # Try finding by querying
+            matches = registry.query(tag="behavior_tree", bt_name=name)
+            if matches:
+                bt_class = matches[0]
 
-        # Create from the registered class
-        if hasattr(bt_class, "create_root"):
-            # create_root returns a root node - pass kwargs to it
-            root = bt_class.create_root(**kwargs)
-            return cls(root=root, blackboard=blackboard, name=name)
-        elif hasattr(bt_class, "build"):
-            # build may return a BehaviorTree instance or a root node
-            result = bt_class.build(blackboard=blackboard, **kwargs)
-            if isinstance(result, cls):
-                return result
-            # Assume it's a root node
-            return cls(root=result, blackboard=blackboard, name=name)
-        else:
-            raise TypeError(
-                f"Registered behavior tree '{name}' must have 'create_root()' or 'build()' method"
+        if bt_class is None:
+            raise KeyError(
+                f"No behavior tree registered with name '{name}'. "
+                f"Use @behavior_tree(name='{name}') to register one."
             )
 
+        # Case 1: Class has a build() method that returns a BehaviorTree
+        if hasattr(bt_class, "build") and callable(getattr(bt_class, "build")):
+            return bt_class.build(blackboard=blackboard, tick_interval=tick_interval, **kwargs)
 
-# =============================================================================
-# BT Registry Integration with Foundation
-# =============================================================================
+        # Case 2: Class has a create_root() method that returns a BTNode
+        if hasattr(bt_class, "create_root") and callable(getattr(bt_class, "create_root")):
+            root = bt_class.create_root(**kwargs)
+            return cls(
+                root=root,
+                blackboard=blackboard,
+                tick_interval=tick_interval,
+                name=name,
+            )
 
-# Valid node types for bt_node decorator
-VALID_BT_NODE_TYPES = frozenset({
-    "action", "condition", "sequence", "selector", "parallel",
-    "decorator", "invert", "repeat", "timeout", "cooldown",
-    "retry", "force_success", "force_failure", "wait", "set_blackboard",
-})
+        # Case 3: Class is a subclass of BehaviorTree
+        if isinstance(bt_class, type) and issubclass(bt_class, cls):
+            return bt_class(
+                blackboard=blackboard,
+                tick_interval=tick_interval,
+                **kwargs,
+            )
+
+        # Case 4: Try direct instantiation if it has a root attribute after init
+        try:
+            instance = bt_class(**kwargs)
+            if hasattr(instance, "root") or hasattr(instance, "_root"):
+                root = getattr(instance, "root", None) or getattr(instance, "_root", None)
+                if root is not None:
+                    return cls(
+                        root=root,
+                        blackboard=blackboard,
+                        tick_interval=tick_interval,
+                        name=name,
+                    )
+        except Exception:
+            pass
+
+        raise TypeError(
+            f"Registered class '{bt_class.__name__}' cannot be instantiated as a BehaviorTree. "
+            f"It must either subclass BehaviorTree, have a build() method, or have a create_root() method."
+        )
 
 
-class BTNodeTypeError(Exception):
-    """Raised when an invalid BT node type is specified."""
-    pass
+def get_all_behavior_trees() -> List[Type]:
+    """
+    Get all registered behavior tree classes from the Foundation Registry.
+
+    Returns:
+        List of all classes registered with the @behavior_tree decorator
+    """
+    return registry.query(tag="behavior_tree")
 
 
-# Tag constants for BT types
-TAG_BEHAVIOR_TREE = "behavior_tree"
-TAG_BT_NODE = "bt_node"
+def get_bt_nodes_by_type(node_type: str) -> List[Type]:
+    """
+    Get all registered BT node classes of a specific type.
+
+    Args:
+        node_type: The node type to filter by (selector, sequence, parallel, action, condition, decorator)
+
+    Returns:
+        List of all node classes matching the given type
+    """
+    normalized_type = node_type.lower().strip()
+    return registry.query(tag="bt_node", node_type=normalized_type)
+
+
+def get_all_bt_nodes() -> List[Type]:
+    """
+    Get all registered BT node classes from the Foundation Registry.
+
+    Returns:
+        List of all classes registered with the @bt_node decorator
+    """
+    return registry.query(tag="bt_node")
 
 
 def behavior_tree(
-    name: Optional[str] = None,
-    *,
-    id: Optional[str] = None,
+    name: str,
     description: Optional[str] = None,
-    debug_name: Optional[str] = None,
     track_instances: bool = False,
 ) -> Callable[[type], type]:
     """
-    Decorator to register a class as a behavior tree with Foundation Registry.
+    Decorator to register a class as a behavior tree definition with Foundation Registry.
 
-    Args:
-        name: Unique name for the behavior tree (can also use 'id' for backwards compat)
-        id: Alias for name (backwards compatibility)
-        description: Human-readable description of what this BT does
-        debug_name: Alias for description (backwards compatibility)
-        track_instances: If True, track all instances via WeakSet
+    This decorator:
+    1. Registers the BT class with the Foundation Registry
+    2. Tags it as "behavior_tree"
+    3. Stores metadata (name, description, node_count)
 
     Usage:
-        @behavior_tree(name="patrol", description="Patrol AI")
+        @behavior_tree(name="patrol", description="Patrol AI behavior")
         class PatrolBehavior:
             pass
+
+        # Query all behavior trees:
+        Registry.query(tag="behavior_tree")
+
+    Args:
+        name: Unique name for the behavior tree
+        description: Human-readable description of what this BT does
+        track_instances: If True, track all instances via WeakSet
+
+    Returns:
+        Decorated class registered with Foundation Registry
     """
-    # Handle backwards compatibility
-    bt_name = name or id
-    bt_desc = description or debug_name
-
-    if not bt_name:
-        raise ValueError("behavior_tree requires a 'name' or 'id' argument")
-
     def decorator(cls: type) -> type:
-        # Set class attributes
+        # Mark class attributes for BT identification
         cls._behavior_tree = True
-        cls._bt_id = bt_name
-        cls._bt_name = bt_name
-        cls._bt_debug_name = bt_desc
-        cls._bt_description = bt_desc or ""
+        cls._bt_name = name
+        cls._bt_description = description or ""
 
-        # Count nodes if the class has a method to do so
+        # Count nodes if the class has a root or build method
         node_count = 0
         if hasattr(cls, "_count_nodes"):
             try:
@@ -1113,113 +1140,102 @@ def behavior_tree(
             except Exception:
                 pass
 
-        # Register with Foundation Registry if available
-        if FOUNDATION_AVAILABLE and registry is not None:
-            registry_name = f"bt.{bt_name}"
-            try:
-                registry.register(cls, name=registry_name, track_instances=track_instances)
-            except ValueError:
-                # Already registered - fine in reload scenarios
-                pass
+        # Register with Foundation Registry
+        registry_name = f"bt.{name}"
+        try:
+            registry.register(cls, name=registry_name, track_instances=track_instances)
+        except ValueError:
+            # Already registered - that's fine in reload scenarios
+            pass
 
-            # Add tag for query-based discovery
-            registry.add_tag(cls, TAG_BEHAVIOR_TREE)
+        # Add tag for query-based discovery
+        registry.add_tag(cls, "behavior_tree")
 
-            # Store metadata
-            registry.set_metadata(cls, "bt_name", bt_name)
-            registry.set_metadata(cls, "description", bt_desc or "")
-            registry.set_metadata(cls, "node_count", node_count)
+        # Store metadata
+        registry.set_metadata(cls, "bt_name", name)
+        registry.set_metadata(cls, "description", description or "")
+        registry.set_metadata(cls, "node_count", node_count)
 
         return cls
+
     return decorator
 
 
 def bt_node(
     node_type: str,
-    *,
-    id: Optional[str] = None,
-    name: Optional[str] = None,
     description: Optional[str] = None,
     track_instances: bool = False,
 ) -> Callable[[type], type]:
     """
-    Decorator to register a BT node class with Foundation Registry.
+    Decorator to register a class as a behavior tree node with Foundation Registry.
 
-    Args:
-        node_type: The type of BT node (action, condition, sequence, etc.)
-        id: Optional custom registry id
-        name: Alias for id
-        description: Optional description of the node's purpose
-        track_instances: If True, track all instances via WeakSet
+    This decorator:
+    1. Validates the node type against allowed types
+    2. Registers the node class with the Foundation Registry
+    3. Tags it as "bt_node"
+    4. Stores metadata (node_type, description)
+
+    Valid node types:
+    - "selector": Runs children until one succeeds
+    - "sequence": Runs children until one fails
+    - "parallel": Runs all children simultaneously
+    - "action": Leaf node that performs work
+    - "condition": Leaf node that checks a condition
+    - "decorator": Wraps and modifies child behavior
 
     Usage:
-        @bt_node(node_type="action", id="patrol_move")
-        class PatrolMoveAction(Action):
+        @bt_node(type="action", description="Move to target position")
+        class MoveToAction:
             pass
-    """
-    # Normalize node_type: strip whitespace and convert to lowercase
-    node_type = node_type.strip().lower()
 
-    if node_type not in VALID_BT_NODE_TYPES:
+        # Query all action nodes:
+        Registry.query(tag="bt_node", node_type="action")
+
+    Args:
+        node_type: Type of BT node (selector, sequence, parallel, action, condition, decorator)
+        description: Human-readable description of what this node does
+        track_instances: If True, track all instances via WeakSet
+
+    Returns:
+        Decorated class registered with Foundation Registry
+
+    Raises:
+        BTNodeTypeError: If node_type is not one of the valid types
+    """
+    # Normalize node type
+    normalized_type = node_type.lower().strip()
+
+    if normalized_type not in VALID_BT_NODE_TYPES:
         raise BTNodeTypeError(
-            f"Invalid node type '{node_type}'. Must be one of: {VALID_BT_NODE_TYPES}"
+            f"Invalid BT node type '{node_type}'. "
+            f"Valid types are: {', '.join(sorted(VALID_BT_NODE_TYPES))}"
         )
 
     def decorator(cls: type) -> type:
-        node_id = id or name or cls.__name__
-
-        # Set class attributes
+        # Mark class attributes for BT node identification
         cls._bt_node = True
-        cls._bt_node_type = node_type
-        cls._bt_node_id = node_id
+        cls._bt_node_type = normalized_type
         cls._bt_node_description = description or ""
 
-        # Register with Foundation Registry if available
-        if FOUNDATION_AVAILABLE and registry is not None:
-            registry_name = f"bt_node.{node_type}.{node_id}"
-            try:
-                registry.register(cls, name=registry_name, track_instances=track_instances)
-            except ValueError:
-                # Already registered - fine in reload scenarios
-                pass
+        # Register with Foundation Registry using unique name
+        registry_name = f"bt_node.{cls.__module__}.{cls.__name__}"
+        try:
+            registry.register(cls, name=registry_name, track_instances=track_instances)
+        except ValueError:
+            # Already registered - that's fine in reload scenarios
+            pass
 
-            # Add tags
-            registry.add_tag(cls, TAG_BT_NODE)
-            registry.add_tag(cls, f"bt_node_{node_type}")
+        # Add tags for query-based discovery
+        registry.add_tag(cls, "bt_node")
+        registry.add_tag(cls, f"bt_node_{normalized_type}")
 
-            # Store metadata
-            registry.set_metadata(cls, "node_type", node_type)
-            registry.set_metadata(cls, "node_id", node_id)
-            if description:
-                registry.set_metadata(cls, "description", description)
+        # Store metadata
+        registry.set_metadata(cls, "node_type", normalized_type)
+        registry.set_metadata(cls, "description", description or "")
 
         return cls
+
     return decorator
-
-
-def get_all_behavior_trees() -> List[type]:
-    """Get all registered behavior tree classes."""
-    if FOUNDATION_AVAILABLE and registry is not None:
-        return registry.query(tag=TAG_BEHAVIOR_TREE)
-    return []
-
-
-def get_all_bt_nodes() -> List[type]:
-    """Get all registered BT node classes."""
-    if FOUNDATION_AVAILABLE and registry is not None:
-        return registry.query(tag=TAG_BT_NODE)
-    return []
-
-
-def get_bt_nodes_by_type(node_type: str) -> List[type]:
-    """Get all registered BT nodes of a specific type."""
-    if node_type not in VALID_BT_NODE_TYPES:
-        raise BTNodeTypeError(
-            f"Invalid node type '{node_type}'. Must be one of: {VALID_BT_NODE_TYPES}"
-        )
-    if FOUNDATION_AVAILABLE and registry is not None:
-        return registry.query(tag=TAG_BT_NODE, node_type=node_type)
-    return []
 
 
 # =============================================================================
@@ -1231,7 +1247,6 @@ __all__ = [
     "BTContext",
     # Base
     "BTNode",
-    "BTNodeTypeError",
     # Composite
     "CompositeNode",
     "Sequence",
@@ -1255,13 +1270,12 @@ __all__ = [
     "SetBlackboard",
     # Tree
     "BehaviorTree",
-    # Decorator functions
+    # Registry Integration
     "behavior_tree",
     "bt_node",
-    # Registry functions
     "get_all_behavior_trees",
-    "get_all_bt_nodes",
     "get_bt_nodes_by_type",
-    # Constants
+    "get_all_bt_nodes",
+    "BTNodeTypeError",
     "VALID_BT_NODE_TYPES",
 ]

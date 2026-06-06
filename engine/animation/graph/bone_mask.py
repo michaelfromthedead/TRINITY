@@ -18,17 +18,30 @@ Usage
 
     mask = BoneMaskPresets.upper_body(skeleton)
     masked = mask.apply(pose_transforms)       # Dict[str, Transform]
+
+    # Or with Pose object:
+    from engine.animation.graph.pose import Pose
+    masked_pose = mask.apply(pose)             # Pose -> Pose
+
+    # Combine masks with different modes:
+    combined = mask1.combine(mask2, mode='multiply')  # Default
+    combined = mask1.combine(mask2, mode='add')
+    combined = mask1.combine(mask2, mode='max')
+    combined = mask1.combine(mask2, mode='min')
 """
 
 from __future__ import annotations
 
 import math
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 from engine.core.math.transform import Transform
 
 from .skeleton import Skeleton
+
+if TYPE_CHECKING:
+    from .pose import Pose as DictPose
 
 
 class MissingBoneMode(Enum):
@@ -47,18 +60,18 @@ class CombineMode(Enum):
     """Mode for combining two bone masks.
 
     ``MULTIPLY``
-        Multiply weights together (both masks must allow the bone).
+        Weights are multiplied (default). Good for layered masking.
     ``ADD``
-        Add weights together (clamped to 1.0).
+        Weights are added, clamped to [0, 1]. Good for union of masks.
     ``MAX``
-        Take the maximum weight from either mask.
+        Maximum weight is taken. Good for logical OR of masks.
     ``MIN``
-        Take the minimum weight from either mask.
+        Minimum weight is taken. Good for logical AND of masks.
     """
-    MULTIPLY = 0
-    ADD = 1
-    MAX = 2
-    MIN = 3
+    MULTIPLY = "multiply"
+    ADD = "add"
+    MAX = "max"
+    MIN = "min"
 
 
 class BoneMask:
@@ -78,10 +91,29 @@ class BoneMask:
         self,
         name: str = "mask",
         mode: MissingBoneMode = MissingBoneMode.ZERO,
+        default_weight: Optional[float] = None,
     ) -> None:
+        """Initialize a bone mask.
+
+        Parameters
+        ----------
+        name : str
+            Identifier for this mask.
+        mode : MissingBoneMode
+            How to handle bones not in the weights dict. Ignored if
+            ``default_weight`` is explicitly provided.
+        default_weight : float or None
+            Explicit default weight for bones not in the weights dict.
+            If provided, overrides the ``mode`` setting. Must be in [0, 1].
+        """
         self.name = name
         self.mode = mode
         self._weights: Dict[str, float] = {}
+        # Store explicit default if provided, else derive from mode
+        if default_weight is not None:
+            self._default_weight: float = max(0.0, min(1.0, default_weight))
+        else:
+            self._default_weight = 1.0 if mode is MissingBoneMode.ONE else 0.0
 
     # -- weight access ----------------------------------------------------------
 
@@ -89,15 +121,25 @@ class BoneMask:
         """Set the weight for *bone_name*, clamped to ``[0, 1]``."""
         self._weights[bone_name] = max(0.0, min(1.0, weight))
 
+    @property
+    def default_weight(self) -> float:
+        """The weight applied to bones not explicitly in the mask."""
+        return self._default_weight
+
+    @default_weight.setter
+    def default_weight(self, value: float) -> None:
+        """Set the default weight for bones not in the mask."""
+        self._default_weight = max(0.0, min(1.0, value))
+
     def get_weight(self, bone_name: str) -> float:
         """Return the effective weight for *bone_name*.
 
-        Returns the explicit weight if previously set, otherwise the mode
-        default (``0.0`` for ``ZERO``, ``1.0`` for ``ONE``).
+        Returns the explicit weight if previously set, otherwise the
+        default weight (derived from ``mode`` or explicit ``default_weight``).
         """
         if bone_name in self._weights:
             return self._weights[bone_name]
-        return 1.0 if self.mode is MissingBoneMode.ONE else 0.0
+        return self._default_weight
 
     @property
     def weights(self) -> Dict[str, float]:
@@ -115,8 +157,10 @@ class BoneMask:
 
     # -- core mask operations ---------------------------------------------------
 
-    def apply(self, bone_transforms: Dict[str, Transform]) -> Dict[str, Transform]:
-        """Apply this mask to a bone-name-to-transform mapping.
+    def apply(
+        self, pose: Union[Dict[str, Transform], "DictPose"]
+    ) -> Union[Dict[str, Transform], "DictPose"]:
+        """Apply this mask to a pose or bone-name-to-transform mapping.
 
         Each transform is blended toward identity proportionally to
         ``1 - weight``:
@@ -127,50 +171,117 @@ class BoneMask:
 
         Parameters
         ----------
-        bone_transforms
-            Mapping from bone name to its current animated transform.
+        pose
+            Either a ``Dict[str, Transform]`` mapping bone names to transforms,
+            or a ``Pose`` object from ``pose.py``.
 
         Returns
         -------
-        Dict[str, Transform]
-            New mapping with weighted transforms.
+        Dict[str, Transform] or Pose
+            New mapping/Pose with weighted transforms. Returns the same type
+            as the input.
         """
-        result: Dict[str, Transform] = {}
-        identity = Transform()
-        for bone_name, xform in bone_transforms.items():
-            w = self.get_weight(bone_name)
-            result[bone_name] = identity.lerp(xform, w)
-        return result
+        # Import Pose here to avoid circular imports
+        from .pose import Pose as DictPose, Transform as PoseTransform
 
-    def combine(self, other: BoneMask, name: Optional[str] = None) -> BoneMask:
-        """Combine this mask with *other* via weight multiplication.
+        # Check if input is a Pose object
+        is_pose_object = isinstance(pose, DictPose)
+
+        if is_pose_object:
+            bone_transforms = pose.bone_transforms
+        else:
+            bone_transforms = pose
+
+        result: Dict[str, Transform] = {}
+
+        # Use the appropriate identity transform
+        if is_pose_object:
+            identity = PoseTransform.identity()
+            for bone_name, xform in bone_transforms.items():
+                w = self.get_weight(bone_name)
+                result[bone_name] = identity.blend(xform, w)
+            return DictPose(bone_transforms=result)
+        else:
+            identity = Transform()
+            for bone_name, xform in bone_transforms.items():
+                w = self.get_weight(bone_name)
+                result[bone_name] = identity.lerp(xform, w)
+            return result
+
+    def combine(
+        self,
+        other: BoneMask,
+        mode: str = "multiply",
+        name: Optional[str] = None,
+    ) -> BoneMask:
+        """Combine this mask with *other* using the specified mode.
 
         The result contains the union of both masks' bone entries.
-        For bones present in both masks the final weight is the product;
-        for bones present in only one, the weight from that mask is used
-        (each mask's own ``MissingBoneMode`` applies for missing-bone
-        defaults).
+        Each mask's own ``MissingBoneMode`` or ``default_weight`` applies
+        for missing-bone defaults during combination.
 
         Parameters
         ----------
         other
             The mask to combine with.
+        mode
+            Combine mode: ``'multiply'`` (default), ``'add'``, ``'max'``,
+            or ``'min'``. Can also be a ``CombineMode`` enum value.
         name
             Optional name for the combined mask.
 
         Returns
         -------
         BoneMask
-            A new mask whose weights are the product of the two inputs.
+            A new mask with combined weights.
+
+        Examples
+        --------
+        >>> combined = mask1.combine(mask2, mode='multiply')  # Layer masking
+        >>> combined = mask1.combine(mask2, mode='add')       # Union
+        >>> combined = mask1.combine(mask2, mode='max')       # Logical OR
+        >>> combined = mask1.combine(mask2, mode='min')       # Logical AND
         """
+        # Normalize mode to string
+        if isinstance(mode, CombineMode):
+            mode_str = mode.value
+        else:
+            mode_str = mode.lower()
+
+        # Build name suffix based on mode
+        mode_suffix = {
+            "multiply": "x",
+            "add": "+",
+            "max": "max",
+            "min": "min",
+        }.get(mode_str, "x")
+
         combined = BoneMask(
-            name=name or f"{self.name}_x_{other.name}",
+            name=name or f"{self.name}_{mode_suffix}_{other.name}",
             mode=self.mode,
+            default_weight=self._default_weight,
         )
+
         all_names: set[str] = set(self._weights) | set(other._weights)
+
         for bn in all_names:
-            w = self.get_weight(bn) * other.get_weight(bn)
+            w1 = self.get_weight(bn)
+            w2 = other.get_weight(bn)
+
+            if mode_str == "multiply":
+                w = w1 * w2
+            elif mode_str == "add":
+                w = w1 + w2
+            elif mode_str == "max":
+                w = max(w1, w2)
+            elif mode_str == "min":
+                w = min(w1, w2)
+            else:
+                # Fallback to multiply for unknown modes
+                w = w1 * w2
+
             combined._weights[bn] = max(0.0, min(1.0, w))
+
         return combined
 
     def invert(self, name: Optional[str] = None) -> BoneMask:
@@ -273,7 +384,11 @@ class BoneMask:
             A deep-ish copy (weight dict is duplicated; strings are
             immutable so sharing is safe).
         """
-        m = BoneMask(name=name or self.name, mode=self.mode)
+        m = BoneMask(
+            name=name or self.name,
+            mode=self.mode,
+            default_weight=self._default_weight,
+        )
         m._weights = dict(self._weights)
         return m
 
@@ -468,6 +583,90 @@ class BoneMaskPresets:
                 t = 1.0 - math.exp(-rate * t)
             w = root_weight + (tip_weight - root_weight) * t
             mask._weights[b.name] = max(0.0, min(1.0, w))
+
+        return mask
+
+    @staticmethod
+    def create_gradient(
+        skeleton: Skeleton,
+        root: str,
+        leaves: List[str],
+        falloff: str = "linear",
+        rate: float = 1.0,
+    ) -> BoneMask:
+        """Create a mask with smooth weight falloff from root to leaf bones.
+
+        This factory method creates a gradient mask that assigns weights
+        based on distance from *root* to each of the *leaves*. Bones are
+        assigned weights proportional to their position in the chain from
+        root to leaf.
+
+        Parameters
+        ----------
+        skeleton
+            The bone hierarchy.
+        root
+            Name of the root bone where the gradient begins (weight 0.0).
+        leaves
+            List of leaf bone names where the gradient ends (weight 1.0).
+            The gradient is computed along the chain from root to each leaf.
+        falloff
+            ``"linear"`` (default) or ``"exponential"``.
+        rate
+            Steepness factor for exponential falloff (ignored for linear).
+
+        Returns
+        -------
+        BoneMask
+            A mask whose weights transition smoothly from 0.0 at *root*
+            to 1.0 at each leaf, with intermediate bones weighted by their
+            relative position in the chain.
+
+        Examples
+        --------
+        >>> # Gradient from spine to hands
+        >>> mask = BoneMaskPresets.create_gradient(
+        ...     skeleton,
+        ...     root="Spine",
+        ...     leaves=["LeftHand", "RightHand"],
+        ...     falloff="linear"
+        ... )
+        """
+        mask = BoneMask(name=f"gradient_{root}_to_leaves")
+        root_bone = skeleton.get_bone(root)
+        if root_bone is None:
+            return mask
+
+        # Track maximum weight per bone (in case multiple paths)
+        bone_weights: Dict[str, float] = {}
+
+        for leaf_name in leaves:
+            # Get the chain from root to leaf
+            chain = skeleton.get_chain(root, leaf_name)
+            if not chain:
+                continue
+
+            chain_length = len(chain) - 1  # Number of steps
+            if chain_length <= 0:
+                # Root == leaf
+                bone_weights[root] = 1.0
+                continue
+
+            for i, bone in enumerate(chain):
+                # Compute normalized position in chain [0, 1]
+                t = i / chain_length
+
+                # Apply falloff function
+                if falloff == "exponential":
+                    t = 1.0 - math.exp(-rate * t * 3.0)  # Scale for visibility
+
+                # Keep maximum weight if bone appears in multiple chains
+                existing = bone_weights.get(bone.name, 0.0)
+                bone_weights[bone.name] = max(existing, t)
+
+        # Clamp and store weights
+        for bone_name, w in bone_weights.items():
+            mask._weights[bone_name] = max(0.0, min(1.0, w))
 
         return mask
 

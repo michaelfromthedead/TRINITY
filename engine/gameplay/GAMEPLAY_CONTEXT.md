@@ -4,6 +4,15 @@
 > **Purpose**: Implements all gameplay mechanics on top of ECS, Trinity, and Foundation
 > **Dependencies**: engine/core/ (ECS, scheduling), engine/common/ (types), engine/simulation/ (physics), engine/engine/ (main loop)
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | GAS abilities, behavior trees, utility AI (~20K lines) |
+| Rust | ✅ 88% | GAPSET_17_GAMEPLAY — Most systems wired |
+| Wired | ✅ Yes | Gameplay systems functional |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

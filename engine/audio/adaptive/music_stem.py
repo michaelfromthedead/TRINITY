@@ -30,6 +30,7 @@ from .config import (
     FADE_CURVE_EQUAL_POWER,
     FADE_CURVE_S_CURVE,
     FADE_CURVE_EXPONENTIAL,
+    FADE_CURVE_LOGARITHMIC,
     EXPONENTIAL_CURVE_FACTOR,
 )
 
@@ -153,6 +154,22 @@ class FadeCurve:
         return (math.exp(t * factor) - 1) / (math.exp(factor) - 1)
 
     @staticmethod
+    def logarithmic(t: float) -> float:
+        """Logarithmic fade curve.
+
+        Args:
+            t: Progress (0.0-1.0)
+
+        Returns:
+            Volume multiplier (0.0-1.0)
+        """
+        t = max(0.0, min(1.0, t))
+        if t <= 0.0:
+            return 0.0
+        factor = EXPONENTIAL_CURVE_FACTOR
+        return math.log(1 + t * (math.exp(factor) - 1)) / factor
+
+    @staticmethod
     def get_curve(curve_type: str) -> Callable[[float], float]:
         """Get fade curve function by name.
 
@@ -167,6 +184,7 @@ class FadeCurve:
             FADE_CURVE_EQUAL_POWER: FadeCurve.equal_power,
             FADE_CURVE_S_CURVE: FadeCurve.s_curve,
             FADE_CURVE_EXPONENTIAL: FadeCurve.exponential,
+            FADE_CURVE_LOGARITHMIC: FadeCurve.logarithmic,
         }
         return curves.get(curve_type, FadeCurve.linear)
 

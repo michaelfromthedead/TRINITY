@@ -791,10 +791,11 @@ fn compiled_graph_debug_includes_async_info() {
     )
     .expect("compute compiles");
 
-    let debug_str = format!("{:?}", compiled);
+    // Use Display trait since CompiledFrameGraph implements Display but not Debug.
+    let display_str = format!("{}", compiled);
     assert!(
-        !debug_str.is_empty(),
-        "Debug output must not be empty",
+        !display_str.is_empty(),
+        "Display output must not be empty",
     );
     // The string representation should cover the async schedule.
     let passes_present = compiled.async_passes.is_empty()

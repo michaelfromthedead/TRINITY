@@ -39,8 +39,6 @@ __all__ = [
     "FIXED32_SCALE",
     "Fixed16",
     "Fixed32",
-    "PCG64",
-    "QualityTier",
     "SystemPhase",
     "PoolConfig",
     "NetworkConfig",
@@ -54,6 +52,7 @@ __all__ = [
     "FieldConfig",
     "SIMULATION_SAFE_TYPES",
     "REQUIRES_DESCRIPTOR_TYPES",
+    "QualityTier",
     "Tier",
     "DecoratorSpec",
 ]
@@ -498,117 +497,67 @@ class Fixed32:
 
 
 # =============================================================================
-# QUALITY TIER ENUM
-# =============================================================================
-
-
-class QualityTier(IntEnum):
-    """Quality tier levels for graphics/performance settings."""
-
-    LOW = 0
-    MEDIUM = 1
-    HIGH = 2
-    ULTRA = 3
-
-    @property
-    def score(self) -> float:
-        """Get normalized score [0.0, 1.0] for this tier."""
-        if self.value == 0:
-            return 0.0
-        if self.value == 3:
-            return 1.0
-        return self.value / 3.0
-
-    @classmethod
-    def from_score(cls, score: float) -> "QualityTier":
-        """Create QualityTier from a normalized score [0.0, 1.0]."""
-        if score < 0.25:
-            return cls.LOW
-        if score < 0.5:
-            return cls.MEDIUM
-        if score < 0.75:
-            return cls.HIGH
-        return cls.ULTRA
-
-    def meets_requirement(self, required: "QualityTier") -> bool:
-        """Check if this tier meets the required tier level."""
-        return self.value >= required.value
-
-
-# =============================================================================
-# PCG64 RANDOM NUMBER GENERATOR
+# DETERMINISTIC RNG (PCG)
 # =============================================================================
 
 
 class PCG64:
     """
-    PCG64 deterministic random number generator.
+    Permuted Congruential Generator (PCG) for deterministic random numbers.
 
-    Implements PCG-XSH-RR with 64-bit state for deterministic
-    random number generation across platforms.
+    PCG-XSH-RR 64/32 variant: 64-bit state, 32-bit output.
+    Same seed always produces same sequence. Suitable for lockstep simulation.
     """
 
-    __slots__ = ("_state", "_inc")
+    __slots__ = ("_state", "_increment")
 
-    # PCG multiplier and default increment
-    _MULTIPLIER = 6364136223846793005
-    _DEFAULT_INC = 1442695040888963407
-    _MASK64 = 0xFFFFFFFFFFFFFFFF
-    _MASK32 = 0xFFFFFFFF
+    MULTIPLIER: int = 6364136223846793005
+    MASK64: int = 0xFFFFFFFFFFFFFFFF
+    MASK32: int = 0xFFFFFFFF
 
-    def __init__(self, seed: int = 0, stream: int = 0):
-        """Initialize PCG64 with seed and optional stream."""
-        # Each stream gets a unique increment (must be odd)
-        self._inc = ((stream << 1) | 1) & self._MASK64
-        if self._inc == 0:
-            self._inc = self._DEFAULT_INC
+    def __init__(self, seed: int = 0, stream: int = 1):
+        """
+        Initialize PCG64 with seed and stream.
 
-        # Initialize state
+        Args:
+            seed: Initial seed value (any 64-bit integer).
+            stream: Stream/sequence selector. Different streams produce
+                    independent sequences. Must be convertible to odd number.
+        """
+        self._increment = ((stream << 1) | 1) & self.MASK64
         self._state = 0
         self._advance()
-        self._state = (self._state + seed) & self._MASK64
+        self._state = (self._state + seed) & self.MASK64
         self._advance()
-
-    def _advance(self) -> None:
-        """Advance internal state."""
-        self._state = (
-            (self._state * self._MULTIPLIER + self._inc) & self._MASK64
-        )
-
-    def _output(self, state: int) -> int:
-        """Generate output from state using XSH-RR."""
-        # PCG XSH-RR output function
-        xorshifted = (((state >> 18) ^ state) >> 27) & self._MASK32
-        rot = (state >> 59) & 31
-        return ((xorshifted >> rot) | (xorshifted << (32 - rot))) & self._MASK32
 
     @classmethod
     def from_seeds(cls, *seeds: int) -> "PCG64":
-        """Create PCG64 from multiple seeds combined via hashing."""
+        """
+        Create RNG from multiple seeds via seed chaining.
+
+        Combines seeds deterministically for reproducible seeding.
+        """
         combined = 0
         for i, seed in enumerate(seeds):
-            # Simple hash combining
-            combined ^= (seed + 0x9E3779B9 + (i << 6) + (i >> 2)) & cls._MASK64
-        return cls(seed=combined)
+            combined ^= (seed * (2654435761 + i)) & cls.MASK64
+            combined = ((combined << 31) | (combined >> 33)) & cls.MASK64
+        return cls(combined)
 
-    @classmethod
-    def from_state(cls, state: tuple[int, int]) -> "PCG64":
-        """Create PCG64 from saved state."""
-        rng = cls.__new__(cls)
-        rng._state = state[0]
-        rng._inc = state[1]
-        return rng
+    def _advance(self) -> None:
+        """Advance internal state by one step."""
+        self._state = (self._state * self.MULTIPLIER + self._increment) & self.MASK64
 
-    @property
-    def state(self) -> tuple[int, int]:
-        """Get current state as a tuple (state, inc)."""
-        return (self._state, self._inc)
+    def _output(self) -> int:
+        """Produce 32-bit output from current state using XSH-RR permutation."""
+        xorshifted = (((self._state >> 18) ^ self._state) >> 27) & self.MASK32
+        rot = (self._state >> 59) & 0x1F
+        return ((xorshifted >> rot) | (xorshifted << (32 - rot))) & self.MASK32
 
     def next_u32(self) -> int:
         """Generate next 32-bit unsigned integer."""
-        old_state = self._state
+        result = self._output()
         self._advance()
-        return self._output(old_state)
+        return result
 
     def next_u64(self) -> int:
         """Generate next 64-bit unsigned integer."""
@@ -617,81 +566,99 @@ class PCG64:
         return (high << 32) | low
 
     def next_float(self) -> float:
-        """Generate next float in [0, 1)."""
-        return self.next_u32() / (self._MASK32 + 1)
+        """Generate next float in [0.0, 1.0)."""
+        return self.next_u32() / 4294967296.0
 
     def next_float64(self) -> float:
-        """Generate next double-precision float in [0, 1)."""
-        return self.next_u64() / (self._MASK64 + 1)
+        """Generate next double-precision float in [0.0, 1.0)."""
+        return self.next_u64() / 18446744073709551616.0
 
     def next_int(self, low: int, high: int) -> int:
-        """Generate random integer in [low, high] inclusive."""
+        """
+        Generate integer in [low, high] inclusive.
+
+        Uses rejection sampling for uniform distribution.
+        """
         if low > high:
             raise ValueError(f"low ({low}) must be <= high ({high})")
         if low == high:
             return low
+
         range_size = high - low + 1
-        return low + (self.next_u32() % range_size)
+        threshold = (self.MASK32 + 1 - range_size) % range_size
+
+        while True:
+            r = self.next_u32()
+            if r >= threshold:
+                return low + (r % range_size)
 
     def next_bool(self) -> bool:
         """Generate random boolean."""
         return (self.next_u32() & 1) == 1
 
-    def next_fixed16(self) -> "Fixed16":
+    def next_fixed16(self) -> Fixed16:
         """Generate random Fixed16 in [0, 1)."""
-        # Use lower 8 bits as fractional part
         raw = self.next_u32() & 0xFF
         return Fixed16.from_raw(raw)
 
-    def next_fixed32(self) -> "Fixed32":
+    def next_fixed32(self) -> Fixed32:
         """Generate random Fixed32 in [0, 1)."""
-        # Use lower 16 bits as fractional part
         raw = self.next_u32() & 0xFFFF
         return Fixed32.from_raw(raw)
 
     def shuffle(self, items: list) -> None:
-        """Shuffle list in-place using Fisher-Yates."""
-        n = len(items)
-        for i in range(n - 1, 0, -1):
-            j = self.next_u32() % (i + 1)
+        """Fisher-Yates shuffle in place."""
+        for i in range(len(items) - 1, 0, -1):
+            j = self.next_int(0, i)
             items[i], items[j] = items[j], items[i]
 
-    def choice(self, items: list) -> Any:
-        """Choose random element from non-empty list."""
+    def choice(self, items: list):
+        """Select random item from non-empty list."""
         if not items:
             raise ValueError("Cannot choose from empty list")
-        return items[self.next_u32() % len(items)]
+        return items[self.next_int(0, len(items) - 1)]
 
-    def fork(self, fork_id: int) -> "PCG64":
-        """Create a new RNG with different stream derived from this one."""
-        # Combine current state with fork_id to create unique seed
-        child_seed = self._state ^ ((fork_id + 1) * 0x9E3779B97F4A7C15)
-        child_stream = (self._inc >> 1) ^ fork_id
-        return PCG64(seed=child_seed & self._MASK64, stream=child_stream)
+    def fork(self, stream_id: int = 0) -> "PCG64":
+        """
+        Create independent child RNG for parallel streams.
 
-    def jump(self, steps: int) -> None:
-        """Advance state by specified number of steps."""
-        # Use fast exponentiation for jumping
-        if steps == 0:
-            return
+        The child RNG is seeded from current state + stream_id,
+        producing a deterministic but independent sequence.
+        """
+        return PCG64(self._state ^ (stream_id * 2685821657736338717), stream_id + 1)
 
-        cur_mult = self._MULTIPLIER
-        cur_plus = self._inc
+    @property
+    def state(self) -> tuple[int, int]:
+        """Get current state for serialization."""
+        return (self._state, self._increment)
+
+    @classmethod
+    def from_state(cls, state: tuple[int, int]) -> "PCG64":
+        """Restore RNG from saved state."""
+        rng = cls.__new__(cls)
+        rng._state = state[0]
+        rng._increment = state[1]
+        return rng
+
+    def jump(self, delta: int) -> None:
+        """Advance state by delta steps (for parallel partitioning)."""
         acc_mult = 1
         acc_plus = 0
+        cur_mult = self.MULTIPLIER
+        cur_plus = self._increment
 
-        while steps > 0:
-            if steps & 1:
-                acc_mult = (acc_mult * cur_mult) & self._MASK64
-                acc_plus = (acc_plus * cur_mult + cur_plus) & self._MASK64
-            cur_plus = ((cur_mult + 1) * cur_plus) & self._MASK64
-            cur_mult = (cur_mult * cur_mult) & self._MASK64
-            steps >>= 1
+        while delta > 0:
+            if delta & 1:
+                acc_mult = (acc_mult * cur_mult) & self.MASK64
+                acc_plus = (acc_plus * cur_mult + cur_plus) & self.MASK64
+            cur_plus = ((cur_mult + 1) * cur_plus) & self.MASK64
+            cur_mult = (cur_mult * cur_mult) & self.MASK64
+            delta >>= 1
 
-        self._state = (acc_mult * self._state + acc_plus) & self._MASK64
+        self._state = (acc_mult * self._state + acc_plus) & self.MASK64
 
     def __repr__(self) -> str:
-        return f"PCG64(state=0x{self._state:016X}, inc=0x{self._inc:016X})"
+        return f"PCG64(state=0x{self._state:016x}, inc=0x{self._increment:016x})"
 
 
 # =============================================================================
@@ -700,16 +667,30 @@ class PCG64:
 
 
 class SystemPhase(IntEnum):
-    """Execution phases for systems."""
+    """
+    13-phase execution schedule for deterministic simulation.
 
-    PRE_PHYSICS = 0
-    PHYSICS = 1
-    POST_PHYSICS = 2
-    PRE_UPDATE = 3
-    UPDATE = 4
-    POST_UPDATE = 5
-    PRE_RENDER = 6
-    RENDER = 7
+    Phases execute in strict order, with each phase completing before
+    the next begins. This ensures reproducible tick execution.
+    """
+
+    PRE_INPUT = 0       # Poll input devices, prepare input state
+    INPUT = 1           # Process input events, update input commands
+    POST_INPUT = 2      # React to input (UI, menus)
+
+    PRE_PHYSICS = 3     # Prepare physics state (apply forces, constraints)
+    PHYSICS = 4         # Physics simulation step
+    POST_PHYSICS = 5    # React to physics (collision response, triggers)
+
+    PRE_UPDATE = 6      # Prepare game state update
+    UPDATE = 7          # Main game logic (AI, gameplay)
+    POST_UPDATE = 8     # React to game state changes (events, observers)
+
+    PRE_RENDER = 9      # Cull, sort, prepare render state
+    RENDER = 10         # Submit render commands
+    POST_RENDER = 11    # Post-process, present, debug overlays
+
+    LATE = 12           # Late-frame cleanup, network sync, profiling
 
 
 # =============================================================================
@@ -835,6 +816,47 @@ REQUIRES_DESCRIPTOR_TYPES: frozenset[type] = frozenset(
         set,
     }
 )
+
+
+# =============================================================================
+# QUALITY TIER SYSTEM (T-CC-0.1)
+# =============================================================================
+
+
+class QualityTier(IntEnum):
+    """
+    Quality tier for rendering feature selection.
+
+    Each tier defines a feature set appropriate for different hardware
+    capabilities. The engine selects a tier at startup based on GPU
+    capabilities and can dynamically adjust based on frame budget.
+    """
+
+    LOW = 0  # Mobile/GLES 3.1: Forward+, 256MB budget, 8 lights, no RT
+    MEDIUM = 1  # Integrated GPU: Clustered forward, 512MB, 64 lights, VSM shadows
+    HIGH = 2  # Discrete GPU: Full deferred, 1GB, 256 lights, RT shadows
+    ULTRA = 3  # High-end: All features, unlimited budget, RT GI
+
+    @property
+    def score(self) -> float:
+        """Numeric score for tier ordering (0.0 to 1.0)."""
+        return self.value / 3.0
+
+    @classmethod
+    def from_score(cls, score: float) -> "QualityTier":
+        """Select tier based on capability score."""
+        if score < 0.25:
+            return cls.LOW
+        elif score < 0.5:
+            return cls.MEDIUM
+        elif score < 0.75:
+            return cls.HIGH
+        else:
+            return cls.ULTRA
+
+    def meets_requirement(self, required: "QualityTier") -> bool:
+        """Check if this tier meets or exceeds a requirement."""
+        return self.value >= required.value
 
 
 # =============================================================================

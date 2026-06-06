@@ -21,6 +21,7 @@ class ScaleMode(Enum):
     NINE_SLICE = auto()   # Nine-slice scaling for UI frames
 
 
+@dataclass(frozen=True)
 class UVCoordinates:
     """UV coordinates for texture atlas regions.
 
@@ -33,67 +34,21 @@ class UVCoordinates:
         u1: Right edge U coordinate
         v1: Bottom edge V coordinate
     """
-    __slots__ = ('u0', 'v0', 'u1', 'v1', '_skip_validation')
+    u0: float = 0.0
+    v0: float = 0.0
+    u1: float = 1.0
+    v1: float = 1.0
 
-    def __init__(
-        self,
-        u0: float = 0.0,
-        v0: float = 0.0,
-        u1: float = 1.0,
-        v1: float = 1.0,
-        _skip_validation: bool = False,
-    ) -> None:
-        """Initialize UV coordinates.
-
-        Args:
-            u0: Left edge U coordinate
-            v0: Top edge V coordinate
-            u1: Right edge U coordinate
-            v1: Bottom edge V coordinate
-            _skip_validation: Internal flag to skip validation for flips
-        """
-        object.__setattr__(self, 'u0', u0)
-        object.__setattr__(self, 'v0', v0)
-        object.__setattr__(self, 'u1', u1)
-        object.__setattr__(self, 'v1', v1)
-        object.__setattr__(self, '_skip_validation', _skip_validation)
-
-        if not _skip_validation:
-            if not (0.0 <= u0 <= 1.0):
-                raise ValueError(f"u0 must be in range [0, 1], got {u0}")
-            if not (0.0 <= v0 <= 1.0):
-                raise ValueError(f"v0 must be in range [0, 1], got {v0}")
-            if not (0.0 <= u1 <= 1.0):
-                raise ValueError(f"u1 must be in range [0, 1], got {u1}")
-            if not (0.0 <= v1 <= 1.0):
-                raise ValueError(f"v1 must be in range [0, 1], got {v1}")
-            if u1 < u0:
-                raise ValueError(f"u1 ({u1}) must be >= u0 ({u0})")
-            if v1 < v0:
-                raise ValueError(f"v1 ({v1}) must be >= v0 ({v0})")
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Prevent attribute modification (frozen-like behavior)."""
-        raise AttributeError("UVCoordinates is immutable")
-
-    def __eq__(self, other: object) -> bool:
-        """Check equality."""
-        if not isinstance(other, UVCoordinates):
-            return NotImplemented
-        return (
-            self.u0 == other.u0 and
-            self.v0 == other.v0 and
-            self.u1 == other.u1 and
-            self.v1 == other.v1
-        )
-
-    def __hash__(self) -> int:
-        """Return hash."""
-        return hash((self.u0, self.v0, self.u1, self.v1))
-
-    def __repr__(self) -> str:
-        """Return string representation."""
-        return f"UVCoordinates(u0={self.u0}, v0={self.v0}, u1={self.u1}, v1={self.v1})"
+    def __post_init__(self) -> None:
+        """Validate UV coordinates."""
+        if not (0.0 <= self.u0 <= 1.0):
+            raise ValueError(f"u0 must be in range [0, 1], got {self.u0}")
+        if not (0.0 <= self.v0 <= 1.0):
+            raise ValueError(f"v0 must be in range [0, 1], got {self.v0}")
+        if not (0.0 <= self.u1 <= 1.0):
+            raise ValueError(f"u1 must be in range [0, 1], got {self.u1}")
+        if not (0.0 <= self.v1 <= 1.0):
+            raise ValueError(f"v1 must be in range [0, 1], got {self.v1}")
 
     @property
     def width(self) -> float:
@@ -105,24 +60,22 @@ class UVCoordinates:
         """Get UV height."""
         return self.v1 - self.v0
 
-    def flip_horizontal(self) -> "UVCoordinates":
+    def flip_horizontal(self) -> UVCoordinates:
         """Return UV coordinates flipped horizontally."""
         return UVCoordinates(
             u0=self.u1,
             v0=self.v0,
             u1=self.u0,
             v1=self.v1,
-            _skip_validation=True,
         )
 
-    def flip_vertical(self) -> "UVCoordinates":
+    def flip_vertical(self) -> UVCoordinates:
         """Return UV coordinates flipped vertically."""
         return UVCoordinates(
             u0=self.u0,
             v0=self.v1,
             u1=self.u1,
             v1=self.v0,
-            _skip_validation=True,
         )
 
     @classmethod
@@ -134,7 +87,7 @@ class UVCoordinates:
         height: int,
         texture_width: int,
         texture_height: int,
-    ) -> "UVCoordinates":
+    ) -> UVCoordinates:
         """Create UV coordinates from pixel rectangle on texture.
 
         Args:

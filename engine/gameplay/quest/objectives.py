@@ -3,14 +3,19 @@ Quest Objectives Module.
 
 Provides objective types for quests: Kill, Collect, Talk, Reach, Escort, Interact.
 Each objective type has counters, flags, and progress tracking.
+
+Foundation Integration (T-GP-9.5):
+- Fires ObjectiveProgress events on progress updates
+- Fires ObjectiveCompleted events when objectives complete
+- Supports causal chain tracking (objective -> quest -> reward)
 """
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-import time
 from typing import Any, Callable
 
 from .constants import (
@@ -74,21 +79,27 @@ class Objective(ABC):
     Base class for quest objectives.
 
     Objectives track progress toward specific goals within a quest.
+
+    Foundation Integration:
+    - Fires ObjectiveProgress events via _fire_progress_event()
+    - Fires ObjectiveCompleted events via _fire_completed_event()
     """
 
     id: str
     description: str
-    objective_type: ObjectiveType = ObjectiveType.CUSTOM  # Overridden by subclasses in __post_init__
+    objective_type: ObjectiveType = field(default=ObjectiveType.CUSTOM)  # Default for subclass override
     state: ObjectiveState = ObjectiveState.INACTIVE
     optional: bool = False  # Optional bonus objective
     hidden: bool = False  # Hidden until certain conditions met
     order: int = 0  # Order for sequential objectives
-    quest_id: str = ""  # Parent quest ID for event firing
 
     # Callbacks
     on_complete: Callable[[Objective], None] | None = None
     on_fail: Callable[[Objective], None] | None = None
     on_progress: Callable[[Objective, float], None] | None = None
+
+    # Parent quest ID for event firing (Foundation integration)
+    quest_id: str = field(default="")
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -133,6 +144,7 @@ class Objective(ABC):
         if self.state not in (ObjectiveState.IN_PROGRESS, ObjectiveState.INACTIVE):
             return False
         self.state = ObjectiveState.COMPLETE
+        # Fire completion event
         self._fire_completed_event()
         if self.on_complete:
             self.on_complete(self)
@@ -166,33 +178,25 @@ class Objective(ABC):
         ...
 
     def _notify_progress(self) -> None:
-        """Notify progress callback and fire ObjectiveProgress event."""
+        """Notify progress callback and fire Foundation event."""
+        # Fire Foundation progress event
+        self._fire_progress_event()
         if self.on_progress:
             self.on_progress(self, self.progress)
-        # Fire ObjectiveProgress event
-        self._fire_progress_event()
 
     def _fire_progress_event(self) -> None:
-        """Fire an ObjectiveProgress event."""
+        """Fire ObjectiveProgress event to Foundation EventLog."""
+        # Import here to avoid circular import
         from .quest import ObjectiveProgress, fire_quest_event
 
-        # Get current/target for counter-based objectives
-        # Try common attribute names: current/required, times_interacted/times_required, times_used/times_required
-        current = getattr(self, "current", None)
-        target = getattr(self, "required", None)
+        # Get current/target from subclass if available
+        current = getattr(self, "current", 0)
+        target = getattr(self, "required", 1)
 
-        # Check for InteractObjective-style attributes
-        if current is None:
-            current = getattr(self, "times_interacted", None)
-        if current is None:
-            current = getattr(self, "times_used", None)
-        if target is None:
-            target = getattr(self, "times_required", None)
-
-        # Fallback: use progress as 0-100 scale
-        if current is None or target is None:
-            current = int(self.progress * 100)
-            target = 100
+        # For flag-based objectives, use progress
+        if not hasattr(self, "current"):
+            current = self.progress
+            target = 1.0
 
         event = ObjectiveProgress(
             quest_id=self.quest_id,
@@ -204,7 +208,8 @@ class Objective(ABC):
         fire_quest_event(event)
 
     def _fire_completed_event(self) -> None:
-        """Fire an ObjectiveCompleted event."""
+        """Fire ObjectiveCompleted event to Foundation EventLog."""
+        # Import here to avoid circular import
         from .quest import ObjectiveCompleted, fire_quest_event
 
         event = ObjectiveCompleted(
@@ -584,9 +589,6 @@ class InteractObjective(Objective):
 
     @property
     def progress(self) -> float:
-        # If marked as interacted directly, return 1.0
-        if self.interacted:
-            return 1.0
         return min(1.0, self.times_interacted / self.times_required)
 
     @property
@@ -969,12 +971,12 @@ class ObjectiveFactory:
         cls._creators[name] = objective_class
 
     @classmethod
-    def create(cls, type_name: str, **kwargs: Any) -> Objective:
-        """Create an objective from type name string and parameters."""
-        if type_name not in cls._creators:
-            raise ValueError(f"Unknown objective type: {type_name}")
+    def create(cls, objective_type: str, **kwargs: Any) -> Objective:
+        """Create an objective from type string and parameters."""
+        if objective_type not in cls._creators:
+            raise ValueError(f"Unknown objective type: {objective_type}")
 
-        return cls._creators[type_name](**kwargs)
+        return cls._creators[objective_type](**kwargs)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Objective:

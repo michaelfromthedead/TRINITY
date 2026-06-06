@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 from .config import (
     PRIORITY_NORMAL,
@@ -60,55 +60,17 @@ class LipSyncData:
         return None
 
 
+@dataclass
 class SubtitleData:
     """Subtitle display data for a VO line."""
-
-    def __init__(
-        self,
-        text: str,
-        speaker_name: str = "",
-        speaker_color: str = "#FFFFFF",
-        start_time_ms: float = 0.0,
-        end_time_ms: float = 0.0,
-        start_ms: Optional[float] = None,
-        end_ms: Optional[float] = None,
-        position: tuple[float, float] = (0.5, 0.9),
-        alignment: str = "center",
-        font_size: int = 24,
-    ) -> None:
-        """
-        Initialize subtitle data.
-
-        Args:
-            text: The subtitle text
-            speaker_name: Name of the speaker
-            speaker_color: Color for speaker name (hex)
-            start_time_ms: Start time in milliseconds
-            end_time_ms: End time in milliseconds
-            start_ms: Alias for start_time_ms
-            end_ms: Alias for end_time_ms
-            position: Normalized screen position (x, y)
-            alignment: Text alignment ("left", "center", "right")
-            font_size: Font size in pixels
-        """
-        self.text = text
-        self.speaker_name = speaker_name
-        self.speaker_color = speaker_color
-        self.start_time_ms = start_ms if start_ms is not None else start_time_ms
-        self.end_time_ms = end_ms if end_ms is not None else end_time_ms
-        self.position = position
-        self.alignment = alignment
-        self.font_size = font_size
-
-    @property
-    def start_ms(self) -> float:
-        """Alias for start_time_ms."""
-        return self.start_time_ms
-
-    @property
-    def end_ms(self) -> float:
-        """Alias for end_time_ms."""
-        return self.end_time_ms
+    text: str
+    speaker_name: str = ""
+    speaker_color: str = "#FFFFFF"
+    start_time_ms: float = 0.0
+    end_time_ms: float = 0.0
+    position: tuple[float, float] = (0.5, 0.9)  # Normalized screen coords
+    alignment: str = "center"
+    font_size: int = 24
 
     @property
     def duration_ms(self) -> float:
@@ -116,7 +78,7 @@ class SubtitleData:
         return self.end_time_ms - self.start_time_ms
 
 
-@dataclass(eq=False)
+@dataclass
 class VOLine:
     """
     Represents a single voice-over line with all metadata.
@@ -171,16 +133,6 @@ class VOLine:
         if isinstance(self.priority, VOPriority):
             self.priority = int(self.priority)
 
-    def __eq__(self, other: object) -> bool:
-        """Check equality based on line_id."""
-        if not isinstance(other, VOLine):
-            return NotImplemented
-        return self.line_id == other.line_id
-
-    def __hash__(self) -> int:
-        """Hash based on line_id for use in sets and dicts."""
-        return hash(self.line_id)
-
     @property
     def state(self) -> VOLineState:
         """Get the current playback state."""
@@ -191,31 +143,20 @@ class VOLine:
         """Set the playback state."""
         self._state = value
 
-    # Property aliases for API compatibility
     @property
     def audio_path(self) -> str:
-        """Alias for audio_asset."""
+        """Get audio path (alias for audio_asset)."""
         return self.audio_asset
 
     @property
     def speaker(self) -> str:
-        """Alias for speaker_id."""
+        """Get speaker (alias for speaker_id)."""
         return self.speaker_id
 
     @property
-    def context(self) -> str:
-        """Alias for context_type."""
-        return self.context_type
-
-    @property
-    def lipsync_data(self) -> Optional[LipSyncData]:
-        """Alias for lip_sync."""
-        return self.lip_sync
-
-    @property
-    def subtitle_data(self) -> Optional[SubtitleData]:
-        """Alias for subtitle."""
-        return self.subtitle
+    def duration(self) -> float:
+        """Get duration (alias for duration_ms)."""
+        return self.duration_ms
 
     @property
     def playback_position_ms(self) -> float:
@@ -298,20 +239,10 @@ class VOLine:
         self._playback_position_ms = 0.0
 
     def is_on_cooldown(self, current_time: float, cooldown_ms: float) -> bool:
-        """
-        Check if line is on cooldown.
-
-        Args:
-            current_time: Current time in seconds
-            cooldown_ms: Default cooldown duration in milliseconds
-
-        Returns:
-            True if line is still on cooldown
-        """
+        """Check if line is on cooldown. Times in seconds, cooldown in ms."""
         if self._last_played_time <= 0:
             return False
         effective_cooldown = self.cooldown_ms if self.cooldown_ms > 0 else cooldown_ms
-        # Convert elapsed seconds to milliseconds for comparison
         elapsed_ms = (current_time - self._last_played_time) * 1000.0
         return elapsed_ms < effective_cooldown
 
@@ -401,110 +332,42 @@ class VOLine:
         )
 
 
-_UNSET = object()  # Sentinel for distinguishing None from not-provided
-
-
 def create_vo_line(
-    line_id: Union[str, None, object] = _UNSET,
-    audio_path: Optional[str] = None,
-    audio_asset: Optional[str] = None,
+    audio_asset: str = "",
     text: str = "",
     speaker_id: str = "",
-    speaker: Optional[str] = None,
     duration_ms: float = 0.0,
     priority: int = PRIORITY_NORMAL,
     interruptible: bool = True,
-    context_type: Optional[str] = None,
-    context: Optional[str] = None,
-    tags: Optional[Union[set[str], list[str]]] = None,
-    language: str = "en",
-    lipsync_data: Optional[LipSyncData] = None,
-    subtitle_data: Optional[SubtitleData] = None,
+    context_type: str = ContextType.BARK.value,
+    tags: Optional[set[str]] = None,
+    line_id: Optional[str] = None,  # Optional custom line_id
+    audio_path: Optional[str] = None,  # Alias for audio_asset
+    speaker: Optional[str] = None,  # Alias for speaker_id
+    duration: Optional[float] = None,  # Alias for duration_ms
+    context: Optional[str] = None,  # Alias for context_type
     **kwargs: Any,
 ) -> VOLine:
-    """
-    Factory function to create a VOLine with common defaults.
+    """Factory function to create a VOLine with common defaults."""
+    # Support aliases
+    if audio_path is not None:
+        audio_asset = audio_path
+    if speaker is not None:
+        speaker_id = speaker
+    if duration is not None:
+        duration_ms = duration
+    if context is not None:
+        context_type = context
 
-    Supports both old-style API (audio_asset, speaker_id, context_type)
-    and blackbox test API (audio_path, speaker, context).
-
-    Args:
-        line_id: Optional line ID (auto-generated if not provided)
-        audio_path: Audio file path (alias for audio_asset)
-        audio_asset: Audio asset path
-        text: Subtitle/dialogue text
-        speaker_id: Speaker identifier
-        speaker: Alias for speaker_id
-        duration_ms: Duration in milliseconds
-        priority: Priority level
-        interruptible: Whether line can be interrupted
-        context_type: Context type string
-        context: Alias for context_type
-        tags: Tags for the line
-        language: Language code
-        lipsync_data: Lip sync data
-        subtitle_data: Subtitle data
-        **kwargs: Additional arguments passed to VOLine
-
-    Returns:
-        A new VOLine instance
-
-    Raises:
-        ValueError: If line_id or audio_path is empty/None
-    """
-    # Handle parameter aliases
-    actual_audio = audio_path or audio_asset or ""
-    actual_speaker = speaker or speaker_id
-    actual_context = context or context_type or ContextType.BARK.value
-    actual_lip_sync = lipsync_data or kwargs.pop('lip_sync', None)
-    actual_subtitle = subtitle_data or kwargs.pop('subtitle', None)
-
-    # Validate required fields for blackbox API
-    # If line_id is explicitly passed as None (not just omitted), reject it
-    if line_id is None:
-        raise TypeError("line_id cannot be None")
-    if line_id is not _UNSET and line_id == "":
-        raise ValueError("line_id cannot be empty")
-    if audio_path == "":
-        raise ValueError("audio_path cannot be empty")
-    if audio_path is not None and audio_path == "":
-        raise ValueError("audio_path cannot be empty")
-
-    # Validate duration
-    if duration_ms < 0:
-        raise ValueError("duration_ms cannot be negative")
-
-    # Handle tags - convert list to set
-    if tags is None:
-        actual_tags: set[str] = set()
-    elif isinstance(tags, list):
-        actual_tags = set(tags)
-    else:
-        actual_tags = tags
-
-    # Build kwargs for VOLine
-    vo_kwargs: dict[str, Any] = {
-        "audio_asset": actual_audio,
-        "text": text,
-        "speaker_id": actual_speaker,
-        "duration_ms": duration_ms,
-        "priority": priority,
-        "interruptible": interruptible,
-        "context_type": actual_context,
-        "tags": actual_tags,
-        "language": language,
-    }
-
-    if line_id is not _UNSET and line_id is not None:
-        vo_kwargs["line_id"] = line_id
-
-    if actual_lip_sync is not None:
-        vo_kwargs["lip_sync"] = actual_lip_sync
-
-    if actual_subtitle is not None:
-        vo_kwargs["subtitle"] = actual_subtitle
-
-    # Merge with extra kwargs
-    vo_kwargs.update(kwargs)
-
-    return VOLine(**vo_kwargs)
+    return VOLine(
+        line_id=line_id or str(uuid.uuid4()),
+        audio_asset=audio_asset,
+        text=text,
+        speaker_id=speaker_id,
+        duration_ms=duration_ms,
+        priority=priority,
+        interruptible=interruptible,
+        context_type=context_type,
+        tags=tags or set(),
+        **kwargs,
+    )

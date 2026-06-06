@@ -4,8 +4,17 @@
 >
 > **Architecture spec:** `DIAGRAMS/ARCHITECTURE_ANIMATION.md` (1264 lines)
 > **Integration spec:** `docs/GAME_ENGINE_INTEGRATION.md` §4.8
-> **Trinity spec:** `docs/TRINITY_LATEST.md`
+> **Trinity spec:** `docs/specs/TRINITY_LATEST.md`
 > **TODO checklist:** `docs/GAME_ENGINE_INTEGRATION_TODO.md` §7
+
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | FABRIK/CCD IK, motion matching, facial (~39K lines) |
+| Rust | ⚠️ 65% | GAPSET_14_ANIMATION — Core systems wired |
+| Wired | ✅ Partial | Skeletal animation functional |
+
+*See `docs/STATUS.md` for current progress.*
 
 ---
 

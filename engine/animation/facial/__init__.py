@@ -16,10 +16,15 @@ from .blend_shapes import (
     BlendShapeController,
     BlendShapeSet,
     CorrectiveBlendShape,
+    CorrectiveShape,
+    apply_arkit_data,
+    apply_blend_shape,
     apply_blend_shapes,
     apply_blend_shapes_with_correctives,
+    apply_corrective_shape,
     create_arkit_compatible_set,
     remap_blend_shape_weights,
+    validate_arkit_data,
 )
 from .eye_animation import (
     BlinkController,
@@ -48,6 +53,8 @@ from .face_rig import (
     AnimationPriority,
     EmotionState,
     FaceRig,
+    LayerPriority,
+    RigLayer,
     create_face_rig,
 )
 from .facs import (
@@ -81,11 +88,16 @@ __all__ = [
     "BlendShapeSet",
     "BlendShapeController",
     "CorrectiveBlendShape",
+    "CorrectiveShape",
+    "apply_arkit_data",
+    "apply_blend_shape",
     "apply_blend_shapes",
     "apply_blend_shapes_with_correctives",
+    "apply_corrective_shape",
     "ARKIT_BLEND_SHAPES",
     "create_arkit_compatible_set",
     "remap_blend_shape_weights",
+    "validate_arkit_data",
 
     # FACS
     "ActionUnit",
@@ -125,6 +137,8 @@ __all__ = [
     "AnimationLayer",
     "EmotionState",
     "FaceRig",
+    "LayerPriority",
+    "RigLayer",
     "create_face_rig",
 
     # Face Capture

@@ -168,6 +168,16 @@ class AudioSource:
         if not self.id:
             self.id = f"source_{id(self)}"
 
+    def __hash__(self) -> int:
+        """Hash based on unique id for set/dict usage."""
+        return hash(self.id)
+
+    def __eq__(self, other: object) -> bool:
+        """Equality based on id."""
+        if not isinstance(other, AudioSource):
+            return NotImplemented
+        return self.id == other.id
+
     @property
     def volume(self) -> float:
         """Get source volume."""

@@ -42,9 +42,9 @@
 //   14. No colour-attachment resource triggers missing-resource error
 
 use renderer_backend::frame_graph::{
-    BridgeValidator, DispatchSource, EdgeType, IrEdge, IrPass, IrResource,
-    PassIndex, ResourceDesc, ResourceHandle, ResourceLifetime, ResourceState,
-    CullStats,
+    BridgeValidator, CompilerStats, DispatchSource, EdgeType, IrEdge, IrPass, IrResource,
+    PassIndex, PerfCounters, ResourceDesc, ResourceHandle, ResourceLifetime, ResourceState,
+    CullStats, SyncPoint,
 };
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ fn validate(
     resources: Vec<IrResource>,
     order: Vec<PassIndex>,
     edges: Vec<IrEdge>,
-    barriers: Vec<(PassIndex, PassIndex, ResourceHandle, EdgeType, ResourceState, ResourceState)>,
+    barriers: Vec<(PassIndex, PassIndex, ResourceState, ResourceState, ResourceHandle)>,
 ) -> Result<(), Vec<String>> {
     let passes_total = passes.len();
     let compiled = renderer_backend::frame_graph::CompiledFrameGraph {
@@ -139,18 +139,22 @@ fn validate(
         depths: std::collections::HashMap::new(),
         barriers,
         async_passes: vec![],
+        async_timeline: None,
+        sync_points: vec![],
         eliminated_passes: vec![],
         cull_stats: CullStats {
             passes_total,
             passes_eliminated: 0,
             resources_freed: 0,
             bytes_saved: 0,
-            culled_pass_count: 0,
             live_pass_count: passes_total,
+            culled_pass_count: 0,
             estimated_gpu_time_saved_ms: 0.0,
         },
         parallel_regions: vec![],
-        ..Default::default()
+        compilation_time_us: 0,
+        stats: Default::default(),
+        perf_counters: Default::default(),
     };
     BridgeValidator::validate(&compiled)
 }
@@ -227,10 +231,9 @@ fn barrier_invalid_from_pass_caught() {
     let barriers = vec![(
         PassIndex(99),  // out of bounds -- only passes 0 and 1 exist
         PassIndex(1),
-        ResourceHandle(0),
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        ResourceHandle(0),
     )];
 
     let result = validate(passes, resources, order, edges, barriers);
@@ -247,10 +250,9 @@ fn barrier_invalid_to_pass_caught() {
     let barriers = vec![(
         PassIndex(0),
         PassIndex(999), // out of bounds
-        ResourceHandle(0),
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        ResourceHandle(0),
     )];
 
     let result = validate(passes, resources, order, edges, barriers);
@@ -267,10 +269,9 @@ fn barrier_both_ends_out_of_bounds_caught() {
     let barriers = vec![(
         PassIndex(0xFFFFFFFF),
         PassIndex(0xFFFFFFFF),
-        ResourceHandle(0),
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        ResourceHandle(0),
     )];
 
     let result = validate(passes, resources, order, edges, barriers);
@@ -517,10 +518,9 @@ fn multiple_errors_accumulated() {
     let barriers = vec![(
         PassIndex(0),
         PassIndex(999), // out of bounds -> barrier pass ref error
-        ResourceHandle(0),
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        ResourceHandle(0),
     )];
 
     let result = validate(passes, resources, order, edges, barriers);
@@ -734,10 +734,9 @@ fn multiple_errors_collected() {
     let barriers = vec![(
         PassIndex(99),
         PassIndex(0),
-        ResourceHandle(0),
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        ResourceHandle(0),
     )];
 
     let result = validate(passes, resources, order, edges, barriers);

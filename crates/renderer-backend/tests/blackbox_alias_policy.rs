@@ -14,7 +14,7 @@
 //                  physical slot. Lifetime = interval from first pass that
 //                  accesses the resource (read or write) to the last pass
 //                  that accesses it (read or write), inclusive.
-//     - Transient: Only transient resources (is_history == true) may
+//     - Transient: Only transient resources (ResourceLifetime::Transient) may
 //                  share slots. Persistent resources always receive a
 //                  dedicated slot, even when lifetimes do not overlap.
 //
@@ -122,7 +122,7 @@ fn lifetimes_overlap(a: (usize, usize), b: (usize, usize)) -> bool {
 ///
 /// - None:      each resource gets a unique slot (no aliasing).
 /// - Relaxed:   resources with non-overlapping lifetimes share a slot.
-/// - Transient: only transient (is_history) resources share slots; persistent
+/// - Transient: only transient (ResourceLifetime::Transient) resources share slots; persistent
 ///              resources always get unique slots.
 fn apply_aliasing(
     policy: AliasPolicy,
@@ -143,7 +143,7 @@ fn apply_aliasing(
         let can_alias = match policy {
             AliasPolicy::None => false,
             AliasPolicy::Relaxed => true,
-            AliasPolicy::Transient => res.is_history,
+            AliasPolicy::Transient => matches!(res.lifetime, ResourceLifetime::Transient),
         };
 
         if can_alias {
@@ -189,6 +189,7 @@ fn apply_aliasing(
 use renderer_backend::frame_graph::{
     mock_pass_compute, mock_pass_graphics, mock_resource_buffer,
     mock_resource_texture, IrPass, IrResource, PassIndex, ResourceHandle,
+    ResourceLifetime,
 };
 
 // =========================================================================
@@ -712,10 +713,9 @@ fn transient_policy_two_transient_non_overlapping_share() {
     // Two transient resources with non-overlapping lifetimes share a slot.
     let r_a = ResourceHandle(1);
     let r_b = ResourceHandle(2);
-    let mut res_a = mock_resource_texture(r_a, "transient_a", 64, 64);
-    res_a.is_history = true;
-    let mut res_b = mock_resource_texture(r_b, "transient_b", 64, 64);
-    res_b.is_history = true;
+    // mock_resource_texture creates Transient resources by default
+    let res_a = mock_resource_texture(r_a, "transient_a", 64, 64);
+    let res_b = mock_resource_texture(r_b, "transient_b", 64, 64);
     let resources = vec![res_a, res_b];
     let passes = vec![
         mock_pass_graphics(PassIndex(0), "pass_a", &[r_a]),
@@ -738,10 +738,11 @@ fn transient_policy_two_persistent_non_overlapping_unique() {
     // get unique slots under Transient policy (persistent never alias).
     let r_a = ResourceHandle(1);
     let r_b = ResourceHandle(2);
-    let resources = vec![
-        mock_resource_texture(r_a, "persistent_a", 64, 64),
-        mock_resource_texture(r_b, "persistent_b", 64, 64),
-    ];
+    let mut res_a = mock_resource_texture(r_a, "persistent_a", 64, 64);
+    res_a.lifetime = ResourceLifetime::Imported;
+    let mut res_b = mock_resource_texture(r_b, "persistent_b", 64, 64);
+    res_b.lifetime = ResourceLifetime::Imported;
+    let resources = vec![res_a, res_b];
     let passes = vec![
         mock_pass_graphics(PassIndex(0), "pass_a", &[r_a]),
         mock_pass_graphics(PassIndex(1), "pass_b", &[r_b]),
@@ -763,9 +764,12 @@ fn transient_policy_transient_and_persistent_non_overlapping_unique() {
     // under Transient policy, even when lifetimes do not overlap.
     let r_t = ResourceHandle(1);
     let r_p = ResourceHandle(2);
-    let mut res_t = mock_resource_texture(r_t, "scratch", 64, 64);
-    res_t.is_history = true;
-    let resources = vec![res_t, mock_resource_texture(r_p, "persistent", 64, 64)];
+    // res_t is transient by default
+    let res_t = mock_resource_texture(r_t, "scratch", 64, 64);
+    // Create persistent (imported) resource
+    let mut res_p = mock_resource_texture(r_p, "persistent", 64, 64);
+    res_p.lifetime = ResourceLifetime::Imported;
+    let resources = vec![res_t, res_p];
     let passes = vec![
         mock_pass_graphics(PassIndex(0), "pass_t", &[r_t]),
         mock_pass_graphics(PassIndex(1), "pass_p", &[r_p]),
@@ -786,10 +790,9 @@ fn transient_policy_two_transient_overlapping_unique() {
     // Two transient resources with overlapping lifetimes get unique slots.
     let r_a = ResourceHandle(1);
     let r_b = ResourceHandle(2);
-    let mut res_a = mock_resource_texture(r_a, "tmp_a", 64, 64);
-    res_a.is_history = true;
-    let mut res_b = mock_resource_texture(r_b, "tmp_b", 64, 64);
-    res_b.is_history = true;
+    // mock_resource_texture creates Transient resources by default
+    let res_a = mock_resource_texture(r_a, "tmp_a", 64, 64);
+    let res_b = mock_resource_texture(r_b, "tmp_b", 64, 64);
     let resources = vec![res_a, res_b];
     let passes = vec![mock_pass_graphics(PassIndex(0), "pass", &[r_a, r_b])];
     let order = vec![PassIndex(0)];
@@ -811,14 +814,16 @@ fn transient_policy_mixed_transient_persistent() {
     let r_a = ResourceHandle(1);
     let r_b = ResourceHandle(2);
     let r_p = ResourceHandle(3);
-    let mut res_a = mock_resource_texture(r_a, "tmp_a", 64, 64);
-    res_a.is_history = true;
-    let mut res_b = mock_resource_texture(r_b, "tmp_b", 64, 64);
-    res_b.is_history = true;
+    // Transient resources by default
+    let res_a = mock_resource_texture(r_a, "tmp_a", 64, 64);
+    let res_b = mock_resource_texture(r_b, "tmp_b", 64, 64);
+    // Persistent (imported) resource
+    let mut res_p = mock_resource_texture(r_p, "persistent", 64, 64);
+    res_p.lifetime = ResourceLifetime::Imported;
     let resources = vec![
         res_a,
         res_b,
-        mock_resource_texture(r_p, "persistent", 64, 64),
+        res_p,
     ];
     let passes = vec![
         mock_pass_graphics(PassIndex(0), "p_a", &[r_a]),

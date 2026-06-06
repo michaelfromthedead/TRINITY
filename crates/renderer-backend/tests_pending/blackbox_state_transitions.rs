@@ -56,13 +56,13 @@ fn uninitialized_to_shader_read_first_use_barrier_through_generate() {
     )];
 
     // Manually construct the first-use transition: UNINITIALIZED -> ShaderRead.
+    // Tuple order: (from, to, before, after, handle)
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
-        r_tex,
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ShaderRead,
+        r_tex,
     )];
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -116,13 +116,13 @@ fn uninitialized_to_color_attachment_first_use_barrier_through_generate() {
         EdgeType::RAW,
     )];
 
+    // Tuple order: (from, to, before, after, handle)
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
-        r_tex,
-        EdgeType::RAW,
         ResourceState::Uninitialized,
         ResourceState::ColorAttachment,
+        r_tex,
     )];
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -221,7 +221,8 @@ fn shader_read_to_color_attachment_read_to_write_barrier() {
         "ShaderRead -> ColorAttachment produces one barrier tuple",
     );
 
-    let (_from, _to, handle, _edge_type, before, after) = barrier_tuples[0];
+    // Tuple order: (from, to, before, after, handle)
+    let (_from, _to, before, after, handle) = barrier_tuples[0];
     assert_eq!(handle, r_tex, "barrier targets the correct resource");
     assert_eq!(
         before,
@@ -280,7 +281,8 @@ fn color_attachment_to_shader_read_write_to_read_barrier() {
         "ColorAttachment -> ShaderRead produces one barrier tuple",
     );
 
-    let (_from, _to, handle, _edge_type, before, after) = barrier_tuples[0];
+    // Tuple order: (from, to, before, after, handle)
+    let (_from, _to, before, after, handle) = barrier_tuples[0];
     assert_eq!(handle, r_tex, "barrier targets the correct resource");
     assert_eq!(
         before,
@@ -328,13 +330,13 @@ fn color_attachment_to_present_barrier_through_generate() {
         EdgeType::RAW,
     )];
 
+    // Tuple order: (from, to, before, after, handle)
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
-        r_tex,
-        EdgeType::RAW,
         ResourceState::ColorAttachment,
         ResourceState::Present,
+        r_tex,
     )];
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -377,13 +379,13 @@ fn transfer_dst_to_shader_read_barrier_through_generate() {
         EdgeType::RAW,
     )];
 
+    // Tuple order: (from, to, before, after, handle)
     let barrier_tuples = vec![(
         PassIndex(0),
         PassIndex(1),
-        r_tex,
-        EdgeType::RAW,
         ResourceState::TransferDst,
         ResourceState::ShaderRead,
+        r_tex,
     )];
 
     let commands = generate_barriers(&barrier_tuples, &passes, &edges, &resources);
@@ -453,8 +455,9 @@ fn multiple_barriers_batched_at_single_boundary() {
         "three resources at same boundary = three barrier 5-tuples",
     );
 
-    // Each tuple carries its own ResourceHandle.
-    let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.2).collect();
+    // Each tuple carries its own ResourceHandle at position 4.
+    // Tuple order: (from, to, before, after, handle)
+    let handles: Vec<ResourceHandle> = barrier_tuples.iter().map(|t| t.4).collect();
     assert!(handles.contains(&r_a), "r_a has a barrier tuple");
     assert!(handles.contains(&r_b), "r_b has a barrier tuple");
     assert!(handles.contains(&r_c), "r_c has a barrier tuple");
@@ -688,7 +691,9 @@ fn first_use_read_pipeline_uninitialized_to_shader_read() {
         "first use of resource produces one barrier (UNINITIALIZED -> ShaderRead)",
     );
 
-    let (from, to, handle, _edge_type, before, after) = barrier_tuples[0];
+    // Tuple order: (from, to, before, after, handle)
+    let (from, to, before, after, handle) = barrier_tuples[0];
+    let _ = (from, to); // silence unused warnings
     assert_eq!(handle, r_tex, "barrier targets the first-use resource");
     assert_eq!(
         before,
@@ -752,7 +757,8 @@ fn first_use_render_target_pipeline_uninitialized_to_color_attachment() {
     );
 
     // First barrier: UNINITIALIZED -> ColorAttachment (between P0 and P1).
-    let (f0, t0, h0, _e0, b0, a0) = barrier_tuples[0];
+    // Tuple order: (from, to, before, after, handle)
+    let (f0, t0, b0, a0, h0) = barrier_tuples[0];
     assert_eq!(f0, PassIndex(0), "first barrier at P0->P1 boundary");
     assert_eq!(t0, PassIndex(1));
     assert_eq!(h0, r_tex);
@@ -768,7 +774,8 @@ fn first_use_render_target_pipeline_uninitialized_to_color_attachment() {
     );
 
     // Second barrier: ColorAttachment -> ShaderRead (between P1 and P2).
-    let (f1, t1, h1, _e1, b1, a1) = barrier_tuples[1];
+    // Tuple order: (from, to, before, after, handle)
+    let (f1, t1, b1, a1, h1) = barrier_tuples[1];
     assert_eq!(f1, PassIndex(1), "second barrier at P1->P2 boundary");
     assert_eq!(t1, PassIndex(2));
     assert_eq!(h1, r_tex);
@@ -824,25 +831,27 @@ fn a_to_b_to_a_produces_two_barriers_not_eliminated() {
     );
 
     // First barrier: ColorAttachment -> ShaderRead.
+    // Tuple order: (from, to, before, after, handle) = indices (0, 1, 2, 3, 4)
     assert_eq!(
-        barrier_tuples[0].4,
+        barrier_tuples[0].2,
         ResourceState::ColorAttachment,
         "first: before=ColorAttachment",
     );
     assert_eq!(
-        barrier_tuples[0].5,
+        barrier_tuples[0].3,
         ResourceState::ShaderRead,
         "first: after=ShaderRead",
     );
 
     // Second barrier: ShaderRead -> ColorAttachment.
+    // Tuple order: (from, to, before, after, handle) = indices (0, 1, 2, 3, 4)
     assert_eq!(
-        barrier_tuples[1].4,
+        barrier_tuples[1].2,
         ResourceState::ShaderRead,
         "second: before=ShaderRead",
     );
     assert_eq!(
-        barrier_tuples[1].5,
+        barrier_tuples[1].3,
         ResourceState::ColorAttachment,
         "second: after=ColorAttachment",
     );

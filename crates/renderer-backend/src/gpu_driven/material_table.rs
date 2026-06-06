@@ -15,7 +15,7 @@
 //!   NOT reclaimed -- the index remains invalid (u32::MAX sentinel for texture
 //!   IDs, zeroed otherwise). This keeps all existing shader references valid.
 //!
-//! # Layout
+//! # Layout (MaterialTableEntry - 80 bytes)
 //!
 //! | Offset | Size | Field | Description |
 //! |--------|------|-------|-------------|
@@ -34,6 +34,28 @@
 //! | 72     | 8    | *(implicit padding)* | Rounds to 80 (align 16) |
 //!
 //! **Total: 80 bytes.** Array stride: 80.
+//!
+//! # Layout (MaterialDescriptor - 64 bytes, T-WGPU-P6.8.4)
+//!
+//! A compact GPU-compatible material descriptor using bytemuck for safe
+//! GPU buffer transfers. Used for bindless material tables in GPU-driven
+//! rendering pipelines.
+//!
+//! | Offset | Size | Field | Description |
+//! |--------|------|-------|-------------|
+//! | 0      | 4    | `base_color_texture` | Bindless texture index (u32::MAX = none) |
+//! | 4      | 4    | `normal_texture` | Bindless texture index |
+//! | 8      | 4    | `metallic_roughness_texture` | Bindless texture index |
+//! | 12     | 4    | `emissive_texture` | Bindless texture index |
+//! | 16     | 16   | `base_color_factor` | RGBA base color factor |
+//! | 32     | 4    | `metallic_factor` | Metallic factor (0-1) |
+//! | 36     | 4    | `roughness_factor` | Roughness factor (0-1) |
+//! | 40     | 12   | `emissive_factor` | RGB emissive factor |
+//! | 52     | 4    | `alpha_cutoff` | Alpha cutoff for masked materials |
+//! | 56     | 4    | `flags` | Material flags (double-sided, alpha mode) |
+//! | 60     | 4    | `_pad` | Padding for 64-byte alignment |
+//!
+//! **Total: 64 bytes.** Array stride: 64.
 //!
 //! # Safety
 //!
@@ -70,6 +92,9 @@
 //! assert_eq!(bytes.len(), MATERIAL_TABLE_ENTRY_SIZE);
 //! ```
 
+use bytemuck::{Pod, Zeroable};
+use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, Queue};
+
 use crate::gpu_driven::buffers::{
     AcquireResult, BufferRegistry, SubmitResult,
 };
@@ -81,14 +106,39 @@ use crate::gpu_driven::buffers::{
 /// Size of a single `MaterialTableEntry` in bytes (80).
 pub const MATERIAL_TABLE_ENTRY_SIZE: usize = 80;
 
-/// Default material table capacity (1024 entries = 80 KiB).
+/// Size of a single `MaterialDescriptor` in bytes (64).
+pub const MATERIAL_DESCRIPTOR_SIZE: usize = 64;
+
+/// Default material table capacity (1024 entries = 80 KiB for MaterialTableEntry).
 pub const DEFAULT_MATERIAL_TABLE_CAPACITY: usize = 1024;
+
+/// Default GPU material table capacity (1024 entries = 64 KiB for MaterialDescriptor).
+pub const DEFAULT_GPU_MATERIAL_TABLE_CAPACITY: u32 = 1024;
 
 /// Flag bit indicating the material entry has been modified and needs staging.
 pub const MATERIAL_FLAG_DIRTY: u32 = 0x8000_0000;
 
 /// Flag bit indicating the material is visible (included in draw calls).
 pub const MATERIAL_FLAG_VISIBLE: u32 = 0x0000_0001;
+
+// ---------------------------------------------------------------------------
+// MaterialDescriptor Flags (T-WGPU-P6.8.4)
+// ---------------------------------------------------------------------------
+
+/// Flag: Material is double-sided (no backface culling).
+pub const MATERIAL_DESC_FLAG_DOUBLE_SIDED: u32 = 1 << 0;
+
+/// Flag: Material uses alpha mask mode.
+pub const MATERIAL_DESC_FLAG_ALPHA_MASK: u32 = 1 << 1;
+
+/// Flag: Material uses alpha blend mode.
+pub const MATERIAL_DESC_FLAG_ALPHA_BLEND: u32 = 1 << 2;
+
+/// Flag: Material has unlit shading (no PBR).
+pub const MATERIAL_DESC_FLAG_UNLIT: u32 = 1 << 3;
+
+/// Sentinel value indicating no texture is bound.
+pub const NO_TEXTURE: u32 = u32::MAX;
 
 // ---------------------------------------------------------------------------
 // MaterialTableEntry
@@ -221,6 +271,565 @@ impl MaterialTableEntry {
 impl Default for MaterialTableEntry {
     fn default() -> Self {
         Self::zeroed()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MaterialDescriptor (T-WGPU-P6.8.4)
+// ---------------------------------------------------------------------------
+
+/// GPU-compatible material descriptor (64 bytes) for bindless rendering.
+///
+/// This struct is designed for direct GPU buffer transfer using bytemuck's
+/// `Pod` and `Zeroable` traits. It stores texture indices into the bindless
+/// texture registry and material parameters for PBR shading.
+///
+/// # WGSL Usage
+///
+/// ```wgsl
+/// struct MaterialDescriptor {
+///     base_color_texture: u32,
+///     normal_texture: u32,
+///     metallic_roughness_texture: u32,
+///     emissive_texture: u32,
+///     base_color_factor: vec4<f32>,
+///     metallic_factor: f32,
+///     roughness_factor: f32,
+///     emissive_factor: vec3<f32>,
+///     alpha_cutoff: f32,
+///     flags: u32,
+///     _pad: u32,
+/// }
+///
+/// @group(0) @binding(0) var<storage, read> materials: array<MaterialDescriptor>;
+/// ```
+///
+/// # Layout
+///
+/// The struct is 64 bytes with natural alignment. Texture indices use
+/// `u32::MAX` as a sentinel for "no texture bound".
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct MaterialDescriptor {
+    /// Base color texture index into bindless texture registry.
+    /// Use `NO_TEXTURE` (u32::MAX) if no texture is bound.
+    pub base_color_texture: u32,
+
+    /// Normal map texture index into bindless texture registry.
+    /// Use `NO_TEXTURE` (u32::MAX) if no texture is bound.
+    pub normal_texture: u32,
+
+    /// Metallic-roughness texture index into bindless texture registry.
+    /// Red channel = metallic, green channel = roughness.
+    /// Use `NO_TEXTURE` (u32::MAX) if no texture is bound.
+    pub metallic_roughness_texture: u32,
+
+    /// Emissive texture index into bindless texture registry.
+    /// Use `NO_TEXTURE` (u32::MAX) if no texture is bound.
+    pub emissive_texture: u32,
+
+    /// Base color factor (RGBA, linear space).
+    /// Multiplied with base color texture if present.
+    pub base_color_factor: [f32; 4],
+
+    /// Metallic factor (0.0 = dielectric, 1.0 = metal).
+    /// Multiplied with metallic texture if present.
+    pub metallic_factor: f32,
+
+    /// Roughness factor (0.0 = smooth, 1.0 = rough).
+    /// Multiplied with roughness texture if present.
+    pub roughness_factor: f32,
+
+    /// Emissive factor (RGB, linear space).
+    /// Multiplied with emissive texture if present.
+    pub emissive_factor: [f32; 3],
+
+    /// Alpha cutoff threshold for alpha-mask materials.
+    /// Fragments with alpha below this are discarded.
+    pub alpha_cutoff: f32,
+
+    /// Material flags (double-sided, alpha mode, etc.).
+    /// See `MATERIAL_DESC_FLAG_*` constants.
+    pub flags: u32,
+
+    /// Padding for 64-byte alignment.
+    pub _pad: u32,
+}
+
+impl MaterialDescriptor {
+    /// Sentinel value for "no texture bound" (convenience re-export).
+    pub const NO_TEXTURE: u32 = NO_TEXTURE;
+
+    /// Creates a new material descriptor with default PBR values.
+    ///
+    /// - White base color
+    /// - No textures bound
+    /// - Metallic = 0 (dielectric)
+    /// - Roughness = 0.5 (medium rough)
+    /// - No emission
+    /// - Alpha cutoff = 0.5
+    /// - No flags set
+    pub const fn new() -> Self {
+        Self {
+            base_color_texture: NO_TEXTURE,
+            normal_texture: NO_TEXTURE,
+            metallic_roughness_texture: NO_TEXTURE,
+            emissive_texture: NO_TEXTURE,
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.5,
+            emissive_factor: [0.0, 0.0, 0.0],
+            alpha_cutoff: 0.5,
+            flags: 0,
+            _pad: 0,
+        }
+    }
+
+    /// Creates a simple opaque material with the given base color.
+    pub const fn opaque(r: f32, g: f32, b: f32) -> Self {
+        Self {
+            base_color_texture: NO_TEXTURE,
+            normal_texture: NO_TEXTURE,
+            metallic_roughness_texture: NO_TEXTURE,
+            emissive_texture: NO_TEXTURE,
+            base_color_factor: [r, g, b, 1.0],
+            metallic_factor: 0.0,
+            roughness_factor: 0.5,
+            emissive_factor: [0.0, 0.0, 0.0],
+            alpha_cutoff: 0.5,
+            flags: 0,
+            _pad: 0,
+        }
+    }
+
+    /// Creates a metallic material with the given base color.
+    pub const fn metallic(r: f32, g: f32, b: f32, metallic: f32, roughness: f32) -> Self {
+        Self {
+            base_color_texture: NO_TEXTURE,
+            normal_texture: NO_TEXTURE,
+            metallic_roughness_texture: NO_TEXTURE,
+            emissive_texture: NO_TEXTURE,
+            base_color_factor: [r, g, b, 1.0],
+            metallic_factor: metallic,
+            roughness_factor: roughness,
+            emissive_factor: [0.0, 0.0, 0.0],
+            alpha_cutoff: 0.5,
+            flags: 0,
+            _pad: 0,
+        }
+    }
+
+    /// Sets the base color texture index.
+    #[inline]
+    pub const fn with_base_color_texture(mut self, index: u32) -> Self {
+        self.base_color_texture = index;
+        self
+    }
+
+    /// Sets the normal texture index.
+    #[inline]
+    pub const fn with_normal_texture(mut self, index: u32) -> Self {
+        self.normal_texture = index;
+        self
+    }
+
+    /// Sets the metallic-roughness texture index.
+    #[inline]
+    pub const fn with_metallic_roughness_texture(mut self, index: u32) -> Self {
+        self.metallic_roughness_texture = index;
+        self
+    }
+
+    /// Sets the emissive texture index.
+    #[inline]
+    pub const fn with_emissive_texture(mut self, index: u32) -> Self {
+        self.emissive_texture = index;
+        self
+    }
+
+    /// Sets the double-sided flag.
+    #[inline]
+    pub const fn with_double_sided(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.flags |= MATERIAL_DESC_FLAG_DOUBLE_SIDED;
+        } else {
+            self.flags &= !MATERIAL_DESC_FLAG_DOUBLE_SIDED;
+        }
+        self
+    }
+
+    /// Sets the alpha mask mode.
+    #[inline]
+    pub const fn with_alpha_mask(mut self, cutoff: f32) -> Self {
+        self.flags |= MATERIAL_DESC_FLAG_ALPHA_MASK;
+        self.flags &= !MATERIAL_DESC_FLAG_ALPHA_BLEND;
+        self.alpha_cutoff = cutoff;
+        self
+    }
+
+    /// Sets the alpha blend mode.
+    #[inline]
+    pub const fn with_alpha_blend(mut self) -> Self {
+        self.flags |= MATERIAL_DESC_FLAG_ALPHA_BLEND;
+        self.flags &= !MATERIAL_DESC_FLAG_ALPHA_MASK;
+        self
+    }
+
+    /// Returns true if the material is double-sided.
+    #[inline]
+    pub const fn is_double_sided(&self) -> bool {
+        (self.flags & MATERIAL_DESC_FLAG_DOUBLE_SIDED) != 0
+    }
+
+    /// Returns true if the material uses alpha masking.
+    #[inline]
+    pub const fn is_alpha_mask(&self) -> bool {
+        (self.flags & MATERIAL_DESC_FLAG_ALPHA_MASK) != 0
+    }
+
+    /// Returns true if the material uses alpha blending.
+    #[inline]
+    pub const fn is_alpha_blend(&self) -> bool {
+        (self.flags & MATERIAL_DESC_FLAG_ALPHA_BLEND) != 0
+    }
+
+    /// Returns true if the material has a base color texture.
+    #[inline]
+    pub const fn has_base_color_texture(&self) -> bool {
+        self.base_color_texture != NO_TEXTURE
+    }
+
+    /// Returns true if the material has a normal texture.
+    #[inline]
+    pub const fn has_normal_texture(&self) -> bool {
+        self.normal_texture != NO_TEXTURE
+    }
+
+    /// Returns true if the material has a metallic-roughness texture.
+    #[inline]
+    pub const fn has_metallic_roughness_texture(&self) -> bool {
+        self.metallic_roughness_texture != NO_TEXTURE
+    }
+
+    /// Returns true if the material has an emissive texture.
+    #[inline]
+    pub const fn has_emissive_texture(&self) -> bool {
+        self.emissive_texture != NO_TEXTURE
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GpuMaterialTable (T-WGPU-P6.8.4)
+// ---------------------------------------------------------------------------
+
+/// Bindless material table for GPU-driven rendering.
+///
+/// Manages a collection of `MaterialDescriptor` entries with efficient dirty
+/// tracking and GPU buffer uploads. Materials are indexed by u32 handles that
+/// can be passed directly to shaders.
+///
+/// # Usage
+///
+/// ```ignore
+/// use renderer_backend::gpu_driven::material_table::{GpuMaterialTable, MaterialDescriptor};
+///
+/// // Create table with capacity for 256 materials
+/// let mut table = GpuMaterialTable::new(256);
+///
+/// // Add materials
+/// let metal_idx = table.add(MaterialDescriptor::metallic(0.8, 0.8, 0.8, 0.9, 0.2));
+/// let plastic_idx = table.add(MaterialDescriptor::opaque(0.2, 0.4, 0.8));
+///
+/// // Upload to GPU (creates buffer if needed)
+/// table.upload(&device, &queue);
+///
+/// // Use in render pass
+/// if let Some(buffer) = table.buffer() {
+///     render_pass.set_bind_group(0, material_bind_group, &[]);
+/// }
+/// ```
+///
+/// # Memory Layout
+///
+/// Materials are stored in a contiguous array for efficient GPU access.
+/// The GPU buffer is created lazily on first `upload()` call and resized
+/// as needed when materials are added.
+pub struct GpuMaterialTable {
+    /// Material descriptors (CPU-side).
+    materials: Vec<MaterialDescriptor>,
+
+    /// GPU buffer containing material data.
+    buffer: Option<Buffer>,
+
+    /// Dirty flag indicating GPU buffer needs update.
+    dirty: bool,
+
+    /// Maximum capacity (used for pre-allocation).
+    capacity: u32,
+
+    /// Free list for recycled material indices.
+    free_indices: Vec<u32>,
+}
+
+impl GpuMaterialTable {
+    /// Creates a new material table with the given capacity.
+    ///
+    /// The capacity determines the initial GPU buffer size. The table will
+    /// automatically grow if more materials are added.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Initial capacity (number of materials).
+    pub fn new(capacity: u32) -> Self {
+        let cap = capacity.max(1) as usize;
+        Self {
+            materials: Vec::with_capacity(cap),
+            buffer: None,
+            dirty: false,
+            capacity: capacity.max(1),
+            free_indices: Vec::new(),
+        }
+    }
+
+    /// Creates a material table with default capacity (1024 materials).
+    pub fn with_default_capacity() -> Self {
+        Self::new(DEFAULT_GPU_MATERIAL_TABLE_CAPACITY)
+    }
+
+    /// Adds a material and returns its index.
+    ///
+    /// If there are recycled indices available, one will be reused.
+    /// Otherwise, a new index is allocated.
+    ///
+    /// # Arguments
+    ///
+    /// * `material` - The material descriptor to add.
+    ///
+    /// # Returns
+    ///
+    /// The material index (handle) for shader access.
+    pub fn add(&mut self, material: MaterialDescriptor) -> u32 {
+        self.dirty = true;
+
+        // Reuse a recycled index if available
+        if let Some(index) = self.free_indices.pop() {
+            self.materials[index as usize] = material;
+            return index;
+        }
+
+        // Allocate new index
+        let index = self.materials.len() as u32;
+        self.materials.push(material);
+        index
+    }
+
+    /// Gets a material by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The material index.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the material, or `None` if the index is invalid.
+    #[inline]
+    pub fn get(&self, index: u32) -> Option<&MaterialDescriptor> {
+        self.materials.get(index as usize)
+    }
+
+    /// Gets a mutable reference to a material by index.
+    ///
+    /// Marks the table as dirty for GPU upload.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The material index.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the material, or `None` if the index is invalid.
+    #[inline]
+    pub fn get_mut(&mut self, index: u32) -> Option<&mut MaterialDescriptor> {
+        if (index as usize) < self.materials.len() {
+            self.dirty = true;
+            self.materials.get_mut(index as usize)
+        } else {
+            None
+        }
+    }
+
+    /// Updates a material at the given index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The material index.
+    /// * `material` - The new material descriptor.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the update succeeded, `false` if the index is invalid.
+    pub fn update(&mut self, index: u32, material: MaterialDescriptor) -> bool {
+        if (index as usize) >= self.materials.len() {
+            return false;
+        }
+        self.materials[index as usize] = material;
+        self.dirty = true;
+        true
+    }
+
+    /// Removes a material at the given index.
+    ///
+    /// The index is added to the free list for reuse. The material data is
+    /// zeroed to prevent stale shader reads.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The material index to remove.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the removal succeeded, `false` if the index is invalid.
+    pub fn remove(&mut self, index: u32) -> bool {
+        if (index as usize) >= self.materials.len() {
+            return false;
+        }
+
+        // Zero out the material
+        self.materials[index as usize] = MaterialDescriptor::zeroed();
+        self.free_indices.push(index);
+        self.dirty = true;
+        true
+    }
+
+    /// Uploads dirty materials to the GPU buffer.
+    ///
+    /// Creates the buffer if it doesn't exist. Resizes the buffer if the
+    /// material count exceeds the current capacity.
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - The wgpu device.
+    /// * `queue` - The wgpu queue.
+    pub fn upload(&mut self, device: &Device, queue: &Queue) {
+        if self.materials.is_empty() {
+            return;
+        }
+
+        let required_size = (self.materials.len() * MATERIAL_DESCRIPTOR_SIZE) as u64;
+
+        // Create or resize buffer if needed
+        let needs_new_buffer = match &self.buffer {
+            None => true,
+            Some(buf) => buf.size() < required_size,
+        };
+
+        if needs_new_buffer {
+            // Round up to next power of 2 for growth efficiency
+            let new_capacity = required_size.next_power_of_two().max(required_size);
+
+            self.buffer = Some(device.create_buffer(&BufferDescriptor {
+                label: Some("gpu_material_table"),
+                size: new_capacity,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+
+            self.dirty = true; // Force full upload after resize
+        }
+
+        // Upload if dirty
+        if self.dirty {
+            if let Some(buffer) = &self.buffer {
+                let bytes = bytemuck::cast_slice(&self.materials);
+                queue.write_buffer(buffer, 0, bytes);
+                self.dirty = false;
+            }
+        }
+    }
+
+    /// Returns the GPU buffer, if it exists.
+    ///
+    /// The buffer is created on the first `upload()` call.
+    #[inline]
+    pub fn buffer(&self) -> Option<&Buffer> {
+        self.buffer.as_ref()
+    }
+
+    /// Returns true if the table has pending changes for GPU upload.
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Returns the number of materials in the table.
+    #[inline]
+    pub fn len(&self) -> u32 {
+        self.materials.len() as u32
+    }
+
+    /// Returns true if the table is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.materials.is_empty()
+    }
+
+    /// Returns the current capacity.
+    #[inline]
+    pub fn capacity(&self) -> u32 {
+        self.capacity
+    }
+
+    /// Returns the number of active materials (excluding recycled slots).
+    #[inline]
+    pub fn active_count(&self) -> u32 {
+        (self.materials.len() - self.free_indices.len()) as u32
+    }
+
+    /// Returns the number of recycled (free) slots.
+    #[inline]
+    pub fn free_count(&self) -> u32 {
+        self.free_indices.len() as u32
+    }
+
+    /// Returns the raw material data as a byte slice.
+    ///
+    /// Useful for custom buffer uploads or debugging.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.materials)
+    }
+
+    /// Returns a slice of all materials.
+    #[inline]
+    pub fn as_slice(&self) -> &[MaterialDescriptor] {
+        &self.materials
+    }
+
+    /// Clears all materials from the table.
+    ///
+    /// The GPU buffer is not deallocated, but will be fully zeroed on next upload.
+    pub fn clear(&mut self) {
+        self.materials.clear();
+        self.free_indices.clear();
+        self.dirty = true;
+    }
+
+    /// Marks the table as dirty, forcing a GPU upload on next `upload()` call.
+    #[inline]
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+}
+
+impl std::fmt::Debug for GpuMaterialTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuMaterialTable")
+            .field("material_count", &self.materials.len())
+            .field("free_count", &self.free_indices.len())
+            .field("capacity", &self.capacity)
+            .field("dirty", &self.dirty)
+            .field("has_buffer", &self.buffer.is_some())
+            .finish()
     }
 }
 
@@ -1583,5 +2192,472 @@ mod tests {
         // First stage should succeed (registry auto-resizes).
         let r1 = table.stage(&mut registry);
         assert!(r1.is_some());
+    }
+
+    // --------------------------------------------------------------
+    // MaterialDescriptor tests (T-WGPU-P6.8.4)
+    // --------------------------------------------------------------
+
+    #[test]
+    fn test_material_descriptor_size() {
+        assert_eq!(size_of::<MaterialDescriptor>(), MATERIAL_DESCRIPTOR_SIZE);
+        assert_eq!(size_of::<MaterialDescriptor>(), 64);
+    }
+
+    #[test]
+    fn test_material_descriptor_alignment() {
+        // Should be 4-byte aligned for u32/f32 fields
+        assert_eq!(align_of::<MaterialDescriptor>(), 4);
+    }
+
+    #[test]
+    fn test_material_descriptor_is_pod() {
+        // Verify bytemuck traits are implemented
+        fn assert_pod<T: Pod>() {}
+        fn assert_zeroable<T: Zeroable>() {}
+        assert_pod::<MaterialDescriptor>();
+        assert_zeroable::<MaterialDescriptor>();
+    }
+
+    #[test]
+    fn test_material_descriptor_new() {
+        let mat = MaterialDescriptor::new();
+        assert_eq!(mat.base_color_texture, NO_TEXTURE);
+        assert_eq!(mat.normal_texture, NO_TEXTURE);
+        assert_eq!(mat.metallic_roughness_texture, NO_TEXTURE);
+        assert_eq!(mat.emissive_texture, NO_TEXTURE);
+        assert_eq!(mat.base_color_factor, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(mat.metallic_factor, 0.0);
+        assert_eq!(mat.roughness_factor, 0.5);
+        assert_eq!(mat.emissive_factor, [0.0, 0.0, 0.0]);
+        assert_eq!(mat.alpha_cutoff, 0.5);
+        assert_eq!(mat.flags, 0);
+    }
+
+    #[test]
+    fn test_material_descriptor_opaque() {
+        let mat = MaterialDescriptor::opaque(0.5, 0.6, 0.7);
+        assert_eq!(mat.base_color_factor, [0.5, 0.6, 0.7, 1.0]);
+        assert_eq!(mat.metallic_factor, 0.0);
+        assert_eq!(mat.roughness_factor, 0.5);
+    }
+
+    #[test]
+    fn test_material_descriptor_metallic() {
+        let mat = MaterialDescriptor::metallic(0.8, 0.8, 0.8, 0.9, 0.2);
+        assert_eq!(mat.base_color_factor, [0.8, 0.8, 0.8, 1.0]);
+        assert_eq!(mat.metallic_factor, 0.9);
+        assert_eq!(mat.roughness_factor, 0.2);
+    }
+
+    #[test]
+    fn test_material_descriptor_with_textures() {
+        let mat = MaterialDescriptor::new()
+            .with_base_color_texture(0)
+            .with_normal_texture(1)
+            .with_metallic_roughness_texture(2)
+            .with_emissive_texture(3);
+
+        assert_eq!(mat.base_color_texture, 0);
+        assert_eq!(mat.normal_texture, 1);
+        assert_eq!(mat.metallic_roughness_texture, 2);
+        assert_eq!(mat.emissive_texture, 3);
+        assert!(mat.has_base_color_texture());
+        assert!(mat.has_normal_texture());
+        assert!(mat.has_metallic_roughness_texture());
+        assert!(mat.has_emissive_texture());
+    }
+
+    #[test]
+    fn test_material_descriptor_no_textures() {
+        let mat = MaterialDescriptor::new();
+        assert!(!mat.has_base_color_texture());
+        assert!(!mat.has_normal_texture());
+        assert!(!mat.has_metallic_roughness_texture());
+        assert!(!mat.has_emissive_texture());
+    }
+
+    #[test]
+    fn test_material_descriptor_double_sided() {
+        let mat = MaterialDescriptor::new().with_double_sided(true);
+        assert!(mat.is_double_sided());
+        assert_eq!(mat.flags & MATERIAL_DESC_FLAG_DOUBLE_SIDED, MATERIAL_DESC_FLAG_DOUBLE_SIDED);
+
+        let mat2 = mat.with_double_sided(false);
+        assert!(!mat2.is_double_sided());
+    }
+
+    #[test]
+    fn test_material_descriptor_alpha_mask() {
+        let mat = MaterialDescriptor::new().with_alpha_mask(0.75);
+        assert!(mat.is_alpha_mask());
+        assert!(!mat.is_alpha_blend());
+        assert_eq!(mat.alpha_cutoff, 0.75);
+        assert_eq!(mat.flags & MATERIAL_DESC_FLAG_ALPHA_MASK, MATERIAL_DESC_FLAG_ALPHA_MASK);
+    }
+
+    #[test]
+    fn test_material_descriptor_alpha_blend() {
+        let mat = MaterialDescriptor::new().with_alpha_blend();
+        assert!(mat.is_alpha_blend());
+        assert!(!mat.is_alpha_mask());
+        assert_eq!(mat.flags & MATERIAL_DESC_FLAG_ALPHA_BLEND, MATERIAL_DESC_FLAG_ALPHA_BLEND);
+    }
+
+    #[test]
+    fn test_material_descriptor_alpha_modes_exclusive() {
+        // Setting alpha blend should clear alpha mask
+        let mat = MaterialDescriptor::new()
+            .with_alpha_mask(0.5)
+            .with_alpha_blend();
+        assert!(mat.is_alpha_blend());
+        assert!(!mat.is_alpha_mask());
+
+        // Setting alpha mask should clear alpha blend
+        let mat2 = mat.with_alpha_mask(0.3);
+        assert!(mat2.is_alpha_mask());
+        assert!(!mat2.is_alpha_blend());
+    }
+
+    #[test]
+    fn test_material_descriptor_bytemuck_cast() {
+        let mat = MaterialDescriptor::metallic(0.5, 0.6, 0.7, 0.8, 0.2)
+            .with_base_color_texture(42);
+
+        let bytes: &[u8] = bytemuck::bytes_of(&mat);
+        assert_eq!(bytes.len(), MATERIAL_DESCRIPTOR_SIZE);
+
+        // Verify first field (base_color_texture = 42)
+        let first_u32: u32 = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(first_u32, 42);
+    }
+
+    #[test]
+    fn test_material_descriptor_slice_cast() {
+        let materials = vec![
+            MaterialDescriptor::opaque(1.0, 0.0, 0.0),
+            MaterialDescriptor::opaque(0.0, 1.0, 0.0),
+            MaterialDescriptor::opaque(0.0, 0.0, 1.0),
+        ];
+
+        let bytes: &[u8] = bytemuck::cast_slice(&materials);
+        assert_eq!(bytes.len(), 3 * MATERIAL_DESCRIPTOR_SIZE);
+    }
+
+    #[test]
+    fn test_material_descriptor_zeroed() {
+        let mat = MaterialDescriptor::zeroed();
+        assert_eq!(mat.base_color_texture, 0);
+        assert_eq!(mat.base_color_factor, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(mat.metallic_factor, 0.0);
+        assert_eq!(mat.roughness_factor, 0.0);
+        assert_eq!(mat.flags, 0);
+    }
+
+    #[test]
+    fn test_material_descriptor_default() {
+        let mat = MaterialDescriptor::default();
+        let zeroed = MaterialDescriptor::zeroed();
+        assert_eq!(mat, zeroed);
+    }
+
+    #[test]
+    fn test_material_descriptor_debug() {
+        let mat = MaterialDescriptor::opaque(0.5, 0.5, 0.5);
+        let debug = format!("{:?}", mat);
+        assert!(debug.contains("MaterialDescriptor"));
+        assert!(debug.contains("base_color_factor"));
+    }
+
+    #[test]
+    fn test_material_descriptor_layout() {
+        // Verify byte offsets match documentation
+        let mat = MaterialDescriptor {
+            base_color_texture: 1,
+            normal_texture: 2,
+            metallic_roughness_texture: 3,
+            emissive_texture: 4,
+            base_color_factor: [0.1, 0.2, 0.3, 0.4],
+            metallic_factor: 0.5,
+            roughness_factor: 0.6,
+            emissive_factor: [0.7, 0.8, 0.9],
+            alpha_cutoff: 0.25,
+            flags: 0x0000_0003,
+            _pad: 0,
+        };
+
+        let bytes: &[u8] = bytemuck::bytes_of(&mat);
+
+        // base_color_texture at offset 0
+        let tex0: u32 = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        assert_eq!(tex0, 1);
+
+        // normal_texture at offset 4
+        let tex1: u32 = u32::from_ne_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        assert_eq!(tex1, 2);
+
+        // metallic_roughness_texture at offset 8
+        let tex2: u32 = u32::from_ne_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        assert_eq!(tex2, 3);
+
+        // emissive_texture at offset 12
+        let tex3: u32 = u32::from_ne_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        assert_eq!(tex3, 4);
+
+        // base_color_factor at offset 16
+        let bc0: f32 = f32::from_ne_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+        assert!((bc0 - 0.1).abs() < 0.001);
+
+        // metallic_factor at offset 32
+        let mf: f32 = f32::from_ne_bytes([bytes[32], bytes[33], bytes[34], bytes[35]]);
+        assert!((mf - 0.5).abs() < 0.001);
+
+        // roughness_factor at offset 36
+        let rf: f32 = f32::from_ne_bytes([bytes[36], bytes[37], bytes[38], bytes[39]]);
+        assert!((rf - 0.6).abs() < 0.001);
+
+        // flags at offset 56
+        let flags: u32 = u32::from_ne_bytes([bytes[56], bytes[57], bytes[58], bytes[59]]);
+        assert_eq!(flags, 0x0000_0003);
+    }
+
+    // --------------------------------------------------------------
+    // GpuMaterialTable tests (T-WGPU-P6.8.4)
+    // --------------------------------------------------------------
+
+    #[test]
+    fn test_gpu_material_table_new() {
+        let table = GpuMaterialTable::new(128);
+        assert!(table.is_empty());
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.capacity(), 128);
+        assert!(!table.is_dirty());
+        assert!(table.buffer().is_none());
+    }
+
+    #[test]
+    fn test_gpu_material_table_with_default_capacity() {
+        let table = GpuMaterialTable::with_default_capacity();
+        assert_eq!(table.capacity(), DEFAULT_GPU_MATERIAL_TABLE_CAPACITY);
+    }
+
+    #[test]
+    fn test_gpu_material_table_add() {
+        let mut table = GpuMaterialTable::new(64);
+
+        let idx0 = table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        let idx1 = table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+        let idx2 = table.add(MaterialDescriptor::opaque(0.0, 0.0, 1.0));
+
+        assert_eq!(idx0, 0);
+        assert_eq!(idx1, 1);
+        assert_eq!(idx2, 2);
+        assert_eq!(table.len(), 3);
+        assert!(table.is_dirty());
+    }
+
+    #[test]
+    fn test_gpu_material_table_get() {
+        let mut table = GpuMaterialTable::new(64);
+        let idx = table.add(MaterialDescriptor::metallic(0.5, 0.5, 0.5, 0.8, 0.3));
+
+        let mat = table.get(idx).unwrap();
+        assert_eq!(mat.base_color_factor, [0.5, 0.5, 0.5, 1.0]);
+        assert_eq!(mat.metallic_factor, 0.8);
+        assert_eq!(mat.roughness_factor, 0.3);
+
+        assert!(table.get(999).is_none());
+    }
+
+    #[test]
+    fn test_gpu_material_table_get_mut() {
+        let mut table = GpuMaterialTable::new(64);
+        let idx = table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+
+        // Clear dirty flag for testing
+        table.dirty = false;
+
+        {
+            let mat = table.get_mut(idx).unwrap();
+            mat.base_color_factor = [0.0, 1.0, 0.0, 1.0];
+        }
+
+        // get_mut should mark table dirty
+        assert!(table.is_dirty());
+
+        let mat = table.get(idx).unwrap();
+        assert_eq!(mat.base_color_factor, [0.0, 1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_gpu_material_table_update() {
+        let mut table = GpuMaterialTable::new(64);
+        let idx = table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.dirty = false;
+
+        let result = table.update(idx, MaterialDescriptor::metallic(0.8, 0.8, 0.8, 0.9, 0.1));
+        assert!(result);
+        assert!(table.is_dirty());
+
+        let mat = table.get(idx).unwrap();
+        assert_eq!(mat.metallic_factor, 0.9);
+
+        // Update invalid index
+        assert!(!table.update(999, MaterialDescriptor::new()));
+    }
+
+    #[test]
+    fn test_gpu_material_table_remove() {
+        let mut table = GpuMaterialTable::new(64);
+        let idx0 = table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        let idx1 = table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+        table.dirty = false;
+
+        assert!(table.remove(idx0));
+        assert!(table.is_dirty());
+        assert_eq!(table.free_count(), 1);
+        assert_eq!(table.active_count(), 1);
+
+        // Material at idx0 should be zeroed
+        let mat = table.get(idx0).unwrap();
+        assert_eq!(mat, &MaterialDescriptor::zeroed());
+
+        // Remove invalid index
+        assert!(!table.remove(999));
+    }
+
+    #[test]
+    fn test_gpu_material_table_index_reuse() {
+        let mut table = GpuMaterialTable::new(64);
+
+        let idx0 = table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        let idx1 = table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+
+        // Remove first material
+        table.remove(idx0);
+        assert_eq!(table.free_count(), 1);
+
+        // Add new material should reuse idx0
+        let idx2 = table.add(MaterialDescriptor::opaque(0.0, 0.0, 1.0));
+        assert_eq!(idx2, idx0);
+        assert_eq!(table.free_count(), 0);
+    }
+
+    #[test]
+    fn test_gpu_material_table_clear() {
+        let mut table = GpuMaterialTable::new(64);
+        table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+        table.dirty = false;
+
+        table.clear();
+        assert!(table.is_empty());
+        assert_eq!(table.len(), 0);
+        assert_eq!(table.free_count(), 0);
+        assert!(table.is_dirty());
+    }
+
+    #[test]
+    fn test_gpu_material_table_as_bytes() {
+        let mut table = GpuMaterialTable::new(64);
+        table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+
+        let bytes = table.as_bytes();
+        assert_eq!(bytes.len(), 2 * MATERIAL_DESCRIPTOR_SIZE);
+    }
+
+    #[test]
+    fn test_gpu_material_table_as_slice() {
+        let mut table = GpuMaterialTable::new(64);
+        table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+
+        let slice = table.as_slice();
+        assert_eq!(slice.len(), 2);
+        assert_eq!(slice[0].base_color_factor, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(slice[1].base_color_factor, [0.0, 1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_gpu_material_table_mark_dirty() {
+        let mut table = GpuMaterialTable::new(64);
+        table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.dirty = false;
+
+        table.mark_dirty();
+        assert!(table.is_dirty());
+    }
+
+    #[test]
+    fn test_gpu_material_table_debug() {
+        let mut table = GpuMaterialTable::new(128);
+        table.add(MaterialDescriptor::opaque(1.0, 0.0, 0.0));
+        table.add(MaterialDescriptor::opaque(0.0, 1.0, 0.0));
+
+        let debug = format!("{:?}", table);
+        assert!(debug.contains("GpuMaterialTable"));
+        assert!(debug.contains("material_count"));
+        assert!(debug.contains("2"));
+    }
+
+    #[test]
+    fn test_gpu_material_table_capacity_minimum() {
+        // Capacity should be at least 1
+        let table = GpuMaterialTable::new(0);
+        assert_eq!(table.capacity(), 1);
+    }
+
+    #[test]
+    fn test_gpu_material_table_counts() {
+        let mut table = GpuMaterialTable::new(64);
+
+        // Empty table
+        assert_eq!(table.active_count(), 0);
+        assert_eq!(table.free_count(), 0);
+
+        // Add materials
+        let idx0 = table.add(MaterialDescriptor::new());
+        let idx1 = table.add(MaterialDescriptor::new());
+        let idx2 = table.add(MaterialDescriptor::new());
+        assert_eq!(table.active_count(), 3);
+        assert_eq!(table.free_count(), 0);
+
+        // Remove one
+        table.remove(idx1);
+        assert_eq!(table.active_count(), 2);
+        assert_eq!(table.free_count(), 1);
+
+        // Remove another
+        table.remove(idx0);
+        assert_eq!(table.active_count(), 1);
+        assert_eq!(table.free_count(), 2);
+    }
+
+    // --------------------------------------------------------------
+    // Constants tests (T-WGPU-P6.8.4)
+    // --------------------------------------------------------------
+
+    #[test]
+    fn test_material_descriptor_constants() {
+        assert_eq!(MATERIAL_DESCRIPTOR_SIZE, 64);
+        assert_eq!(DEFAULT_GPU_MATERIAL_TABLE_CAPACITY, 1024);
+        assert_eq!(NO_TEXTURE, u32::MAX);
+        assert_eq!(MaterialDescriptor::NO_TEXTURE, u32::MAX);
+    }
+
+    #[test]
+    fn test_material_desc_flags() {
+        assert_eq!(MATERIAL_DESC_FLAG_DOUBLE_SIDED, 1 << 0);
+        assert_eq!(MATERIAL_DESC_FLAG_ALPHA_MASK, 1 << 1);
+        assert_eq!(MATERIAL_DESC_FLAG_ALPHA_BLEND, 1 << 2);
+        assert_eq!(MATERIAL_DESC_FLAG_UNLIT, 1 << 3);
+
+        // Flags should not overlap
+        let all_flags = MATERIAL_DESC_FLAG_DOUBLE_SIDED
+            | MATERIAL_DESC_FLAG_ALPHA_MASK
+            | MATERIAL_DESC_FLAG_ALPHA_BLEND
+            | MATERIAL_DESC_FLAG_UNLIT;
+        assert_eq!(all_flags, 0b1111);
     }
 }

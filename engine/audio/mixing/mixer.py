@@ -529,7 +529,7 @@ class Mixer:
     # Mixer Tick Pipeline
     # =========================================================================
 
-    def tick(self, arg1: float | int = -1, delta_time: float = None, num_samples: int = None) -> Optional[np.ndarray]:
+    def tick(self, num_samples: int = 0, delta_time: float = 0.0) -> Optional[np.ndarray]:
         """
         Run the 8-stage tick pipeline and return the master output.
 
@@ -544,48 +544,24 @@ class Mixer:
         8. Hard clip to [-1.0, 1.0]
 
         Args:
-            arg1: Positional argument - if float < 1, treated as delta_time,
-                  otherwise as num_samples.
-            delta_time: Time since last tick in seconds (for updates).
-            num_samples: Buffer size for this tick (-1 = use default, 0 = empty).
+            num_samples: Buffer size for this tick (0 = use default MIXER_BUFFER_SIZE).
+            delta_time: Time since last tick in seconds (used for updates).
 
         Returns:
             Master output buffer (MIXER_NUM_CHANNELS, num_samples) float32,
-            clipped to [-1.0, 1.0]. Returns None if not initialized.
+            clipped to [-1.0, 1.0]. Returns None if mixer is not initialized.
         """
-        # Handle flexible positional argument
-        if delta_time is None and num_samples is None:
-            if isinstance(arg1, float) and arg1 < 1.0:
-                delta_time = arg1
-                num_samples = -1  # use default
-            else:
-                num_samples = int(arg1)
-                delta_time = 0.0
-        elif delta_time is None:
-            delta_time = 0.0
-        elif num_samples is None:
-            num_samples = -1
-
-        # Return None before initialization
-        with self._lock:
-            if not self._initialized:
-                return None
-
-        # Handle negative samples (use default)
-        if num_samples < 0:
-            num_samples = self._tick_buffer_size
-
-        # Handle zero samples explicitly
-        if num_samples == 0:
-            return np.zeros((self._tick_num_channels, 0), dtype=np.float32)
-
         # Update all subsystems if delta_time provided
         if delta_time > 0:
             self.update(delta_time)
+        if num_samples < 0:
+            num_samples = self._tick_buffer_size
+        elif num_samples == 0:
+            return np.zeros((self._tick_num_channels, 0), dtype=np.float32)
 
         with self._lock:
-            if self._master_bus is None:
-                return np.zeros((self._tick_num_channels, num_samples), dtype=np.float32)
+            if not self._initialized or self._master_bus is None:
+                return None
             processing_order = list(self._processing_order)
             channels = self._tick_num_channels
 
@@ -1131,16 +1107,12 @@ class Mixer:
         """
         Register an existing bus with the mixer.
 
-        If a bus with the same name already exists, it will be replaced.
-        If the bus has no parent and is not the master, it will be parented to master.
-
         Args:
             bus: Bus to register.
         """
         with self._lock:
-            # Set default parent to master if no parent set
-            if bus.parent is None and bus.bus_type != BusType.MASTER and self._master_bus is not None:
-                bus.parent = self._master_bus
+            if bus.name in self._buses:
+                raise ValueError(f"Bus '{bus.name}' already exists")
             self._buses[bus.name] = bus
             self._snapshot_manager.set_buses(self._buses)
             self._compute_processing_order()

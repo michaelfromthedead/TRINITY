@@ -2,6 +2,15 @@
 
 Complete context for implementing `engine/xr/` using the Trinity Pattern + Foundation runtime.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | VR/AR, hand tracking, haptics |
+| Rust | ✅ 80% | GAPSET_18_UI_XR — Core XR wired |
+| Wired | ✅ Yes | XR runtime functional |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## Table of Contents
@@ -1365,7 +1374,7 @@ engine/xr/
 
 ## References
 
-- `docs/TRINITY_LATEST.md` - Full Trinity Pattern specification
+- `docs/specs/TRINITY_LATEST.md` - Full Trinity Pattern specification
 - `docs/GAME_ENGINE_INTEGRATION.md` - Trinity <-> Foundation integration
 - `docs/GAME_ENGINE_INTEGRATION_TODO.md` - Section 13 (XR Layer)
 - `DIAGRAMS/ARCHITECTURE_XR.md` - XR layer architecture

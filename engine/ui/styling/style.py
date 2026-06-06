@@ -334,9 +334,8 @@ class Style:
         """
         Merge this style with another.
 
-        Values from self take precedence over other, but only if they
-        differ from the default value. This allows base styles to provide
-        defaults that aren't overridden by unset fields in overlaid styles.
+        Values from self take precedence over other, but only when
+        self's value is explicitly set (not the default value).
 
         Args:
             other: Style to merge with
@@ -345,7 +344,7 @@ class Style:
             New merged style
         """
         merged_values: Dict[str, Any] = {}
-        defaults = self._get_default_values()
+        defaults = self._get_field_defaults()
 
         # Get all style fields (excluding private/internal)
         for field_name in self._get_style_fields():
@@ -353,20 +352,42 @@ class Style:
             other_value = getattr(other, field_name)
             default_value = defaults.get(field_name)
 
-            # Check if self has a non-default value
-            self_is_set = self_value is not None and self_value != default_value
-            other_is_set = other_value is not None and other_value != default_value
-
-            # Use self value if explicitly set, otherwise use other
-            if self_is_set:
+            # Use self value if explicitly set (different from default)
+            # Otherwise use other value
+            if self_value != default_value:
                 merged_values[field_name] = self_value
-            elif other_is_set:
+            elif other_value is not None:
                 merged_values[field_name] = other_value
-            elif self_value is not None:
-                # Both are defaults, prefer self's default
+            else:
                 merged_values[field_name] = self_value
 
         return Style(**merged_values)
+
+    @staticmethod
+    def _get_field_defaults() -> Dict[str, Any]:
+        """Get default values for style fields."""
+        return {
+            "background": None, "background_color": None,
+            "border_brush": None, "border_color": None,
+            "border_width": 0.0, "border_radius": 0.0,
+            "border_radius_top_left": None, "border_radius_top_right": None,
+            "border_radius_bottom_left": None, "border_radius_bottom_right": None,
+            "foreground_color": None,
+            "font_family": None, "font_size": None, "font_weight": None, "font_style": None,
+            "text_align": None, "line_height": None, "letter_spacing": None,
+            "opacity": 1.0,
+            "padding_left": 0.0, "padding_right": 0.0, "padding_top": 0.0, "padding_bottom": 0.0,
+            "margin_left": 0.0, "margin_right": 0.0, "margin_top": 0.0, "margin_bottom": 0.0,
+            "shadow_color": None, "shadow_offset_x": 0.0, "shadow_offset_y": 0.0,
+            "shadow_blur": 0.0, "shadow_spread": 0.0,
+            "min_width": None, "max_width": None, "min_height": None, "max_height": None,
+            "flex_grow": 0.0, "flex_shrink": 1.0, "flex_basis": None,
+            "align_self": None, "align_items": None, "justify_content": None,
+            "z_index": 0, "visible": True,
+            "scale_x": 1.0, "scale_y": 1.0, "rotation": 0.0,
+            "translate_x": 0.0, "translate_y": 0.0,
+            "cursor": None, "transition_duration": 0.0, "transition_easing": None,
+        }
 
     @staticmethod
     def _get_style_fields() -> List[str]:
@@ -388,52 +409,6 @@ class Style:
             "cursor",
             "transition_duration", "transition_easing",
         ]
-
-    @staticmethod
-    def _get_default_values() -> Dict[str, Any]:
-        """Get default values for style fields."""
-        return {
-            "background": None,
-            "background_color": None,
-            "border_brush": None,
-            "border_color": None,
-            "border_width": 0.0,
-            "border_radius": 0.0,
-            "border_radius_top_left": None,
-            "border_radius_top_right": None,
-            "border_radius_bottom_left": None,
-            "border_radius_bottom_right": None,
-            "foreground_color": None,
-            "font_family": None,
-            "font_size": None,
-            "font_weight": None,
-            "font_style": None,
-            "text_align": None,
-            "line_height": None,
-            "letter_spacing": None,
-            "opacity": 1.0,
-            "padding_left": 0.0,
-            "padding_right": 0.0,
-            "padding_top": 0.0,
-            "padding_bottom": 0.0,
-            "margin_left": 0.0,
-            "margin_right": 0.0,
-            "margin_top": 0.0,
-            "margin_bottom": 0.0,
-            "shadow_color": None,
-            "shadow_offset_x": 0.0,
-            "shadow_offset_y": 0.0,
-            "shadow_blur": 0.0,
-            "shadow_spread": 0.0,
-            "scale_x": 1.0,
-            "scale_y": 1.0,
-            "rotation": 0.0,
-            "translate_x": 0.0,
-            "translate_y": 0.0,
-            "cursor": None,
-            "transition_duration": 0.0,
-            "transition_easing": None,
-        }
 
     # ========== Style Cloning ==========
 

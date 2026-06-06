@@ -31,6 +31,7 @@ from typing import (
 
 from .animation_graph import (
     AnimationNode,
+    AnimationGraph,
     GraphContext,
     GraphParameter,
     ParameterType,
@@ -41,32 +42,21 @@ from .config import get_config
 
 
 # =============================================================================
-# EXCEPTIONS
+# MOTION MODE
 # =============================================================================
 
 
-class StateMachineBuilderError(Exception):
-    """Raised when state machine builder encounters invalid configuration."""
-    pass
+class MotionMode(Enum):
+    """Motion modes for animation state playback."""
+
+    LOOP = auto()  # Repeat animation continuously
+    ONCE = auto()  # Play animation once, then stop
+    PING_PONG = auto()  # Play forward, then backward, repeat
 
 
-class ParameterTypeError(TypeError):
-    """Raised when parameter type doesn't match expected type."""
-    pass
-
-
-# =============================================================================
-# INTERRUPT MODE
-# =============================================================================
-
-
-class InterruptMode(Enum):
-    """How transitions can be interrupted."""
-
-    NONE = auto()  # Cannot be interrupted
-    HIGHER_PRIORITY = auto()  # Can be interrupted by higher priority transitions
-    ANY = auto()  # Can be interrupted by any transition
-    SAME_PRIORITY = auto()  # Can be interrupted by same or higher priority
+# Forward reference for AnimationClip (defined in blend_node.py to avoid circular imports)
+# Will be resolved at runtime via TYPE_CHECKING or string annotation
+AnimationClip = Any  # Type alias for forward reference
 
 
 # =============================================================================
@@ -106,132 +96,323 @@ def evaluate_blend_curve(curve: BlendCurve, t: float) -> float:
 
 
 # =============================================================================
-# MOTION MODE
-# =============================================================================
-
-
-class MotionMode(Enum):
-    """Mode for handling root motion in animation states.
-
-    ``NONE``
-        No root motion is applied.
-    ``IN_PLACE``
-        Animation plays in place, root motion is discarded.
-    ``EXTRACT``
-        Root motion is extracted and applied to the character.
-    ``BLEND``
-        Root motion is blended with gameplay-driven movement.
-    """
-    NONE = auto()
-    IN_PLACE = auto()
-    EXTRACT = auto()
-    BLEND = auto()
-
-
-# =============================================================================
 # TRANSITION CONDITIONS
 # =============================================================================
 
 
-class ComparisonOp(Enum):
-    """Comparison operators for conditions."""
+class ConditionOperator(Enum):
+    """
+    Operators for transition conditions.
 
-    EQUALS = auto()
-    NOT_EQUALS = auto()
-    GREATER = auto()
-    GREATER_THAN = GREATER  # Alias
-    GREATER_EQUALS = auto()
-    GREATER_OR_EQUAL = GREATER_EQUALS  # Alias
-    LESS = auto()
-    LESS_THAN = LESS  # Alias
-    LESS_EQUALS = auto()
-    LESS_OR_EQUAL = LESS_EQUALS  # Alias
-    IS_TRUE = auto()
-    IS_FALSE = auto()
+    Supports comparison operators and logical operators for compound conditions.
+    String values match common animation system conventions.
+    """
+
+    # Comparison operators
+    EQUALS = "eq"
+    NOT_EQUALS = "ne"
+    GREATER_THAN = "gt"
+    LESS_THAN = "lt"
+    GREATER_EQUAL = "ge"
+    LESS_EQUAL = "le"
+
+    # Logical operators for compound conditions
+    AND = "and"
+    OR = "or"
 
 
-# Alias for backwards compatibility
-ConditionOperator = ComparisonOp
+# Legacy alias for backwards compatibility
+ComparisonOp = ConditionOperator
+
+
+class ParameterTypeError(TypeError):
+    """Raised when a parameter type doesn't match the expected type for an operation."""
+
+    def __init__(self, parameter: str, expected_type: str, actual_type: str) -> None:
+        self.parameter = parameter
+        self.expected_type = expected_type
+        self.actual_type = actual_type
+        super().__init__(
+            f"Parameter '{parameter}' type mismatch: expected {expected_type}, got {actual_type}"
+        )
 
 
 @dataclass
 class TransitionCondition:
-    """A condition that must be met for a transition to occur."""
+    """
+    A condition that must be met for a transition to occur.
 
-    parameter_name: str
-    comparison: ComparisonOp
+    Supports:
+    - Parameter-based comparisons (equals, greater than, etc.)
+    - Trigger parameters (one-shot, auto-reset after evaluation)
+    - Exit time conditions (time-based transitions)
+    - Compound conditions (AND/OR with sub-conditions)
+    - Parameter type checking for safe comparisons
+
+    Attributes:
+        parameter: Name of the parameter to check (or None for compound/exit_time only)
+        operator: The comparison or logical operator to use
+        value: The value to compare against
+        is_trigger: If True, parameter is auto-reset after successful evaluation
+        exit_time: Optional normalized time (0-1) when condition becomes valid
+        sub_conditions: List of sub-conditions for AND/OR operators
+        expected_type: Optional type for parameter validation
+    """
+
+    parameter: str = ""
+    operator: ConditionOperator = ConditionOperator.EQUALS
     value: Any = None
+    is_trigger: bool = False
+    exit_time: Optional[float] = None
+    sub_conditions: List["TransitionCondition"] = field(default_factory=list)
+    expected_type: Optional[Type] = None
 
-    def evaluate(self, context: GraphContext) -> bool:
-        """Evaluate this condition against the context."""
-        param_value = context.get_parameter(self.parameter_name)
+    # Legacy field aliases
+    @property
+    def parameter_name(self) -> str:
+        """Legacy alias for parameter field."""
+        return self.parameter
+
+    @parameter_name.setter
+    def parameter_name(self, value: str) -> None:
+        """Legacy alias for parameter field."""
+        self.parameter = value
+
+    @property
+    def comparison(self) -> ConditionOperator:
+        """Legacy alias for operator field."""
+        return self.operator
+
+    @comparison.setter
+    def comparison(self, value: ConditionOperator) -> None:
+        """Legacy alias for operator field."""
+        self.operator = value
+
+    def _check_type(self, param_value: Any) -> bool:
+        """
+        Validate parameter type if expected_type is set.
+
+        Returns True if type is valid, raises ParameterTypeError if not.
+        """
+        if self.expected_type is None:
+            return True
+
+        if not isinstance(param_value, self.expected_type):
+            raise ParameterTypeError(
+                self.parameter,
+                self.expected_type.__name__,
+                type(param_value).__name__
+            )
+        return True
+
+    def _evaluate_comparison(self, param_value: Any) -> bool:
+        """Evaluate a comparison operation between param_value and self.value."""
+        # Type checking
+        try:
+            self._check_type(param_value)
+        except ParameterTypeError:
+            return False
+
+        op = self.operator
+
+        if op == ConditionOperator.EQUALS:
+            return param_value == self.value
+        elif op == ConditionOperator.NOT_EQUALS:
+            return param_value != self.value
+        elif op == ConditionOperator.GREATER_THAN:
+            try:
+                return param_value > self.value
+            except TypeError:
+                return False
+        elif op == ConditionOperator.LESS_THAN:
+            try:
+                return param_value < self.value
+            except TypeError:
+                return False
+        elif op == ConditionOperator.GREATER_EQUAL:
+            try:
+                return param_value >= self.value
+            except TypeError:
+                return False
+        elif op == ConditionOperator.LESS_EQUAL:
+            try:
+                return param_value <= self.value
+            except TypeError:
+                return False
+
+        return False
+
+    def _evaluate_compound(self, context: GraphContext) -> bool:
+        """Evaluate compound AND/OR conditions."""
+        if not self.sub_conditions:
+            return True
+
+        if self.operator == ConditionOperator.AND:
+            return all(cond.evaluate(context) for cond in self.sub_conditions)
+        elif self.operator == ConditionOperator.OR:
+            return any(cond.evaluate(context) for cond in self.sub_conditions)
+
+        return False
+
+    def evaluate(self, context: GraphContext, state_normalized_time: float = 0.0) -> bool:
+        """
+        Evaluate this condition against the context.
+
+        Args:
+            context: The graph context containing parameters
+            state_normalized_time: Current normalized time in the state (0-1),
+                                   used for exit_time conditions
+
+        Returns:
+            True if the condition is met, False otherwise
+        """
+        # Check exit_time condition first
+        if self.exit_time is not None:
+            if state_normalized_time < self.exit_time:
+                return False
+            # If only exit_time is set (no parameter), return True
+            if not self.parameter and self.operator not in (ConditionOperator.AND, ConditionOperator.OR):
+                return True
+
+        # Handle compound conditions (AND/OR)
+        if self.operator in (ConditionOperator.AND, ConditionOperator.OR):
+            return self._evaluate_compound(context)
+
+        # Get parameter value
+        if not self.parameter:
+            return True  # No parameter to check
+
+        param_value = context.get_parameter(self.parameter)
 
         if param_value is None:
             return False
 
-        if self.comparison == ComparisonOp.EQUALS:
-            return param_value == self.value
-        elif self.comparison == ComparisonOp.NOT_EQUALS:
-            return param_value != self.value
-        elif self.comparison == ComparisonOp.GREATER:
-            return param_value > self.value
-        elif self.comparison == ComparisonOp.GREATER_EQUALS:
-            return param_value >= self.value
-        elif self.comparison == ComparisonOp.LESS:
-            return param_value < self.value
-        elif self.comparison == ComparisonOp.LESS_EQUALS:
-            return param_value <= self.value
-        elif self.comparison == ComparisonOp.IS_TRUE:
-            return bool(param_value)
-        elif self.comparison == ComparisonOp.IS_FALSE:
-            return not bool(param_value)
+        # Evaluate the comparison
+        result = self._evaluate_comparison(param_value)
 
-        return False
+        # Handle trigger parameters (one-shot, auto-reset)
+        if result and self.is_trigger:
+            # Reset the trigger parameter after successful evaluation
+            context.set_parameter(self.parameter, False)
+
+        return result
+
+    # ==========================================================================
+    # Factory methods for creating conditions
+    # ==========================================================================
 
     @classmethod
-    def equals(cls, param: str, value: Any) -> "TransitionCondition":
+    def equals(cls, param: str, value: Any, *,
+               is_trigger: bool = False,
+               expected_type: Optional[Type] = None) -> "TransitionCondition":
         """Create an equals condition."""
-        return cls(param, ComparisonOp.EQUALS, value)
+        return cls(param, ConditionOperator.EQUALS, value,
+                   is_trigger=is_trigger, expected_type=expected_type)
 
     @classmethod
-    def not_equals(cls, param: str, value: Any) -> "TransitionCondition":
+    def not_equals(cls, param: str, value: Any, *,
+                   is_trigger: bool = False,
+                   expected_type: Optional[Type] = None) -> "TransitionCondition":
         """Create a not equals condition."""
-        return cls(param, ComparisonOp.NOT_EQUALS, value)
+        return cls(param, ConditionOperator.NOT_EQUALS, value,
+                   is_trigger=is_trigger, expected_type=expected_type)
 
     @classmethod
-    def greater_than(cls, param: str, value: float) -> "TransitionCondition":
+    def greater_than(cls, param: str, value: float, *,
+                     is_trigger: bool = False) -> "TransitionCondition":
         """Create a greater than condition."""
-        return cls(param, ComparisonOp.GREATER, value)
+        return cls(param, ConditionOperator.GREATER_THAN, value,
+                   is_trigger=is_trigger, expected_type=(int, float))
 
     @classmethod
-    def greater_or_equal(cls, param: str, value: float) -> "TransitionCondition":
+    def greater_or_equal(cls, param: str, value: float, *,
+                         is_trigger: bool = False) -> "TransitionCondition":
         """Create a greater or equal condition."""
-        return cls(param, ComparisonOp.GREATER_EQUALS, value)
+        return cls(param, ConditionOperator.GREATER_EQUAL, value,
+                   is_trigger=is_trigger, expected_type=(int, float))
 
     @classmethod
-    def less_than(cls, param: str, value: float) -> "TransitionCondition":
+    def less_than(cls, param: str, value: float, *,
+                  is_trigger: bool = False) -> "TransitionCondition":
         """Create a less than condition."""
-        return cls(param, ComparisonOp.LESS, value)
+        return cls(param, ConditionOperator.LESS_THAN, value,
+                   is_trigger=is_trigger, expected_type=(int, float))
 
     @classmethod
-    def less_or_equal(cls, param: str, value: float) -> "TransitionCondition":
+    def less_or_equal(cls, param: str, value: float, *,
+                      is_trigger: bool = False) -> "TransitionCondition":
         """Create a less or equal condition."""
-        return cls(param, ComparisonOp.LESS_EQUALS, value)
+        return cls(param, ConditionOperator.LESS_EQUAL, value,
+                   is_trigger=is_trigger, expected_type=(int, float))
 
     @classmethod
-    def is_true(cls, param: str) -> "TransitionCondition":
+    def is_true(cls, param: str, *, is_trigger: bool = False) -> "TransitionCondition":
         """Create a boolean true condition."""
-        return cls(param, ComparisonOp.IS_TRUE)
+        return cls(param, ConditionOperator.EQUALS, True,
+                   is_trigger=is_trigger, expected_type=bool)
 
     @classmethod
-    def is_false(cls, param: str) -> "TransitionCondition":
+    def is_false(cls, param: str, *, is_trigger: bool = False) -> "TransitionCondition":
         """Create a boolean false condition."""
-        return cls(param, ComparisonOp.IS_FALSE)
+        return cls(param, ConditionOperator.EQUALS, False,
+                   is_trigger=is_trigger, expected_type=bool)
 
     @classmethod
     def trigger(cls, param: str) -> "TransitionCondition":
-        """Create a trigger condition (fires once when triggered)."""
-        return cls(param, ComparisonOp.IS_TRUE)
+        """
+        Create a trigger condition (one-shot parameter).
+
+        Trigger parameters are automatically reset to False after the condition
+        evaluates to True, ensuring the transition only fires once per trigger.
+        """
+        return cls(param, ConditionOperator.EQUALS, True,
+                   is_trigger=True, expected_type=bool)
+
+    @classmethod
+    def at_exit_time(cls, exit_time: float) -> "TransitionCondition":
+        """
+        Create an exit time condition.
+
+        Args:
+            exit_time: Normalized time (0-1) when the condition becomes valid
+
+        Returns:
+            A condition that is True when state normalized time >= exit_time
+        """
+        return cls(exit_time=exit_time)
+
+    @classmethod
+    def and_conditions(cls, *conditions: "TransitionCondition") -> "TransitionCondition":
+        """
+        Create a compound AND condition.
+
+        All sub-conditions must be True for this condition to be True.
+        """
+        return cls(operator=ConditionOperator.AND, sub_conditions=list(conditions))
+
+    @classmethod
+    def or_conditions(cls, *conditions: "TransitionCondition") -> "TransitionCondition":
+        """
+        Create a compound OR condition.
+
+        At least one sub-condition must be True for this condition to be True.
+        """
+        return cls(operator=ConditionOperator.OR, sub_conditions=list(conditions))
+
+    # ==========================================================================
+    # Legacy compatibility aliases
+    # ==========================================================================
+
+    # These maintain backwards compatibility with code using IS_TRUE/IS_FALSE
+    @classmethod
+    def _legacy_is_true(cls, param: str) -> "TransitionCondition":
+        """Legacy alias - use is_true() instead."""
+        return cls.is_true(param)
+
+    @classmethod
+    def _legacy_is_false(cls, param: str) -> "TransitionCondition":
+        """Legacy alias - use is_false() instead."""
+        return cls.is_false(param)
 
 
 # =============================================================================
@@ -244,32 +425,79 @@ class AnimationState:
     """
     A state in the animation state machine.
 
-    Each state has an associated animation node that produces the pose
-    when the state is active. States can have enter/exit events for
-    triggering side effects.
+    Each state has an associated animation source (clip, graph, or node) that
+    produces the pose when the state is active. States can have enter/exit
+    events for triggering side effects.
+
+    Supports three motion modes:
+    - LOOP: Animation repeats continuously
+    - ONCE: Animation plays once and stops at the end
+    - PING_PONG: Animation alternates between forward and backward playback
+
+    Attributes:
+        name: Unique identifier for this state
+        clip: Direct reference to an animation clip (optional)
+        graph: Reference to an animation subgraph (optional)
+        animation_node: Generic animation node (optional, fallback)
+        motion_mode: How the animation should loop/repeat
+        speed: Playback speed multiplier (1.0 = normal, 2.0 = double speed)
+        current_time: Current playback position in seconds
+        on_enter: Callback invoked when entering this state
+        on_exit: Callback invoked when exiting this state
     """
 
     name: str
-    animation_node: Optional[AnimationNode] = None
 
-    # Optional events
+    # Animation sources (use one of these)
+    clip: Optional["AnimationClip"] = None  # Direct animation clip reference
+    graph: Optional["AnimationGraph"] = None  # Animation subgraph reference
+    animation_node: Optional[AnimationNode] = None  # Generic node (fallback)
+
+    # Motion handling
+    motion_mode: MotionMode = MotionMode.LOOP
+    speed: float = 1.0  # Speed multiplier (1.0 = normal, 2.0 = double speed)
+
+    # Optional callbacks
     on_enter: Optional[Callable[["AnimationState", GraphContext], None]] = None
     on_exit: Optional[Callable[["AnimationState", GraphContext], None]] = None
     on_update: Optional[Callable[["AnimationState", GraphContext, float], None]] = None
 
     # State metadata
-    speed_multiplier: float = 1.0
-    loop: bool = True
     can_interrupt: bool = True  # Whether this state can be interrupted mid-animation
 
-    # Runtime state
-    _time_in_state: float = field(default=0.0, repr=False)
+    # Runtime state - current playback position
+    current_time: float = field(default=0.0)
     _normalized_time: float = field(default=0.0, repr=False)
+    _playback_direction: int = field(default=1, repr=False)  # 1 = forward, -1 = backward
+    _animation_finished: bool = field(default=False, repr=False)
+
+    # Legacy compatibility
+    @property
+    def speed_multiplier(self) -> float:
+        """Legacy alias for speed."""
+        return self.speed
+
+    @speed_multiplier.setter
+    def speed_multiplier(self, value: float) -> None:
+        """Legacy alias for speed."""
+        self.speed = value
+
+    @property
+    def loop(self) -> bool:
+        """Legacy compatibility: True if motion_mode is LOOP."""
+        return self.motion_mode == MotionMode.LOOP
+
+    @loop.setter
+    def loop(self, value: bool) -> None:
+        """Legacy compatibility: Set motion_mode based on bool."""
+        self.motion_mode = MotionMode.LOOP if value else MotionMode.ONCE
 
     def enter(self, context: GraphContext) -> None:
         """Called when entering this state."""
-        self._time_in_state = 0.0
+        self.current_time = 0.0
         self._normalized_time = 0.0
+        self._playback_direction = 1
+        self._animation_finished = False
         if self.on_enter:
             self.on_enter(self, context)
 
@@ -278,32 +506,98 @@ class AnimationState:
         if self.on_exit:
             self.on_exit(self, context)
 
-    def update(self, context: GraphContext, dt: float) -> None:
-        """Update the state."""
-        self._time_in_state += dt * self.speed_multiplier
+    def _get_duration(self) -> float:
+        """Get the duration of the animation source."""
+        if self.clip is not None and hasattr(self.clip, "duration"):
+            return self.clip.duration
+        # For graphs or nodes, assume normalized time (0-1 range)
+        return 1.0
+
+    def update(self, dt: float, context: Optional[GraphContext] = None) -> None:
+        """
+        Update the state's playback time.
+
+        Args:
+            dt: Delta time in seconds
+            context: Optional graph context for callback
+        """
+        if self._animation_finished:
+            return
+
+        duration = self._get_duration()
+        time_delta = dt * self.speed * self._playback_direction
+
+        self.current_time += time_delta
+
+        # Handle motion modes
+        if self.motion_mode == MotionMode.LOOP:
+            if duration > 0:
+                self.current_time = self.current_time % duration
+
+        elif self.motion_mode == MotionMode.ONCE:
+            if self.current_time >= duration:
+                self.current_time = duration
+                self._animation_finished = True
+            elif self.current_time < 0:
+                self.current_time = 0
+                self._animation_finished = True
+
+        elif self.motion_mode == MotionMode.PING_PONG:
+            if duration > 0:
+                if self.current_time >= duration:
+                    self.current_time = duration - (self.current_time - duration)
+                    self._playback_direction = -1
+                elif self.current_time < 0:
+                    self.current_time = -self.current_time
+                    self._playback_direction = 1
+
+        # Update normalized time
+        if duration > 0:
+            self._normalized_time = self.current_time / duration
+        else:
+            self._normalized_time = 0.0
+
+        # Call update callback (support both old and new signatures)
         if self.on_update:
-            self.on_update(self, context, dt)
+            if context is not None:
+                self.on_update(self, context, dt)
 
     def evaluate(self, context: GraphContext) -> Pose:
-        """Evaluate this state's animation node."""
+        """
+        Evaluate this state's animation source and return the current pose.
+
+        Checks for animation sources in order: clip, graph, animation_node.
+        """
+        # Create context with current state's normalized time
+        state_context = GraphContext(
+            parameters=context.parameters,
+            dt=context.dt,
+            skeleton=context.skeleton,
+            bone_masks=context.bone_masks,
+            normalized_time=self._normalized_time,
+            sync_group=context.sync_group,
+            layer_weight=context.layer_weight,
+        )
+
+        # Evaluate clip directly if available
+        if self.clip is not None and hasattr(self.clip, "sample"):
+            bone_count = len(context.skeleton.bones) if context.skeleton else 0
+            return self.clip.sample(self.current_time, bone_count)
+
+        # Evaluate subgraph if available
+        if self.graph is not None:
+            return self.graph.evaluate(state_context)
+
+        # Fall back to animation node
         if self.animation_node:
-            # Create a context with the state's normalized time
-            state_context = GraphContext(
-                parameters=context.parameters,
-                dt=context.dt,
-                skeleton=context.skeleton,
-                bone_masks=context.bone_masks,
-                normalized_time=self._normalized_time,
-                sync_group=context.sync_group,
-                layer_weight=context.layer_weight,
-            )
             return self.animation_node.evaluate(state_context)
+
         return Pose()
 
     @property
     def time_in_state(self) -> float:
-        """Get the time spent in this state."""
-        return self._time_in_state
+        """Get the time spent in this state (alias for current_time)."""
+        return self.current_time
 
     @property
     def normalized_time(self) -> float:
@@ -312,13 +606,39 @@ class AnimationState:
 
     @normalized_time.setter
     def normalized_time(self, value: float) -> None:
-        """Set the normalized time."""
+        """Set the normalized time and update current_time accordingly."""
         self._normalized_time = value
+        duration = self._get_duration()
+        self.current_time = value * duration
+
+    @property
+    def is_finished(self) -> bool:
+        """Check if a ONCE animation has finished playing."""
+        return self._animation_finished
+
+    def reset(self) -> None:
+        """Reset the state's playback to the beginning."""
+        self.current_time = 0.0
+        self._normalized_time = 0.0
+        self._playback_direction = 1
+        self._animation_finished = False
 
 
 # =============================================================================
 # STATE TRANSITION
 # =============================================================================
+
+
+class InterruptMode(Enum):
+    """
+    Interrupt modes for state transitions.
+
+    Controls whether and how a transition can be interrupted by other transitions.
+    """
+
+    NONE = "none"  # Cannot be interrupted once started
+    ANY = "any"  # Can be interrupted by any valid transition
+    HIGHER_PRIORITY = "higher_priority"  # Only interrupted by higher priority transitions
 
 
 class TransitionSyncMode(Enum):
@@ -337,6 +657,21 @@ class StateTransition:
 
     Transitions define when and how to move from one state to another,
     including conditions, blend duration, and blend curve.
+
+    Attributes:
+        source: Source state name (use "*" for any-state transitions)
+        target: Target state name
+        conditions: List of conditions that must all pass for transition to occur
+        duration: Blend duration in seconds (or percentage if duration_mode="percentage")
+        duration_mode: How to interpret duration - "fixed" (seconds) or "percentage" (of source anim)
+        blend_curve: Easing curve for the blend weight
+        sync_mode: How to synchronize animation time during transition
+        exit_time: Optional normalized time (0-1) when transition becomes valid
+        offset: Start offset in target state (normalized time)
+        priority: Higher values = higher priority (checked first)
+        interrupt_mode: Controls whether/how this transition can be interrupted
+        can_interrupt_self: Legacy - whether this can interrupt itself (deprecated, use interrupt_mode)
+        can_be_interrupted: Legacy - whether this can be interrupted (deprecated, use interrupt_mode)
     """
 
     source: str  # Source state name, or "*" for any-state
@@ -344,34 +679,97 @@ class StateTransition:
     conditions: List[TransitionCondition] = field(default_factory=list)
 
     # Blend settings
-    duration: float = 0.2  # Blend duration in seconds
+    duration: float = 0.25  # Blend duration in seconds (or percentage)
+    duration_mode: str = "fixed"  # "fixed" (seconds) or "percentage" (of source animation)
     blend_curve: BlendCurve = BlendCurve.SMOOTH_STEP
     sync_mode: TransitionSyncMode = TransitionSyncMode.NONE
 
     # Timing settings
     exit_time: Optional[float] = None  # Normalized time to exit (0-1)
-    fixed_duration: bool = True  # Use fixed duration vs percentage
     offset: float = 0.0  # Start offset in target state
 
-    # Priority
+    # Priority and interruption
     priority: int = 0  # Higher priority transitions are checked first
-    can_interrupt_self: bool = False  # Can this transition interrupt an active transition
-    can_be_interrupted: bool = True  # Can this transition be interrupted
-    interrupt_mode: InterruptMode = InterruptMode.HIGHER_PRIORITY  # Interruption behavior
+    interrupt_mode: InterruptMode = InterruptMode.HIGHER_PRIORITY
+
+    # Legacy fields for backward compatibility (deprecated)
+    can_interrupt_self: bool = False  # Deprecated: use interrupt_mode
+    can_be_interrupted: bool = True  # Deprecated: use interrupt_mode
+
+    def __post_init__(self) -> None:
+        """Post-initialization to sync legacy fields with interrupt_mode."""
+        # If legacy fields were explicitly set to non-default values, update interrupt_mode
+        # This maintains backward compatibility
+        if not self.can_be_interrupted and self.interrupt_mode == InterruptMode.HIGHER_PRIORITY:
+            self.interrupt_mode = InterruptMode.NONE
+
+    @property
+    def fixed_duration(self) -> bool:
+        """Legacy property: True if duration_mode is 'fixed'."""
+        return self.duration_mode == "fixed"
+
+    @fixed_duration.setter
+    def fixed_duration(self, value: bool) -> None:
+        """Legacy property setter for fixed_duration."""
+        self.duration_mode = "fixed" if value else "percentage"
+
+    def get_effective_duration(self, source_animation_duration: float = 1.0) -> float:
+        """
+        Get the effective duration in seconds.
+
+        Args:
+            source_animation_duration: Duration of source animation (for percentage mode)
+
+        Returns:
+            Duration in seconds
+        """
+        if self.duration_mode == "percentage":
+            return self.duration * source_animation_duration
+        return self.duration
+
+    def allows_interruption_by(self, other_priority: int) -> bool:
+        """
+        Check if this transition can be interrupted by a transition with the given priority.
+
+        Args:
+            other_priority: Priority of the interrupting transition
+
+        Returns:
+            True if interruption is allowed, False otherwise
+        """
+        if self.interrupt_mode == InterruptMode.NONE:
+            return False
+        if self.interrupt_mode == InterruptMode.ANY:
+            return True
+        if self.interrupt_mode == InterruptMode.HIGHER_PRIORITY:
+            return other_priority > self.priority
+        return False
 
     def can_transition(self, current_state: AnimationState,
                        context: GraphContext) -> bool:
-        """Check if this transition can occur."""
-        # Check exit time
+        """
+        Check if this transition can occur.
+
+        All conditions must pass for the transition to be valid.
+
+        Args:
+            current_state: The current animation state
+            context: Graph context containing parameters
+
+        Returns:
+            True if all conditions are met, False otherwise
+        """
+        # Check exit time at transition level
         if self.exit_time is not None:
             if current_state.normalized_time < self.exit_time:
                 return False
 
-        # Check all conditions
-        return all(cond.evaluate(context) for cond in self.conditions)
+        # Check all conditions, passing state normalized time for exit_time conditions
+        state_time = current_state.normalized_time
+        return all(cond.evaluate(context, state_time) for cond in self.conditions)
 
     def is_any_state(self) -> bool:
-        """Check if this is an any-state transition."""
+        """Check if this is an any-state transition (source == '*')."""
         return self.source == "*"
 
 
@@ -392,7 +790,10 @@ class ActiveTransition:
     duration: float = 0.0
 
     def __post_init__(self) -> None:
-        self.duration = self.transition.duration
+        # Compute effective duration based on duration_mode
+        # For percentage mode, use source animation duration; for fixed, use raw value
+        source_animation_duration = self.source_state._get_duration()
+        self.duration = self.transition.get_effective_duration(source_animation_duration)
 
     @property
     def blend_weight(self) -> float:
@@ -581,12 +982,61 @@ class StateMachine(AnimationNode):
         )
         self._active_transition.source_pose = source_pose
 
-        # Apply offset to target state
+        # Enter target state first (resets time)
+        target_state.enter(context)
+
+        # Apply sync mode to synchronize target state time with source
+        self._apply_sync_mode(transition, self._current_state, target_state)
+
+        # Apply explicit offset if specified (overrides sync mode)
         if transition.offset > 0:
             target_state.normalized_time = transition.offset
 
-        # Enter target state
-        target_state.enter(context)
+    def _apply_sync_mode(
+        self,
+        transition: StateTransition,
+        source_state: AnimationState,
+        target_state: AnimationState,
+    ) -> None:
+        """
+        Apply sync mode to synchronize target state time with source.
+
+        Args:
+            transition: The transition being started
+            source_state: The source state being transitioned from
+            target_state: The target state being transitioned to
+        """
+        sync_mode = transition.sync_mode
+
+        if sync_mode == TransitionSyncMode.NONE:
+            # No synchronization - target starts from beginning (or offset)
+            return
+
+        elif sync_mode == TransitionSyncMode.NORMALIZED:
+            # Match normalized time directly (0-1 maps to 0-1)
+            target_state.normalized_time = source_state.normalized_time
+
+        elif sync_mode == TransitionSyncMode.PROPORTIONAL:
+            # Proportional sync: scale by duration ratio
+            # If source is 50% through a 2s animation, and target is 1s,
+            # target starts at 50% (0.5s)
+            source_duration = source_state._get_duration()
+            target_duration = target_state._get_duration()
+
+            if source_duration > 0 and target_duration > 0:
+                # Calculate how much time remains in source
+                remaining_ratio = 1.0 - source_state.normalized_time
+                # Scale target to have same proportional time remaining
+                target_state.normalized_time = 1.0 - remaining_ratio
+            else:
+                # Fallback to normalized sync if durations are invalid
+                target_state.normalized_time = source_state.normalized_time
+
+        elif sync_mode == TransitionSyncMode.MARKER:
+            # Marker-based sync would require animation markers/events
+            # For now, fall back to normalized sync
+            # TODO: Implement marker-based synchronization when marker system is available
+            target_state.normalized_time = source_state.normalized_time
 
     def update(self, dt: float, context: GraphContext) -> None:
         """Update the state machine."""
@@ -603,17 +1053,17 @@ class StateMachine(AnimationNode):
         # Update active transition
         if self._active_transition:
             self._active_transition.update(dt)
-            self._active_transition.target_state.update(context, dt)
+            self._active_transition.target_state.update(dt, context)
 
             # Also update source state (for synchronized transitions)
-            self._active_transition.source_state.update(context, dt)
+            self._active_transition.source_state.update(dt, context)
 
             # Check for transition completion
             if self._active_transition.is_complete:
                 self._complete_transition(context)
         else:
             # Update current state
-            self._current_state.update(context, dt)
+            self._current_state.update(dt, context)
 
             # Check for new transitions
             self._check_transitions(context)
@@ -645,22 +1095,49 @@ class StateMachine(AnimationNode):
                 return
 
     def _check_transition_interruption(self, context: GraphContext) -> bool:
-        """Check if current transition should be interrupted."""
+        """
+        Check if current transition should be interrupted.
+
+        Uses the InterruptMode of the active transition to determine if
+        interruption is allowed by candidate transitions.
+
+        Returns:
+            True if the transition was interrupted, False otherwise
+        """
         if not self._active_transition:
             return False
 
-        if not self._active_transition.transition.can_be_interrupted:
-            return False
+        active_transition = self._active_transition.transition
 
-        # Check for higher priority transitions
-        current_priority = self._active_transition.transition.priority
-
-        # Check any-state transitions
+        # Check any-state transitions for potential interruption
         for transition in self._any_state_transitions:
-            if transition.priority <= current_priority:
-                break  # Sorted by priority, so we can stop early
+            # Skip if targeting the same state we're already transitioning to
             if transition.target == self._active_transition.target_state.name:
                 continue
+
+            # Check if interruption is allowed based on interrupt_mode
+            if not active_transition.allows_interruption_by(transition.priority):
+                continue
+
+            target_state = self.states.get(transition.target)
+            if target_state and transition.can_transition(
+                self._active_transition.target_state, context
+            ):
+                # Interrupt current transition
+                self._current_state = self._active_transition.target_state
+                self._active_transition = None
+                self._start_transition(transition, context)
+                return True
+
+        # Check regular transitions from the target state (for chained interruptions)
+        for transition in self.transitions:
+            if transition.source != self._active_transition.target_state.name:
+                continue
+
+            # Check if interruption is allowed
+            if not active_transition.allows_interruption_by(transition.priority):
+                continue
+
             target_state = self.states.get(transition.target)
             if target_state and transition.can_transition(
                 self._active_transition.target_state, context
@@ -775,11 +1252,46 @@ def state_machine(
 # =============================================================================
 
 
-class StateMachineBuilder:
-    """Fluent builder for creating state machines."""
+class StateMachineBuilderError(ValueError):
+    """Raised when StateMachineBuilder validation fails."""
 
-    def __init__(self, node_id: str) -> None:
-        self._node_id = node_id
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None) -> None:
+        self.message = message
+        self.details = details or {}
+        super().__init__(message)
+
+
+class StateMachineBuilder:
+    """
+    Fluent builder for creating state machines.
+
+    Provides a clean, chainable API for constructing state machines with
+    validation to catch configuration errors early.
+
+    Example:
+        sm = (
+            StateMachineBuilder("locomotion")
+            .add_state("idle", idle_clip)
+            .add_state("walk", walk_clip, speed=1.2)
+            .add_state("run", run_graph)
+            .set_initial("idle")
+            .add_transition("idle", "walk", TransitionCondition.is_true("moving"))
+            .add_transition("walk", "run", TransitionCondition.greater_than("speed", 5.0))
+            .add_transition("walk", "idle", TransitionCondition.is_false("moving"))
+            .add_transition("run", "walk", TransitionCondition.less_than("speed", 5.0))
+            .add_any_state_transition("hurt", TransitionCondition.trigger("take_damage"))
+            .build()
+        )
+    """
+
+    def __init__(self, name: str = "state_machine") -> None:
+        """
+        Initialize a new state machine builder.
+
+        Args:
+            name: Node ID for the state machine (default: "state_machine")
+        """
+        self._name = name
         self._states: Dict[str, AnimationState] = {}
         self._transitions: List[StateTransition] = []
         self._initial_state: Optional[str] = None
@@ -787,24 +1299,111 @@ class StateMachineBuilder:
     def add_state(
         self,
         name: str,
+        source: Any = None,
+        *,
+        clip: Optional["AnimationClip"] = None,
+        graph: Optional["AnimationGraph"] = None,
         animation_node: Optional[AnimationNode] = None,
+        motion_mode: MotionMode = MotionMode.LOOP,
         speed: float = 1.0,
-        loop: bool = True,
+        loop: Optional[bool] = None,  # Legacy parameter
+        on_enter: Optional[Callable[[AnimationState, GraphContext], None]] = None,
+        on_exit: Optional[Callable[[AnimationState, GraphContext], None]] = None,
+        can_interrupt: bool = True,
     ) -> "StateMachineBuilder":
-        """Add a state to the builder."""
+        """
+        Add a state to the state machine.
+
+        The animation source can be specified in multiple ways:
+        - As the `source` positional argument (auto-detected type)
+        - As explicit keyword arguments: `clip`, `graph`, or `animation_node`
+
+        Args:
+            name: Unique name for the state
+            source: Animation source (clip, graph, or node) - auto-detected type
+            clip: Explicit AnimationClip source
+            graph: Explicit AnimationGraph source
+            animation_node: Explicit AnimationNode source
+            motion_mode: How the animation should loop/repeat
+            speed: Playback speed multiplier (1.0 = normal)
+            loop: Legacy parameter - use motion_mode instead
+            on_enter: Callback invoked when entering this state
+            on_exit: Callback invoked when exiting this state
+            can_interrupt: Whether this state can be interrupted mid-animation
+
+        Returns:
+            Self for method chaining
+
+        Raises:
+            StateMachineBuilderError: If state name is empty or already exists
+        """
+        # Validate name
+        if not name or not name.strip():
+            raise StateMachineBuilderError(
+                "State name cannot be empty",
+                {"provided_name": repr(name)}
+            )
+
+        if name in self._states:
+            raise StateMachineBuilderError(
+                f"State '{name}' already exists in the state machine",
+                {"existing_states": list(self._states.keys())}
+            )
+
+        # Auto-detect source type if provided as positional argument
+        detected_clip = clip
+        detected_graph = graph
+        detected_node = animation_node
+
+        if source is not None:
+            # Detect type based on attributes/class
+            if hasattr(source, "sample") and hasattr(source, "duration"):
+                # Looks like an AnimationClip
+                detected_clip = source
+            elif isinstance(source, AnimationGraph):
+                detected_graph = source
+            elif isinstance(source, AnimationNode):
+                detected_node = source
+            else:
+                # Assume it's a generic animation node
+                detected_node = source
+
+        # Handle legacy 'loop' parameter
+        if loop is not None:
+            motion_mode = MotionMode.LOOP if loop else MotionMode.ONCE
+
         state = AnimationState(
             name=name,
-            animation_node=animation_node,
-            speed_multiplier=speed,
-            loop=loop,
+            clip=detected_clip,
+            graph=detected_graph,
+            animation_node=detected_node,
+            motion_mode=motion_mode,
+            speed=speed,
+            on_enter=on_enter,
+            on_exit=on_exit,
+            can_interrupt=can_interrupt,
         )
         self._states[name] = state
+
+        # Auto-set initial state to first added state
         if self._initial_state is None:
             self._initial_state = name
+
         return self
 
     def set_initial(self, state_name: str) -> "StateMachineBuilder":
-        """Set the initial state."""
+        """
+        Set the initial/default state.
+
+        Args:
+            state_name: Name of the state to set as initial
+
+        Returns:
+            Self for method chaining
+
+        Note:
+            Validation that the state exists is performed in build().
+        """
         self._initial_state = state_name
         return self
 
@@ -812,19 +1411,62 @@ class StateMachineBuilder:
         self,
         source: str,
         target: str,
+        condition: Optional[TransitionCondition] = None,
+        *,
         conditions: Optional[List[TransitionCondition]] = None,
-        duration: float = 0.2,
-        curve: BlendCurve = BlendCurve.SMOOTH_STEP,
+        duration: float = 0.25,
+        duration_mode: str = "fixed",
+        blend_curve: BlendCurve = BlendCurve.SMOOTH_STEP,
+        sync_mode: TransitionSyncMode = TransitionSyncMode.NONE,
+        exit_time: Optional[float] = None,
+        offset: float = 0.0,
         priority: int = 0,
         interrupt_mode: InterruptMode = InterruptMode.HIGHER_PRIORITY,
+        # Legacy parameter
+        curve: Optional[BlendCurve] = None,
     ) -> "StateMachineBuilder":
-        """Add a transition between states."""
+        """
+        Add a transition between states.
+
+        Args:
+            source: Source state name
+            target: Target state name
+            condition: Single transition condition (convenience parameter)
+            conditions: List of conditions (all must pass for transition)
+            duration: Blend duration in seconds (or percentage if duration_mode="percentage")
+            duration_mode: "fixed" (seconds) or "percentage" (of source animation)
+            blend_curve: Easing curve for the blend weight
+            sync_mode: How to synchronize animation time during transition
+            exit_time: Normalized time (0-1) when transition becomes valid
+            offset: Start offset in target state (normalized time)
+            priority: Higher values = higher priority (checked first)
+            interrupt_mode: Controls whether/how this transition can be interrupted
+            curve: Legacy alias for blend_curve
+
+        Returns:
+            Self for method chaining
+        """
+        # Build conditions list
+        all_conditions: List[TransitionCondition] = []
+        if condition is not None:
+            all_conditions.append(condition)
+        if conditions:
+            all_conditions.extend(conditions)
+
+        # Handle legacy 'curve' parameter
+        if curve is not None:
+            blend_curve = curve
+
         transition = StateTransition(
             source=source,
             target=target,
-            conditions=conditions or [],
+            conditions=all_conditions,
             duration=duration,
-            blend_curve=curve,
+            duration_mode=duration_mode,
+            blend_curve=blend_curve,
+            sync_mode=sync_mode,
+            exit_time=exit_time,
+            offset=offset,
             priority=priority,
             interrupt_mode=interrupt_mode,
         )
@@ -834,27 +1476,134 @@ class StateMachineBuilder:
     def add_any_state_transition(
         self,
         target: str,
+        condition: Optional[TransitionCondition] = None,
+        *,
         conditions: Optional[List[TransitionCondition]] = None,
         duration: float = 0.2,
-        curve: BlendCurve = BlendCurve.SMOOTH_STEP,
-        priority: Optional[int] = None,  # High priority by default (from config)
+        blend_curve: BlendCurve = BlendCurve.SMOOTH_STEP,
+        priority: Optional[int] = None,
+        # Legacy parameter
+        curve: Optional[BlendCurve] = None,
     ) -> "StateMachineBuilder":
-        """Add an any-state transition."""
+        """
+        Add an any-state transition (source='*').
+
+        Any-state transitions can occur from any state and are typically used
+        for global events like damage reactions or death states.
+
+        Args:
+            target: Target state name
+            condition: Single transition condition (convenience parameter)
+            conditions: List of conditions (all must pass for transition)
+            duration: Blend duration in seconds
+            blend_curve: Easing curve for the blend weight
+            priority: Transition priority (default: high priority from config)
+            curve: Legacy alias for blend_curve
+
+        Returns:
+            Self for method chaining
+        """
         if priority is None:
             config = get_config()
             priority = config.transition.ANY_STATE_PRIORITY
+
+        # Handle legacy 'curve' parameter
+        if curve is not None:
+            blend_curve = curve
+
         return self.add_transition(
             source="*",
             target=target,
+            condition=condition,
             conditions=conditions,
             duration=duration,
-            curve=curve,
+            blend_curve=blend_curve,
             priority=priority,
         )
 
+    def _validate(self) -> List[str]:
+        """
+        Validate the state machine configuration.
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        errors: List[str] = []
+
+        # Check for at least one state
+        if not self._states:
+            errors.append("State machine must have at least one state")
+
+        # Validate initial state
+        if self._initial_state is not None and self._initial_state not in self._states:
+            errors.append(
+                f"Initial state '{self._initial_state}' does not exist. "
+                f"Available states: {list(self._states.keys())}"
+            )
+
+        # Validate transitions reference existing states
+        all_state_names = set(self._states.keys())
+        for i, transition in enumerate(self._transitions):
+            # Validate source (skip '*' for any-state)
+            if transition.source != "*" and transition.source not in all_state_names:
+                errors.append(
+                    f"Transition {i + 1}: source state '{transition.source}' does not exist. "
+                    f"Available states: {list(all_state_names)}"
+                )
+
+            # Validate target
+            if transition.target not in all_state_names:
+                errors.append(
+                    f"Transition {i + 1}: target state '{transition.target}' does not exist. "
+                    f"Available states: {list(all_state_names)}"
+                )
+
+            # Warn about self-transitions (usually a mistake)
+            if transition.source == transition.target and transition.source != "*":
+                # Not an error, but could be intentional for animation restarts
+                pass
+
+        # Check for orphaned states (no incoming transitions except initial)
+        states_with_incoming: Set[str] = set()
+        for transition in self._transitions:
+            states_with_incoming.add(transition.target)
+
+        if self._initial_state:
+            states_with_incoming.add(self._initial_state)
+
+        orphaned = all_state_names - states_with_incoming
+        # Note: Orphaned states are not errors, just potential issues
+        # Users might want states only reachable via force_state()
+
+        return errors
+
     def build(self) -> StateMachine:
-        """Build the state machine."""
-        sm = StateMachine(self._node_id, self._initial_state)
+        """
+        Build and validate the state machine.
+
+        Returns:
+            A fully configured StateMachine instance
+
+        Raises:
+            StateMachineBuilderError: If validation fails with details about
+                all configuration errors found
+        """
+        # Validate configuration
+        errors = self._validate()
+        if errors:
+            error_list = "\n  - ".join(errors)
+            raise StateMachineBuilderError(
+                f"Invalid state machine configuration:\n  - {error_list}",
+                {
+                    "errors": errors,
+                    "state_count": len(self._states),
+                    "transition_count": len(self._transitions),
+                    "initial_state": self._initial_state,
+                }
+            )
+
+        # Build the state machine
+        sm = StateMachine(self._name, self._initial_state)
 
         for state in self._states.values():
             sm.add_state(state)
@@ -863,6 +1612,14 @@ class StateMachineBuilder:
             sm.add_transition(transition)
 
         return sm
+
+    def __repr__(self) -> str:
+        return (
+            f"StateMachineBuilder(name={self._name!r}, "
+            f"states={len(self._states)}, "
+            f"transitions={len(self._transitions)}, "
+            f"initial={self._initial_state!r})"
+        )
 
 
 # =============================================================================
@@ -877,17 +1634,21 @@ __all__ = [
     # Motion mode
     "MotionMode",
     # Conditions
-    "ComparisonOp",
+    "ConditionOperator",
+    "ComparisonOp",  # Legacy alias for ConditionOperator
     "TransitionCondition",
+    "ParameterTypeError",
     # State
     "AnimationState",
     # Transition
+    "InterruptMode",
     "TransitionSyncMode",
     "StateTransition",
     "ActiveTransition",
     # State machine
     "StateMachine",
     "StateMachineBuilder",
+    "StateMachineBuilderError",
     # Decorator
     "state_machine",
 ]

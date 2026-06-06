@@ -231,38 +231,68 @@ impl RhiDevice {
         }
     }
 
-    /// Try to create a headless RhiDevice for testing purposes.
+    /// Create a headless device without a surface.
     ///
-    /// This uses wgpu's low-power adapter request with fallback backends.
-    /// Returns None if no suitable adapter can be found.
-    pub fn try_new_headless() -> Option<Self> {
-        use pollster::FutureExt;
-
+    /// This is useful for offscreen rendering, testing, and CI environments
+    /// where no window/display is available. The device is created with all
+    /// backends enabled and high-performance preference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no suitable GPU adapter is found or device creation fails.
+    pub fn new_headless() -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN,
+            backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            })
-            .block_on()?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None, // No surface needed for headless
+            force_fallback_adapter: false,
+        }))
+        .expect("no suitable GPU adapter found for headless rendering");
 
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Headless Test Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
-            .block_on()
-            .ok()?;
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("TRINITY Headless Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+            },
+            None, // trace_path
+        ))
+        .expect("failed to create headless device");
+
+        Self::new(device, queue)
+    }
+
+    /// Attempt to create a headless device, returning None if no GPU is available.
+    ///
+    /// Unlike `new_headless()`, this method does not panic if no adapter is found,
+    /// making it suitable for optional GPU detection in CI environments.
+    pub fn try_new_headless() -> Option<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: true, // Allow software fallback
+        }))?;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("TRINITY Headless Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+            },
+            None,
+        ))
+        .ok()?;
 
         Some(Self::new(device, queue))
     }
@@ -462,7 +492,7 @@ fn features_for_flags(flags: FeatureFlags) -> wgpu::Features {
 /// `Adapter.enumerate()`.
 pub fn create_instance() -> RhiInstance {
     let inner = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN,
+        backends: wgpu::Backends::all(),
         ..Default::default()
     });
     RhiInstance { inner }
@@ -699,7 +729,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: false,
+                    force_fallback_adapter: true,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -739,7 +769,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: false,
+                    force_fallback_adapter: true,
                 }),
         ) {
             let dev = request_device(&adapter, FeatureFlags::empty(), QualityTier::Low);
@@ -776,7 +806,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: None,
-                    force_fallback_adapter: false,
+                    force_fallback_adapter: true,
                 }),
         ) {
             let dev = request_device(

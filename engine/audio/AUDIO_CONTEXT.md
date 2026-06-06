@@ -4,8 +4,17 @@
 > 
 > **Architecture spec:** `DIAGRAMS/ARCHITECTURE_AUDIO.md`
 > **Integration spec:** `docs/GAME_ENGINE_INTEGRATION.md` §4.9, §8
-> **Trinity spec:** `docs/TRINITY_LATEST.md`
+> **Trinity spec:** `docs/specs/TRINITY_LATEST.md`
 > **TODO checklist:** `docs/GAME_ENGINE_INTEGRATION_TODO.md` §8
+
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Spatial audio, DSP, mixing (~15K lines) |
+| Rust | ⚠️ 71% | GAPSET_15_AUDIO — Core playback wired |
+| Wired | ✅ Mostly | Audio playback functional |
+
+*See `docs/STATUS.md` for current progress.*
 
 ---
 

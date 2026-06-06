@@ -616,24 +616,44 @@ class FACSController:
         self._notify_change()
         return True
 
+    def get_blend_weights(self) -> dict[str, float]:
+        """
+        Get current blend shape weights from AU intensities.
+
+        Alias for get_blend_shape_weights() for API compatibility.
+
+        Returns:
+            Dictionary of blend shape names to weights (ARKit-compatible names)
+        """
+        return self.get_blend_shape_weights()
+
     def get_blend_shape_weights(self) -> dict[str, float]:
         """
         Get current blend shape weights from AU intensities.
 
         Returns:
-            Dictionary of blend shape names to weights
+            Dictionary of blend shape names to weights (ARKit-compatible names)
         """
         result: dict[str, float] = {}
 
+        # Collect all AUs that have any intensity (base, left, or right)
+        # This fixes asymmetric expressions like CONTEMPT that only use left/right overrides
+        active_aus: set[ActionUnit] = set()
         for au, intensity in self._au_intensities.items():
-            if intensity < 0.001:
-                continue
+            if intensity >= 0.001:
+                active_aus.add(au)
+        for au in self._au_left_intensities:
+            active_aus.add(au)
+        for au in self._au_right_intensities:
+            active_aus.add(au)
 
+        for au in active_aus:
             au_data = self._au_mappings.get(au)
             if not au_data:
                 continue
 
-            # Update the AU data's intensity
+            # Update the AU data's intensity (use base intensity, default to 0)
+            intensity = self._au_intensities.get(au, 0.0)
             au_data.intensity = intensity
 
             # Get bilateral overrides

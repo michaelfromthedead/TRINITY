@@ -12,6 +12,9 @@ Bone
     children: list[Bone]   -- ordered list of child bones
     bind_pose: Transform   -- local-space rest pose relative to parent
 
+    add_child(bone)     -- add child with automatic parent linkage
+    remove_child(bone)  -- detach child from this bone
+
 Skeleton
     _bones: dict[str, Bone]       -- O(1) name lookup
     root_bones: list[Bone]        -- entries with no parent
@@ -20,7 +23,8 @@ Skeleton
     get_bone(name)      -- O(1) dict lookup
     get_chain(a, b)     -- ordered chain start-to-end for IK
     add_bone(...)       -- build hierarchy incrementally
-    validate(...)       -- no orphans, single-connected forest
+    validate(...)       -- no orphans, single-connected forest (returns errors)
+    is_valid(...)       -- convenience bool wrapper around validate()
 """
 
 from __future__ import annotations
@@ -123,6 +127,62 @@ class Bone:
             result.append(b)
             queue.extend(b.children)
         return result
+
+    # -- child management -----------------------------------------------------
+
+    def add_child(self, bone: Bone) -> None:
+        """Add a bone as a child of this bone.
+
+        Sets the child's parent reference to this bone and appends
+        to this bone's children list. If the bone already has a parent,
+        it is first removed from that parent's children list.
+
+        Parameters
+        ----------
+        bone : Bone
+            The bone to add as a child.
+
+        Raises
+        ------
+        ValueError
+            If attempting to add self as a child (cycle), or if *bone*
+            is already a child of this bone.
+        """
+        if bone is self:
+            raise ValueError("Cannot add a bone as its own child")
+        if bone in self.children:
+            raise ValueError(f"Bone '{bone.name}' is already a child of '{self.name}'")
+
+        # Remove from previous parent if any
+        if bone.parent is not None:
+            bone.parent.children = [c for c in bone.parent.children if c is not bone]
+
+        bone.parent = self
+        self.children.append(bone)
+
+    def remove_child(self, bone: Bone) -> bool:
+        """Remove a bone from this bone's children.
+
+        Clears the child's parent reference if removal succeeds.
+        Does **not** recursively remove the child's descendants;
+        they remain attached to the removed bone.
+
+        Parameters
+        ----------
+        bone : Bone
+            The bone to remove from children.
+
+        Returns
+        -------
+        bool
+            ``True`` if the bone was found and removed, ``False`` otherwise.
+        """
+        if bone not in self.children:
+            return False
+
+        self.children = [c for c in self.children if c is not bone]
+        bone.parent = None
+        return True
 
     # -- copy / representation ------------------------------------------------
 
@@ -468,6 +528,20 @@ class Skeleton:
                 b = b.parent
 
         return errors
+
+    def is_valid(self) -> bool:
+        """Check if the skeleton is structurally valid.
+
+        This is a convenience wrapper around ``validate()`` that returns
+        a boolean instead of a list of error messages.
+
+        Returns
+        -------
+        bool
+            ``True`` when the skeleton passes all validation checks,
+            ``False`` otherwise.
+        """
+        return len(self.validate()) == 0
 
     # -- bulk operations ------------------------------------------------------
 

@@ -128,7 +128,7 @@ class AudioListener:
     speed_of_sound: float = SPEED_OF_SOUND
 
     # Thread safety
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     # Previous position for velocity calculation
     _prev_position: Vector3 = field(default_factory=Vector3, repr=False)

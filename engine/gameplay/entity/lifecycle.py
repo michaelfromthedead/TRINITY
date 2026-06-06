@@ -40,6 +40,11 @@ from .constants import (
     LifecycleState,
 )
 
+def _get_entity_event_log():
+    """Get the EntityEventLog singleton (lazy import to avoid circular imports)."""
+    from .eventlog_integration import EntityEventLog
+    return EntityEventLog()
+
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -279,6 +284,14 @@ class LifecycleManager:
             self._state_counts[target_state] -= 1
             return False
 
+        # Log state change to EventLog
+        entity_id = getattr(entity, "_entity_id", id(entity))
+        try:
+            event_log = _get_entity_event_log()
+            event_log.record_state_change(entity_id, old_state, target_state)
+        except Exception as e:
+            _logger.debug("Failed to log state change event: %s", e)
+
         # Fire lifecycle event based on transition
         self._fire_lifecycle_event(entity, old_state, target_state)
 
@@ -302,11 +315,36 @@ class LifecycleManager:
 
         # Handle destroy transition from any state
         if new_state == LifecycleState.DESTROYING:
+            # Log destroy event
+            entity_id = getattr(entity, "_entity_id", id(entity))
+            try:
+                event_log = _get_entity_event_log()
+                event_log.record_destroy(entity_id, reason="lifecycle_transition")
+            except Exception as e:
+                _logger.debug("Failed to log destroy event: %s", e)
             self._invoke_entity_callback(entity, LifecycleEvent.ON_DESTROY)
             return
 
         # Handle spawn (first activation)
         if old_state == LifecycleState.UNINITIALIZED and new_state == LifecycleState.CREATED:
+            # Log spawn event
+            entity_id = getattr(entity, "_entity_id", id(entity))
+            entity_name = getattr(entity, "_name", type(entity).__name__)
+            position = (0.0, 0.0, 0.0)
+            if hasattr(entity, "_transform") and hasattr(entity._transform, "position"):
+                position = entity._transform.position
+            try:
+                event_log = _get_entity_event_log()
+                spawn_event = event_log.record_spawn(
+                    entity_id,
+                    prefab_name=entity_name,
+                    position=position,
+                    entity_type=type(entity).__name__,
+                )
+                # Store spawn event for causal chain tracking
+                entity._spawn_event_id = spawn_event.id
+            except Exception as e:
+                _logger.debug("Failed to log spawn event: %s", e)
             self._invoke_entity_callback(entity, LifecycleEvent.ON_SPAWN)
             return
 

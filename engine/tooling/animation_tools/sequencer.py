@@ -296,10 +296,7 @@ class Timeline:
 
     def snap_to_frame(self, time: float) -> float:
         """Snap time to the nearest frame."""
-        # Use floor(x + 0.5) instead of round() to avoid banker's rounding
-        # which rounds 0.5 to even numbers (e.g., 16.5 -> 16, 17.5 -> 18)
-        import math
-        frame = int(math.floor(time * self._frame_rate + 0.5))
+        frame = int(time * self._frame_rate + 0.5)
         return frame / self._frame_rate
 
     def add_range(self, range_obj: TimelineRange) -> None:

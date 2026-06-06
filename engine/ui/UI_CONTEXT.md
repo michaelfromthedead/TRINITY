@@ -2,6 +2,15 @@
 
 Complete context for implementing `engine/ui/` using the Trinity Pattern + Foundation runtime.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | Widgets, layouts, accessibility (~10K lines) |
+| Rust | ✅ 80% | GAPSET_18_UI_XR — Core UI wired |
+| Wired | ✅ Yes | UI system functional |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## Table of Contents
@@ -635,7 +644,7 @@ engine/ui/
 
 ## References
 
-- `docs/TRINITY_LATEST.md` - Full Trinity Pattern specification
+- `docs/specs/TRINITY_LATEST.md` - Full Trinity Pattern specification
 - `docs/GAME_ENGINE_INTEGRATION.md` - Trinity <-> Foundation integration
 - `docs/GAME_ENGINE_INTEGRATION_TODO.md` - Section 10 (UI Layer)
 - `DIAGRAMS/ARCHITECTURE_UI.md` - UI layer architecture

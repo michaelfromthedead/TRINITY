@@ -337,6 +337,145 @@ class Label:
             self._mark_dirty("opacity")
 
     @property
+    def font_family(self) -> str:
+        """Get the font family from style."""
+        return self._style.font_family
+
+    @font_family.setter
+    def font_family(self, value: str) -> None:
+        """Set the font family."""
+        if self._style.font_family != value:
+            self._style = LabelStyle(
+                font_family=value,
+                font_size=self._style.font_size,
+                font_weight=self._style.font_weight,
+                text_color=self._style.text_color,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=self._style.icon_spacing,
+                icon_color=self._style.icon_color,
+            )
+            self._mark_dirty("font_family")
+            self._invalidate_layout()
+
+    @property
+    def font_size(self) -> float:
+        """Get the font size from style."""
+        return self._style.font_size
+
+    @font_size.setter
+    def font_size(self, value: float) -> None:
+        """Set the font size."""
+        value = max(1.0, min(200.0, value))
+        if self._style.font_size != value:
+            self._style = LabelStyle(
+                font_family=self._style.font_family,
+                font_size=value,
+                font_weight=self._style.font_weight,
+                text_color=self._style.text_color,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=self._style.icon_spacing,
+                icon_color=self._style.icon_color,
+            )
+            self._mark_dirty("font_size")
+            self._invalidate_layout()
+
+    @property
+    def font_weight(self) -> str:
+        """Get the font weight from style."""
+        return self._style.font_weight
+
+    @font_weight.setter
+    def font_weight(self, value: str) -> None:
+        """Set the font weight."""
+        valid_weights = ("normal", "bold", "light")
+        if value not in valid_weights:
+            raise ValueError(f"Invalid font weight '{value}'. Must be one of: {valid_weights}")
+        if self._style.font_weight != value:
+            self._style = LabelStyle(
+                font_family=self._style.font_family,
+                font_size=self._style.font_size,
+                font_weight=value,
+                text_color=self._style.text_color,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=self._style.icon_spacing,
+                icon_color=self._style.icon_color,
+            )
+            self._mark_dirty("font_weight")
+
+    @property
+    def text_color(self) -> str:
+        """Get the text color from style."""
+        return self._style.text_color
+
+    @text_color.setter
+    def text_color(self, value: str) -> None:
+        """Set the text color."""
+        if self._style.text_color != value:
+            self._style = LabelStyle(
+                font_family=self._style.font_family,
+                font_size=self._style.font_size,
+                font_weight=self._style.font_weight,
+                text_color=value,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=self._style.icon_spacing,
+                icon_color=self._style.icon_color,
+            )
+            self._mark_dirty("text_color")
+
+    @property
+    def icon_color(self) -> Optional[str]:
+        """Get the icon color from style."""
+        return self._style.icon_color
+
+    @icon_color.setter
+    def icon_color(self, value: Optional[str]) -> None:
+        """Set the icon color."""
+        if self._style.icon_color != value:
+            self._style = LabelStyle(
+                font_family=self._style.font_family,
+                font_size=self._style.font_size,
+                font_weight=self._style.font_weight,
+                text_color=self._style.text_color,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=self._style.icon_spacing,
+                icon_color=value,
+            )
+            self._mark_dirty("icon_color")
+
+    @property
+    def icon_spacing(self) -> float:
+        """Get the icon spacing from style."""
+        return self._style.icon_spacing
+
+    @icon_spacing.setter
+    def icon_spacing(self, value: float) -> None:
+        """Set the icon spacing."""
+        value = max(0.0, value)
+        if self._style.icon_spacing != value:
+            self._style = LabelStyle(
+                font_family=self._style.font_family,
+                font_size=self._style.font_size,
+                font_weight=self._style.font_weight,
+                text_color=self._style.text_color,
+                disabled_text_color=self._style.disabled_text_color,
+                icon_size=self._style.icon_size,
+                icon_spacing=value,
+                icon_color=self._style.icon_color,
+            )
+            self._mark_dirty("icon_spacing")
+            self._invalidate_layout()
+
+    @property
+    def effective_icon_color(self) -> str:
+        """Get the effective icon color (icon_color if set, else text_color)."""
+        return self._style.icon_color if self._style.icon_color else self._style.text_color
+
+    @property
     def x(self) -> float:
         """Get X position."""
         return self._x
@@ -411,11 +550,6 @@ class Label:
         """Check if label has an icon."""
         return self._icon is not None
 
-    @property
-    def is_dirty(self) -> bool:
-        """Check if label needs re-rendering."""
-        return self._dirty
-
     # =========================================================================
     # DIRTY TRACKING
     # =========================================================================
@@ -428,6 +562,19 @@ class Label:
     def _invalidate_layout(self) -> None:
         """Mark layout as needing recalculation."""
         self._dirty_layout = True
+
+    def is_dirty(self, field_name: Optional[str] = None) -> bool:
+        """Check if label needs re-rendering, or if a specific field is dirty.
+
+        Args:
+            field_name: Optional field name to check specifically
+
+        Returns:
+            True if dirty (or if field is in dirty fields when specified)
+        """
+        if field_name is None:
+            return self._dirty
+        return field_name in self._dirty_fields
 
     def is_field_dirty(self, field_name: Optional[str] = None) -> bool:
         """Check if a field or any field is dirty.
@@ -607,16 +754,14 @@ class Label:
             "icon_position": self._icon_position.name,
             "text_align": self._text_align.name,
             "text_overflow": self._text_overflow.name,
-            "style": {
-                "font_family": self._style.font_family,
-                "font_size": self._style.font_size,
-                "font_weight": self._style.font_weight,
-                "text_color": self._style.text_color,
-                "disabled_text_color": self._style.disabled_text_color,
-                "icon_size": self._style.icon_size,
-                "icon_spacing": self._style.icon_spacing,
-                "icon_color": self._style.icon_color,
-            },
+            "font_family": self._style.font_family,
+            "font_size": self._style.font_size,
+            "font_weight": self._style.font_weight,
+            "text_color": self._style.text_color,
+            "disabled_text_color": self._style.disabled_text_color,
+            "icon_size": self._style.icon_size,
+            "icon_spacing": self._style.icon_spacing,
+            "icon_color": self._style.icon_color,
             "auto_size": self._auto_size,
             "min_width": self._min_width,
             "max_width": self._max_width,
@@ -641,14 +786,14 @@ class Label:
         """
         style_data = data.get("style", {})
         style = LabelStyle(
-            font_family=style_data.get("font_family", "default"),
-            font_size=style_data.get("font_size", 14.0),
-            font_weight=style_data.get("font_weight", "normal"),
-            text_color=style_data.get("text_color", "#000000"),
-            disabled_text_color=style_data.get("disabled_text_color", "#888888"),
-            icon_size=style_data.get("icon_size", 16.0),
-            icon_spacing=style_data.get("icon_spacing", 4.0),
-            icon_color=style_data.get("icon_color"),
+            font_family=data.get("font_family", style_data.get("font_family", "default")),
+            font_size=data.get("font_size", style_data.get("font_size", 14.0)),
+            font_weight=data.get("font_weight", style_data.get("font_weight", "normal")),
+            text_color=data.get("text_color", style_data.get("text_color", "#000000")),
+            disabled_text_color=data.get("disabled_text_color", style_data.get("disabled_text_color", "#888888")),
+            icon_size=data.get("icon_size", style_data.get("icon_size", 16.0)),
+            icon_spacing=data.get("icon_spacing", style_data.get("icon_spacing", 4.0)),
+            icon_color=data.get("icon_color", style_data.get("icon_color")),
         )
 
         return cls(

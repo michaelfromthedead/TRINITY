@@ -7,8 +7,10 @@ Handles equippable items, equipment slots, stat bonuses, and visual attachments.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Type
 from uuid import UUID, uuid4
+
+from foundation import register_type
 
 from .constants import (
     AttributeType,
@@ -22,7 +24,28 @@ from .constants import (
     ResistanceType,
     UPGRADE_BONUS_PER_LEVEL,
 )
-from .inventory import ItemDefinition, ItemInstance
+from .inventory import ItemDefinition, ItemInstance, ECONOMY_SCHEMA_VERSION
+
+
+# =============================================================================
+# Serialization Decorator
+# =============================================================================
+
+
+def serializable(
+    name: Optional[str] = None,
+    version: int = ECONOMY_SCHEMA_VERSION,
+    exclude_fields: Optional[Set[str]] = None,
+) -> Callable[[Type], Type]:
+    """Decorator to mark a class as serializable."""
+    def decorator(cls: Type) -> Type:
+        type_name = name or f"{cls.__module__}.{cls.__name__}"
+        register_type(cls, type_name)
+        cls._serializable = True
+        cls._serializable_version = version
+        cls._serializable_exclude = exclude_fields or set()
+        return cls
+    return decorator
 
 
 # =============================================================================
@@ -30,6 +53,7 @@ from .inventory import ItemDefinition, ItemInstance
 # =============================================================================
 
 
+@serializable(version=1)
 @dataclass(frozen=True)
 class StatModifier:
     """A modifier to a stat value."""
@@ -73,6 +97,7 @@ class StatModifier:
         )
 
 
+@serializable(version=1)
 @dataclass(frozen=True)
 class ResistanceModifier:
     """A modifier to a resistance value."""
@@ -118,6 +143,7 @@ class ResistanceModifier:
 # =============================================================================
 
 
+@serializable(version=1)
 @dataclass(frozen=True)
 class SpecialEffect:
     """A special effect that equipment can provide."""
@@ -135,7 +161,7 @@ class SpecialEffect:
             "effect_id": self.effect_id,
             "name": self.name,
             "description": self.description,
-            "parameters": dict(self.parameters),
+            "parameters": self.parameters,
         }
 
     @classmethod
@@ -145,7 +171,7 @@ class SpecialEffect:
             effect_id=data["effect_id"],
             name=data["name"],
             description=data.get("description", ""),
-            parameters=dict(data.get("parameters", {})),
+            parameters=data.get("parameters", {}),
         )
 
 
@@ -154,6 +180,7 @@ class SpecialEffect:
 # =============================================================================
 
 
+@serializable(version=1)
 @dataclass
 class EquipmentStats:
     """Stats provided by a piece of equipment."""
@@ -238,10 +265,10 @@ class EquipmentStats:
 # =============================================================================
 
 
+@serializable(version=1)
 @dataclass
 class EquipmentDefinition(ItemDefinition):
     """Extended item definition for equipment."""
-    item_type: ItemType = ItemType.EQUIPMENT  # Override parent field with default
     slot: EquipmentSlot = EquipmentSlot.MAIN_HAND
     stats: EquipmentStats = field(default_factory=EquipmentStats)
     required_attributes: Dict[AttributeType, int] = field(default_factory=dict)
@@ -252,17 +279,19 @@ class EquipmentDefinition(ItemDefinition):
 
     def __post_init__(self) -> None:
         """Validate and set item type to equipment."""
-        self.item_type = ItemType.EQUIPMENT  # Always force equipment type
+        self.item_type = ItemType.EQUIPMENT
         self.max_stack = 1  # Equipment never stacks
         super().__post_init__()
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize to dictionary."""
+        """Serialize equipment definition to dictionary."""
         base = super().to_dict()
         base.update({
             "slot": self.slot.name,
             "stats": self.stats.to_dict(),
-            "required_attributes": {k.name: v for k, v in self.required_attributes.items()},
+            "required_attributes": {
+                attr.name: val for attr, val in self.required_attributes.items()
+            },
             "visual_model": self.visual_model,
             "attachment_point": self.attachment_point,
             "socket_count": self.socket_count,
@@ -272,11 +301,7 @@ class EquipmentDefinition(ItemDefinition):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "EquipmentDefinition":
-        """Deserialize from dictionary."""
-        required_attrs = {}
-        for k, v in data.get("required_attributes", {}).items():
-            required_attrs[AttributeType[k]] = v
-
+        """Deserialize equipment definition from dictionary."""
         return cls(
             id=data["id"],
             name=data["name"],
@@ -290,10 +315,12 @@ class EquipmentDefinition(ItemDefinition):
             icon=data.get("icon", ""),
             model=data.get("model", ""),
             flags=frozenset(data.get("flags", [])),
-            metadata=dict(data.get("metadata", {})),
+            metadata=data.get("metadata", {}),
             slot=EquipmentSlot[data.get("slot", "MAIN_HAND")],
             stats=EquipmentStats.from_dict(data.get("stats", {})),
-            required_attributes=required_attrs,
+            required_attributes={
+                AttributeType[k]: v for k, v in data.get("required_attributes", {}).items()
+            },
             visual_model=data.get("visual_model", ""),
             attachment_point=data.get("attachment_point", ""),
             socket_count=data.get("socket_count", 0),
@@ -301,6 +328,7 @@ class EquipmentDefinition(ItemDefinition):
         )
 
 
+@serializable(version=1)
 @dataclass
 class EquipmentInstance(ItemInstance):
     """Instance of an equipped item with dynamic stats."""
@@ -334,38 +362,32 @@ class EquipmentInstance(ItemInstance):
             special_effects=base.special_effects,
         )
 
-    def to_dict(self, embed_definition: bool = True) -> Dict[str, Any]:
-        """
-        Serialize to dictionary.
-
-        Args:
-            embed_definition: If True (default), embed full definition
-        """
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize equipment instance to dictionary."""
         base = super().to_dict()
         base.update({
-            "enchantments": list(self.enchantments),
-            "socketed_gems": list(self.socketed_gems),
+            "enchantments": self.enchantments,
+            "socketed_gems": self.socketed_gems,
             "upgrade_level": self.upgrade_level,
         })
-        if embed_definition:
-            base["definition"] = self.definition.to_dict()
         return base
 
     @classmethod
     def from_dict(
         cls,
         data: Dict[str, Any],
-        definition: Optional[EquipmentDefinition] = None,
-        registry: Optional["EquipmentRegistry"] = None,
+        definition_registry: Optional[Dict[str, "EquipmentDefinition"]] = None,
     ) -> "EquipmentInstance":
-        """Deserialize from dictionary."""
-        if definition is None:
-            if "definition" in data:
-                definition = EquipmentDefinition.from_dict(data["definition"])
-            elif registry is not None:
-                definition = registry.get_equipment(data["definition_id"])
+        """Deserialize equipment instance from dictionary."""
+        # Get definition
+        if definition_registry and "definition_id" in data:
+            definition = definition_registry.get(data["definition_id"])
             if definition is None:
-                raise ValueError("Either definition or registry must be provided")
+                raise KeyError(f"Unknown equipment definition: {data['definition_id']}")
+        elif "definition" in data:
+            definition = EquipmentDefinition.from_dict(data["definition"])
+        else:
+            raise ValueError("Equipment instance data must contain 'definition' or 'definition_id'")
 
         return cls(
             definition=definition,
@@ -373,9 +395,9 @@ class EquipmentInstance(ItemInstance):
             instance_id=UUID(data["instance_id"]) if "instance_id" in data else uuid4(),
             bound_to=data.get("bound_to"),
             durability=data.get("durability"),
-            custom_data=dict(data.get("custom_data", {})),
-            enchantments=list(data.get("enchantments", [])),
-            socketed_gems=list(data.get("socketed_gems", [])),
+            custom_data=data.get("custom_data", {}),
+            enchantments=data.get("enchantments", []),
+            socketed_gems=data.get("socketed_gems", []),
             upgrade_level=data.get("upgrade_level", 0),
         )
 
@@ -385,6 +407,7 @@ class EquipmentInstance(ItemInstance):
 # =============================================================================
 
 
+@serializable(version=1)
 @dataclass
 class SetBonus:
     """Bonus granted for wearing multiple pieces of a set."""
@@ -410,6 +433,7 @@ class SetBonus:
         )
 
 
+@serializable(version=1)
 @dataclass
 class EquipmentSet:
     """A set of equipment that provides bonuses when worn together."""
@@ -451,6 +475,7 @@ class EquipmentSet:
 EquipChangeCallback = Callable[[EquipmentSlot, Optional[EquipmentInstance], Optional[EquipmentInstance]], None]
 
 
+@serializable(version=1, exclude_fields={"_change_listeners", "_stats_dirty", "_combined_stats"})
 class EquipmentContainer:
     """
     Container for equipped items.
@@ -900,28 +925,33 @@ class EquipmentContainer:
     # -------------------------------------------------------------------------
 
     def to_dict(self, embed_definitions: bool = False) -> Dict[str, Any]:
-        """
-        Serialize to dictionary.
+        """Serialize to dictionary.
 
         Args:
-            embed_definitions: If True, embed full item definitions in output
+            embed_definitions: If True, embed full equipment definitions.
+
+        Returns:
+            Dictionary representation.
         """
         return {
+            "__version__": ECONOMY_SCHEMA_VERSION,
             "id": str(self._id),
             "owner_id": self._owner_id,
+            "allowed_slots": [s.name for s in self._allowed_slots],
             "equipped": {
-                slot.name: self._item_to_dict(item, embed_definitions) if item else None
+                slot.name: (item.to_dict() if embed_definitions else self._item_to_dict(item))
+                if item else None
                 for slot, item in self._equipped.items()
+            },
+            "set_registry": {
+                set_id: eq_set.to_dict()
+                for set_id, eq_set in self._set_registry.items()
             },
         }
 
-    def _item_to_dict(
-        self,
-        item: EquipmentInstance,
-        embed_definition: bool = False,
-    ) -> Dict[str, Any]:
-        """Serialize equipment instance."""
-        data = {
+    def _item_to_dict(self, item: EquipmentInstance) -> Dict[str, Any]:
+        """Serialize equipment instance (reference mode)."""
+        return {
             "instance_id": str(item.instance_id),
             "definition_id": item.definition.id,
             "durability": item.durability,
@@ -930,54 +960,69 @@ class EquipmentContainer:
             "upgrade_level": item.upgrade_level,
             "custom_data": item.custom_data,
         }
-        if embed_definition:
-            data["definition"] = item.definition.to_dict()
-        return data
 
     @classmethod
     def from_dict(
         cls,
         data: Dict[str, Any],
-        registry: Optional[Any] = None,
+        definition_registry: Optional[Dict[str, "EquipmentDefinition"]] = None,
     ) -> "EquipmentContainer":
-        """
-        Deserialize from dictionary.
+        """Deserialize from dictionary.
 
         Args:
-            data: Serialized data
-            registry: Optional registry or dict for looking up equipment definitions.
-                     Can be EquipmentRegistry or Dict[str, EquipmentDefinition].
+            data: Dictionary representation.
+            definition_registry: Registry of equipment definitions for lookup.
+
+        Returns:
+            EquipmentContainer instance.
         """
-        from uuid import UUID
+        allowed_slots = None
+        if "allowed_slots" in data:
+            allowed_slots = {EquipmentSlot[s] for s in data["allowed_slots"]}
 
         container = cls(
-            owner_id=data.get("owner_id", ""),
+            owner_id=data["owner_id"],
+            allowed_slots=allowed_slots,
             container_id=UUID(data["id"]) if "id" in data else None,
         )
 
+        # Restore equipped items
         for slot_name, item_data in data.get("equipped", {}).items():
             if item_data is None:
                 continue
+
             slot = EquipmentSlot[slot_name]
 
-            # Get definition
-            definition = None
+            # Check if full instance or reference
             if "definition" in item_data:
-                definition = EquipmentDefinition.from_dict(item_data["definition"])
-            elif registry:
-                def_id = item_data.get("definition_id")
-                if isinstance(registry, dict):
-                    definition = registry.get(def_id)
-                elif hasattr(registry, "get_equipment"):
-                    definition = registry.get_equipment(def_id)
+                item = EquipmentInstance.from_dict(item_data)
+            elif "definition_id" in item_data and definition_registry:
+                definition = definition_registry.get(item_data["definition_id"])
+                if definition:
+                    item = EquipmentInstance(
+                        definition=definition,
+                        quantity=item_data.get("quantity", 1),
+                        instance_id=UUID(item_data["instance_id"]) if "instance_id" in item_data else uuid4(),
+                        durability=item_data.get("durability"),
+                        custom_data=item_data.get("custom_data", {}),
+                        enchantments=item_data.get("enchantments", []),
+                        socketed_gems=item_data.get("socketed_gems", []),
+                        upgrade_level=item_data.get("upgrade_level", 0),
+                    )
+                    container._equipped[slot] = item
+                continue
+            else:
+                continue
 
-            if definition is None:
-                continue  # Can't restore without definition
-
-            item = EquipmentInstance.from_dict(item_data, definition=definition)
             container._equipped[slot] = item
 
+        # Restore set registry
+        for set_id, set_data in data.get("set_registry", {}).items():
+            container._set_registry[set_id] = EquipmentSet.from_dict(set_data)
+
+        # Mark stats as dirty to trigger recalculation
         container._stats_dirty = True
+
         return container
 
 

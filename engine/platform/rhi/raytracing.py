@@ -3,10 +3,55 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Flag, auto
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 import threading
 
 from ..constants import GPU_ADDRESS_START, ACCELERATION_STRUCTURE_ALIGNMENT
+
+
+# =============================================================================
+# Handle Types
+# =============================================================================
+
+@dataclass(frozen=True)
+class BLASHandle:
+    """Handle to a bottom-level acceleration structure."""
+    handle_id: int
+
+    def __hash__(self) -> int:
+        return hash(self.handle_id)
+
+
+@dataclass(frozen=True)
+class TLASHandle:
+    """Handle to a top-level acceleration structure."""
+    handle_id: int
+
+    def __hash__(self) -> int:
+        return hash(self.handle_id)
+
+
+# =============================================================================
+# Instance Descriptor
+# =============================================================================
+
+@dataclass
+class TLASInstance:
+    """Instance descriptor for TLAS building.
+
+    Describes a single instance referencing a BLAS with its transform.
+    """
+    blas_handle: BLASHandle
+    transform: List[float]  # 4x3 row-major (12 floats)
+    instance_id: int = 0
+    mask: int = 0xFF
+    flags: int = 0
+
+    def __post_init__(self) -> None:
+        if len(self.transform) != 12:
+            raise ValueError(
+                f"Transform must have 12 floats (4x3 row-major), got {len(self.transform)}"
+            )
 
 
 class BuildFlags(Flag):
@@ -98,222 +143,339 @@ class NullAccelerationStructure(AccelerationStructure):
         return self._valid
 
 
-@dataclass(frozen=True)
-class BLASHandle:
-    """Handle to a bottom-level acceleration structure."""
-    handle_id: int
-
-
-@dataclass(frozen=True)
-class TLASHandle:
-    """Handle to a top-level acceleration structure."""
-    handle_id: int
-
-
-@dataclass
-class TLASInstance:
-    """Instance in a top-level acceleration structure."""
-    blas_handle: BLASHandle
-    transform: List[float] = field(default_factory=lambda: [
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0
-    ])  # 3x4 row-major transform matrix
-    instance_id: int = 0
-    mask: int = 0xFF
-    sbt_offset: int = 0
-    flags: int = 0
-
-    def __post_init__(self):
-        """Validate transform after initialization."""
-        if len(self.transform) != 12:
-            raise ValueError(
-                f"Transform must have exactly 12 floats (3x4 matrix), got {len(self.transform)}"
-            )
-
+# =============================================================================
+# Manager Classes
+# =============================================================================
 
 class BLASManager:
-    """Manages bottom-level acceleration structures."""
+    """Manager for bottom-level acceleration structures.
 
-    def __init__(self, device: 'Device'):
+    Provides methods to build, refit, and compact BLAS instances.
+    Thread-safe handle allocation.
+    """
+
+    _next_handle_id: int = 1
+    _lock: threading.Lock = threading.Lock()
+
+    def __init__(self, device: 'Device') -> None:
+        """Initialize BLAS manager.
+
+        Args:
+            device: The RHI device to use for BLAS creation.
+        """
         self._device = device
         self._structures: Dict[int, AccelerationStructure] = {}
-        self._descs: Dict[int, BLASDesc] = {}
-        self._next_id = 1  # Start at 1 so handle_id > 0
-        self._lock = threading.Lock()
+
+    def _allocate_handle(self) -> BLASHandle:
+        """Allocate a unique handle ID (thread-safe)."""
+        with BLASManager._lock:
+            handle_id = BLASManager._next_handle_id
+            BLASManager._next_handle_id += 1
+        return BLASHandle(handle_id=handle_id)
 
     def build_static(self, desc: BLASDesc) -> BLASHandle:
-        """Build a static BLAS (no updates allowed)."""
-        with self._lock:
-            handle_id = self._next_id
-            self._next_id += 1
-            # For static, don't set ALLOW_UPDATE
-            build_desc = BLASDesc(
-                vertex_buffer=desc.vertex_buffer,
-                vertex_count=desc.vertex_count,
-                vertex_stride=desc.vertex_stride,
-                index_buffer=desc.index_buffer,
-                index_count=desc.index_count,
-                build_flags=desc.build_flags & ~BuildFlags.ALLOW_UPDATE,
-            )
-            structure = NullAccelerationStructure.create_blas(self._device, build_desc)
-            self._structures[handle_id] = structure
-            self._descs[handle_id] = build_desc
-            return BLASHandle(handle_id=handle_id)
+        """Build a static BLAS optimized for fast tracing.
+
+        Static BLAS cannot be updated after creation. Use for geometry
+        that never changes (terrain, buildings, etc.).
+
+        Args:
+            desc: BLAS descriptor with geometry data.
+
+        Returns:
+            Handle to the created BLAS.
+        """
+        handle = self._allocate_handle()
+        # Stub: In real implementation, would call into Rust backend
+        structure = NullAccelerationStructure.create_blas(self._device, desc)
+        self._structures[handle.handle_id] = structure
+        return handle
 
     def build_dynamic(self, desc: BLASDesc) -> BLASHandle:
-        """Build a dynamic BLAS (supports updates)."""
-        with self._lock:
-            handle_id = self._next_id
-            self._next_id += 1
-            # For dynamic, set ALLOW_UPDATE
-            build_desc = BLASDesc(
-                vertex_buffer=desc.vertex_buffer,
-                vertex_count=desc.vertex_count,
-                vertex_stride=desc.vertex_stride,
-                index_buffer=desc.index_buffer,
-                index_count=desc.index_count,
-                build_flags=desc.build_flags | BuildFlags.ALLOW_UPDATE,
-            )
-            structure = NullAccelerationStructure.create_blas(self._device, build_desc)
-            self._structures[handle_id] = structure
-            self._descs[handle_id] = build_desc
-            return BLASHandle(handle_id=handle_id)
+        """Build a dynamic BLAS that can be updated.
+
+        Dynamic BLAS has ALLOW_UPDATE flag set, allowing refit operations.
+        Use for deformable geometry (skinned meshes, cloth, etc.).
+
+        Args:
+            desc: BLAS descriptor with geometry data.
+
+        Returns:
+            Handle to the created BLAS.
+        """
+        # Ensure ALLOW_UPDATE flag is set
+        dynamic_desc = BLASDesc(
+            vertex_buffer=desc.vertex_buffer,
+            vertex_count=desc.vertex_count,
+            vertex_stride=desc.vertex_stride,
+            index_buffer=desc.index_buffer,
+            index_count=desc.index_count,
+            build_flags=desc.build_flags | BuildFlags.ALLOW_UPDATE
+        )
+        handle = self._allocate_handle()
+        structure = NullAccelerationStructure.create_blas(self._device, dynamic_desc)
+        self._structures[handle.handle_id] = structure
+        return handle
 
     def refit(self, handle: BLASHandle, vertex_buffer: 'Buffer') -> None:
-        """Refit a dynamic BLAS with updated vertex data."""
-        with self._lock:
-            if handle.handle_id not in self._structures:
-                raise KeyError(f"Invalid BLAS handle: {handle.handle_id}")
-            # In a real impl, would refit using new vertex buffer
-            # For null impl, just verify it exists
+        """Refit an existing BLAS with updated vertex data.
+
+        Only valid for BLAS built with ALLOW_UPDATE flag.
+        Faster than full rebuild but may reduce trace performance.
+
+        Args:
+            handle: Handle to the BLAS to refit.
+            vertex_buffer: New vertex buffer with updated positions.
+
+        Raises:
+            KeyError: If handle is not valid.
+        """
+        if handle.handle_id not in self._structures:
+            raise KeyError(f"Invalid BLAS handle: {handle.handle_id}")
+        # Stub: In real implementation, would update the structure
+        # The vertex buffer reference is stored for the refit operation
+        _ = vertex_buffer
 
     def compact(self, handle: BLASHandle) -> BLASHandle:
-        """Compact a BLAS to reduce memory."""
-        with self._lock:
-            if handle.handle_id not in self._structures:
-                raise KeyError(f"Invalid BLAS handle: {handle.handle_id}")
-            # Create compacted copy
-            new_handle_id = self._next_id
-            self._next_id += 1
-            old_desc = self._descs[handle.handle_id]
-            structure = NullAccelerationStructure.create_blas(self._device, old_desc)
-            self._structures[new_handle_id] = structure
-            self._descs[new_handle_id] = old_desc
-            return BLASHandle(handle_id=new_handle_id)
+        """Compact a BLAS to reduce memory usage.
 
-    def release(self, handle: BLASHandle) -> None:
-        """Release a BLAS handle."""
-        with self._lock:
-            if handle.handle_id in self._structures:
-                del self._structures[handle.handle_id]
-            if handle.handle_id in self._descs:
-                del self._descs[handle.handle_id]
+        Compaction creates a new, smaller BLAS. The original handle
+        remains valid until explicitly released.
+
+        Args:
+            handle: Handle to the BLAS to compact.
+
+        Returns:
+            Handle to the compacted BLAS (may be same as input).
+
+        Raises:
+            KeyError: If handle is not valid.
+        """
+        if handle.handle_id not in self._structures:
+            raise KeyError(f"Invalid BLAS handle: {handle.handle_id}")
+        # Stub: In real implementation, would perform compaction
+        # For null impl, just return a new handle pointing to same structure
+        new_handle = self._allocate_handle()
+        self._structures[new_handle.handle_id] = self._structures[handle.handle_id]
+        return new_handle
 
     def get_structure(self, handle: BLASHandle) -> Optional[AccelerationStructure]:
-        """Get acceleration structure by handle."""
-        with self._lock:
-            return self._structures.get(handle.handle_id)
+        """Get the acceleration structure for a handle.
+
+        Args:
+            handle: Handle to look up.
+
+        Returns:
+            The acceleration structure, or None if handle invalid.
+        """
+        return self._structures.get(handle.handle_id)
+
+    def release(self, handle: BLASHandle) -> None:
+        """Release a BLAS handle.
+
+        Args:
+            handle: Handle to release.
+        """
+        self._structures.pop(handle.handle_id, None)
 
 
 class TLASManager:
-    """Manages top-level acceleration structures."""
+    """Manager for top-level acceleration structures.
 
-    def __init__(self, device: 'Device'):
+    Handles per-frame TLAS building from BLAS instances.
+    """
+
+    _next_handle_id: int = 1
+    _lock: threading.Lock = threading.Lock()
+
+    def __init__(self, device: 'Device') -> None:
+        """Initialize TLAS manager.
+
+        Args:
+            device: The RHI device to use for TLAS creation.
+        """
         self._device = device
         self._structures: Dict[int, AccelerationStructure] = {}
-        self._next_id = 1  # Start at 1 so handle_id > 0
-        self._lock = threading.Lock()
+
+    def _allocate_handle(self) -> TLASHandle:
+        """Allocate a unique handle ID (thread-safe)."""
+        with TLASManager._lock:
+            handle_id = TLASManager._next_handle_id
+            TLASManager._next_handle_id += 1
+        return TLASHandle(handle_id=handle_id)
 
     def build_frame(self, instances: List[TLASInstance]) -> TLASHandle:
-        """Build a TLAS from instances for the current frame."""
-        with self._lock:
-            handle_id = self._next_id
-            self._next_id += 1
-            # Create a mock desc for the null implementation
-            # In a real impl, would build from instances
-            structure = NullAccelerationStructure(self._device, instances)
-            self._structures[handle_id] = structure
-            return TLASHandle(handle_id=handle_id)
+        """Build a TLAS for the current frame.
 
-    def release(self, handle: TLASHandle) -> None:
-        """Release a TLAS handle."""
-        with self._lock:
-            if handle.handle_id in self._structures:
-                del self._structures[handle.handle_id]
+        Creates a top-level acceleration structure from a list of
+        BLAS instances with their transforms.
+
+        Args:
+            instances: List of TLAS instances referencing BLAS handles.
+
+        Returns:
+            Handle to the created TLAS.
+        """
+        handle = self._allocate_handle()
+        # Stub: In real implementation, would:
+        # 1. Create instance buffer from instances list
+        # 2. Build TLAS referencing the BLAS handles
+        desc = TLASDesc(
+            instance_count=len(instances),
+            instance_buffer=None,  # Would be real buffer
+            build_flags=BuildFlags.PREFER_FAST_BUILD
+        )
+        structure = NullAccelerationStructure.create_tlas(self._device, desc)
+        self._structures[handle.handle_id] = structure
+        return handle
 
     def get_structure(self, handle: TLASHandle) -> Optional[AccelerationStructure]:
-        """Get acceleration structure by handle."""
-        with self._lock:
-            return self._structures.get(handle.handle_id)
+        """Get the acceleration structure for a handle.
+
+        Args:
+            handle: Handle to look up.
+
+        Returns:
+            The acceleration structure, or None if handle invalid.
+        """
+        return self._structures.get(handle.handle_id)
+
+    def release(self, handle: TLASHandle) -> None:
+        """Release a TLAS handle.
+
+        Args:
+            handle: Handle to release.
+        """
+        self._structures.pop(handle.handle_id, None)
 
 
 class BLASPool:
-    """Pool for BLAS structures with reference counting by mesh name."""
+    """Reference-counted pool for shared BLAS instances.
 
-    def __init__(self, manager: BLASManager):
-        self._manager = manager
-        self._entries: Dict[str, BLASHandle] = {}
+    Manages BLAS sharing across multiple users of the same mesh asset.
+    Uses reference counting to track when BLAS can be safely released.
+    """
+
+    def __init__(self, blas_manager: BLASManager) -> None:
+        """Initialize the BLAS pool.
+
+        Args:
+            blas_manager: The BLAS manager to use for building structures.
+        """
+        self._blas_manager = blas_manager
+        self._pool: Dict[str, BLASHandle] = {}
         self._ref_counts: Dict[str, int] = {}
-        self._handle_to_name: Dict[int, str] = {}
         self._lock = threading.Lock()
 
-    def register(self, mesh_name: str, handle: BLASHandle) -> None:
-        """Register a BLAS handle with a mesh name."""
-        with self._lock:
-            if mesh_name in self._entries:
-                raise ValueError(f"Mesh '{mesh_name}' already registered")
-            self._entries[mesh_name] = handle
-            self._ref_counts[mesh_name] = 1
-            self._handle_to_name[handle.handle_id] = mesh_name
+    def acquire(self, mesh_asset_id: str) -> Optional[BLASHandle]:
+        """Acquire a BLAS handle for a mesh asset.
 
-    def acquire(self, mesh_name: str) -> Optional[BLASHandle]:
-        """Acquire a BLAS handle by mesh name, incrementing reference count."""
+        If the mesh asset already has a BLAS, increments reference count.
+        If not, returns None (caller should build and register).
+
+        Args:
+            mesh_asset_id: Unique identifier for the mesh asset.
+
+        Returns:
+            Handle to the BLAS if exists, None otherwise.
+        """
         with self._lock:
-            if mesh_name not in self._entries:
-                return None
-            self._ref_counts[mesh_name] += 1
-            return self._entries[mesh_name]
+            if mesh_asset_id in self._pool:
+                self._ref_counts[mesh_asset_id] += 1
+                return self._pool[mesh_asset_id]
+            return None
+
+    def register(self, mesh_asset_id: str, handle: BLASHandle) -> None:
+        """Register a newly built BLAS with the pool.
+
+        Args:
+            mesh_asset_id: Unique identifier for the mesh asset.
+            handle: Handle to the BLAS to register.
+
+        Raises:
+            ValueError: If mesh_asset_id already registered.
+        """
+        with self._lock:
+            if mesh_asset_id in self._pool:
+                raise ValueError(f"Mesh asset already registered: {mesh_asset_id}")
+            self._pool[mesh_asset_id] = handle
+            self._ref_counts[mesh_asset_id] = 1
 
     def release(self, handle: BLASHandle) -> bool:
-        """
-        Release a BLAS handle, decrementing reference count.
+        """Release a reference to a BLAS handle.
 
-        Returns True if the entry was removed (ref count hit 0).
+        Decrements reference count. When count reaches zero, the BLAS
+        is removed from the pool and should be destroyed.
+
+        Args:
+            handle: Handle to release.
+
+        Returns:
+            True if BLAS was removed from pool (ref count hit zero),
+            False if still referenced.
         """
         with self._lock:
-            mesh_name = self._handle_to_name.get(handle.handle_id)
-            if mesh_name is None:
+            # Find the mesh_asset_id for this handle
+            mesh_asset_id = None
+            for asset_id, pooled_handle in self._pool.items():
+                if pooled_handle.handle_id == handle.handle_id:
+                    mesh_asset_id = asset_id
+                    break
+
+            if mesh_asset_id is None:
                 return False
-            self._ref_counts[mesh_name] -= 1
-            if self._ref_counts[mesh_name] <= 0:
-                del self._entries[mesh_name]
-                del self._ref_counts[mesh_name]
-                del self._handle_to_name[handle.handle_id]
+
+            self._ref_counts[mesh_asset_id] -= 1
+            if self._ref_counts[mesh_asset_id] <= 0:
+                del self._pool[mesh_asset_id]
+                del self._ref_counts[mesh_asset_id]
+                self._blas_manager.release(handle)
                 return True
             return False
 
-    def contains(self, mesh_name: str) -> bool:
-        """Check if mesh is registered in pool."""
-        with self._lock:
-            return mesh_name in self._entries
+    def get_ref_count(self, mesh_asset_id: str) -> int:
+        """Get the reference count for a mesh asset.
 
-    def size(self) -> int:
-        """Get number of registered meshes."""
+        Args:
+            mesh_asset_id: Unique identifier for the mesh asset.
+
+        Returns:
+            Reference count, or 0 if not in pool.
+        """
         with self._lock:
-            return len(self._entries)
+            return self._ref_counts.get(mesh_asset_id, 0)
+
+    def contains(self, mesh_asset_id: str) -> bool:
+        """Check if a mesh asset is in the pool.
+
+        Args:
+            mesh_asset_id: Unique identifier for the mesh asset.
+
+        Returns:
+            True if mesh asset is pooled.
+        """
+        with self._lock:
+            return mesh_asset_id in self._pool
 
     def clear(self) -> None:
-        """Clear all entries from pool."""
-        with self._lock:
-            self._entries.clear()
-            self._ref_counts.clear()
-            self._handle_to_name.clear()
+        """Clear all entries from the pool.
 
-    def get_ref_count(self, mesh_name: str) -> int:
-        """Get reference count for a mesh."""
+        Releases all BLAS handles. Use with caution.
+        """
         with self._lock:
-            return self._ref_counts.get(mesh_name, 0)
+            for handle in self._pool.values():
+                self._blas_manager.release(handle)
+            self._pool.clear()
+            self._ref_counts.clear()
+
+    def size(self) -> int:
+        """Get number of entries in the pool.
+
+        Returns:
+            Number of pooled BLAS handles.
+        """
+        with self._lock:
+            return len(self._pool)
 
 
 # Forward declarations

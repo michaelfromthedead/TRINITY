@@ -3,15 +3,28 @@ Quest Tracker Module.
 
 Provides QuestTracker for tracking quest progress, handling events,
 and managing quest state transitions.
+
+Foundation Integration (T-GP-9.5):
+- Fires QuestRewardGranted events when rewards are claimed
+- Implements causal chains: objective complete -> quest complete -> rewards
+- All events are logged via Foundation EventLog
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
 from .objectives import Objective, ObjectiveState
-from .quest import Quest, QuestDefinition, QuestRegistry, QuestState
+from .quest import (
+    Quest,
+    QuestDefinition,
+    QuestRegistry,
+    QuestState,
+    QuestRewardGranted,
+    fire_quest_event,
+)
 
 if TYPE_CHECKING:
     from .quest_rewards import Reward
@@ -251,7 +264,7 @@ class QuestTracker:
         else:
             quest.state = QuestState.UNAVAILABLE
 
-        # Set quest_id on objectives for event firing
+        # Set quest_id on all objectives for Foundation event firing
         obj_list = objectives or []
         for obj in obj_list:
             obj.quest_id = quest_def.id
@@ -357,14 +370,14 @@ class QuestTracker:
         """
         Turn in a quest and claim rewards.
 
+        Fires QuestRewardGranted events for each reward (Foundation integration).
+
         Args:
             quest_id: The quest to turn in
 
         Returns:
             List of rewards claimed
         """
-        from .quest import QuestRewardGranted, fire_quest_event
-
         tracked = self._tracked.get(quest_id)
         if tracked is None:
             return []
@@ -376,18 +389,6 @@ class QuestTracker:
 
         rewards = tracked.quest.definition.rewards
 
-        # Fire QuestRewardGranted events for each reward
-        for reward in rewards:
-            reward_type = getattr(reward, "reward_type", "unknown")
-            amount = getattr(reward, "amount", 0)
-            fire_quest_event(QuestRewardGranted(
-                quest_id=quest_id,
-                entity_id=self.player_id,
-                reward_type=reward_type,
-                amount=amount,
-                timestamp=self._current_time,
-            ))
-
         self._emit_event(QuestEvent(
             event_type=QuestEventType.QUEST_TURNED_IN,
             quest_id=quest_id,
@@ -395,6 +396,21 @@ class QuestTracker:
             timestamp=self._current_time,
             rewards=rewards,
         ))
+
+        # Fire QuestRewardGranted events for each reward (Foundation integration)
+        for reward in rewards:
+            # Determine reward type and amount from reward object
+            reward_type = getattr(reward, "reward_type", type(reward).__name__)
+            amount = getattr(reward, "amount", getattr(reward, "value", 1))
+
+            reward_event = QuestRewardGranted(
+                quest_id=quest_id,
+                entity_id=self.player_id,
+                reward_type=reward_type,
+                amount=amount,
+                timestamp=self._current_time,
+            )
+            fire_quest_event(reward_event)
 
         # Check if this unlocks other quests
         self._check_availability()

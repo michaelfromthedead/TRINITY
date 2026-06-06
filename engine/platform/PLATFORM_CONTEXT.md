@@ -3,6 +3,16 @@
 > **Purpose**: Complete implementation reference for the engine/platform/ layer.  
 > Read this file and ONLY this file when implementing platform systems.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python ABCs | ✅ COMPLETE | RHI abstract interfaces defined |
+| Rust wgpu | ⚠️ 49% | Device/pipeline/resources exist; mapping layer missing |
+| Bridge | ✅ 100% | GAPSET_3 complete — Python↔Rust communication works |
+
+*140K lines Rust exist. Missing: Python ABC → Rust mapping layer (GAPSET_1 Phase 4).*
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## 1. Architecture Summary

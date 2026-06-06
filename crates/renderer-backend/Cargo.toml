@@ -9,34 +9,95 @@ name = "renderer_backend"
 path = "src/lib.rs"
 
 [dependencies]
-arc-swap = "1"
-bitflags = "2"
 bytemuck = { version = "1", features = ["derive"] }
-glam = { version = "0.29", features = ["serde"] }
+thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wgpu = "22"
 parking_lot = "0.12"
+ordered-float = "4"
 crossbeam = "0.8"
 sha2 = "0.10"
 pollster = "0.3"
-thiserror = "1.0"
+arc-swap = "1"
+half = "2"
+bitflags = "2"
 log = "0.4"
 static_assertions = "1.1"
-ordered-float = "4"
-naga = { version = "24", features = ["wgsl-in"] }
-image = { version = "0.25", optional = true }
-notify = { version = "6.1", optional = true }
-glob = { version = "0.3", optional = true }
-pyo3 = { version = "0.22", optional = true }
 
-[features]
-default = []
-asset-loading = ["image"]
-hot-reload = ["notify", "glob"]
-pyo3 = ["dep:pyo3"]
-test-helpers = []
+# Linear algebra for camera math (T-TL-2.1)
+glam = { version = "0.29", features = ["serde"] }
+
+# Optional BLAKE3 for faster hashing
+blake3 = { version = "1", optional = true }
+
+# CRC-32C for integrity verification (hardware-accelerated)
+crc32fast = "1.4"
+
+# Compression libraries for streaming decompression (T-AS-5.7)
+lz4_flex = "0.11"
+zstd = "0.13"
+flate2 = "1.0"
+
+# File system watching for hot-reload (T-AS-6.1)
+notify = "6"
+glob = "0.3"
+
+# Image decoding for texture import (stb_image-compatible formats + HDR formats)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tga", "bmp", "hdr", "tiff"] }
+
+# OpenEXR decoding for HDR texture import
+exr = "1.74"
+
+# SQLite for cache metadata
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Naga shader compiler for WGSL compilation pipeline
+naga = { version = "24", features = ["wgsl-in", "spv-out", "msl-out", "wgsl-out"] }
+
+# PyO3 for Python bindings (optional)
+pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
 
 [dev-dependencies]
 naga = { version = "24", features = ["wgsl-in"] }
 regex = "1"
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "content_store"
+harness = false
+
+[[bench]]
+name = "pipeline_cache"
+harness = false
+
+[[bench]]
+name = "material_system"
+harness = false
+
+[features]
+default = []
+pyo3 = ["dep:pyo3"]
+blake3 = ["dep:blake3"]
+# Shader hot-reload for development (T-WGPU-P2.7.7)
+# Enables file system watching and automatic shader recompilation
+hot-reload = []
+# Enable build-time compiled shaders from Python DSL (T-DEMO-5.5)
+# When enabled, build.rs compiles scenes/demo.py to WGSL
+build-compiled-shaders = []
+# Minimal feature set for 64K demoscene builds (T-DEMO-5.6)
+# Excludes optional dependencies and enables aggressive size optimization
+demoscene-minimal = []
+# Enable standalone 4K binary mode (T-DEMO-5.7)
+# Provides standalone_main() entry point for minimal demoscene binary
+standalone-4k = []
+# Test utilities for demoscene size tests
+test-utils = []
+# Test helpers for whitebox/integration tests (T-WGPU-P6.7.4)
+# Enables access to internal warning state functions for testing
+test-helpers = []
+# Raw Vulkan handle access (T-WGPU-P7.2.1)
+# Exposes RawVulkanHandles for interop with external Vulkan libraries
+# WARNING: Unsafe - handles are only valid while wgpu device is alive
+vulkan-raw = []

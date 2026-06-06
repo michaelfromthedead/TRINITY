@@ -1,30 +1,31 @@
 """
 Gameplay Abilities System.
 
-Provides a comprehensive ability system including:
-- Attributes with modifiers and derived values
-- Gameplay tags for categorization and filtering
-- Ability and buff decorators with registry integration
-- Event system for ability casts and buff applications
-- Tracked attributes with change notifications
+Provides systems for ability definitions, effects, attributes, targeting,
+and buff/debuff management with Foundation Registry integration.
+
+Foundation Integration (T-GP-7.11):
+- TrackedDescriptor wiring for ability attributes
+- Automatic dirty flag tracking on attribute changes
+- Change subscriptions via tracker.on_change()
+- Batch updates for atomic changes
 """
 
-from __future__ import annotations
-
-# Stacking mode
-from .decorators import StackingMode
-
-# Events
-from .decorators import AbilityCast, BuffApplied, BuffExpired
-
-# Decorators
-from .decorators import ability, buff
-
-# Event emitters
-from .decorators import emit_ability_cast, emit_buff_applied, emit_buff_expired
-
-# Query helpers
-from .decorators import (
+from engine.gameplay.abilities.decorators import (
+    # Stacking mode
+    StackingMode,
+    # Events
+    AbilityCast,
+    BuffApplied,
+    BuffExpired,
+    # Decorators
+    ability,
+    buff,
+    # Event emitters
+    emit_ability_cast,
+    emit_buff_applied,
+    emit_buff_expired,
+    # Query helpers
     get_all_abilities,
     get_abilities_by_tag,
     get_all_buffs,
@@ -34,36 +35,37 @@ from .decorators import (
     get_buff_metadata,
 )
 
-# Tags
-from .tags import (
+from engine.gameplay.abilities.tags import (
     GameplayTag,
     GameplayTagContainer,
     GameplayTagQuery,
     GameplayTagRegistry,
-    ability_with_tags,
     gameplay_tag,
+    ability_with_tags,
 )
 
-# Attributes
-from .attributes import (
+from engine.gameplay.abilities.attributes import (
+    # Core attribute classes
     Attribute,
-    AttributeChangeCallback,
     AttributeModifier,
     AttributeModifierHandle,
     AttributeSet,
-    AttributeTracker,
     DerivedAttribute,
-    TrackedAbilityAttribute,
-    TrackedAttributeDescriptor,
-    TrackedAttributeSet,
-    TrackedCooldownAttribute,
-    TrackedVitalAttribute,
-    attribute_tracker,
     create_standard_attributes,
-    create_tracked_standard_attributes,
+    # Foundation Tracker integration (T-GP-7.11)
+    AttributeTracker,
+    attribute_tracker,
+    TrackedAttributeDescriptor,
     tracked_attribute,
+    AttributeChangeCallback,
+    # Tracked ability attributes
+    TrackedAbilityAttribute,
+    TrackedVitalAttribute,
+    TrackedCooldownAttribute,
+    # Tracked attribute set
+    TrackedAttributeSet,
+    create_tracked_standard_attributes,
 )
-
 
 __all__ = [
     # Stacking mode
@@ -92,23 +94,26 @@ __all__ = [
     "GameplayTagContainer",
     "GameplayTagQuery",
     "GameplayTagRegistry",
-    "ability_with_tags",
     "gameplay_tag",
-    # Attributes
+    "ability_with_tags",
+    # Attributes (T-GP-7.11)
     "Attribute",
-    "AttributeChangeCallback",
     "AttributeModifier",
     "AttributeModifierHandle",
     "AttributeSet",
-    "AttributeTracker",
     "DerivedAttribute",
-    "TrackedAbilityAttribute",
-    "TrackedAttributeDescriptor",
-    "TrackedAttributeSet",
-    "TrackedCooldownAttribute",
-    "TrackedVitalAttribute",
-    "attribute_tracker",
     "create_standard_attributes",
-    "create_tracked_standard_attributes",
+    # Foundation Tracker integration (T-GP-7.11)
+    "AttributeTracker",
+    "attribute_tracker",
+    "TrackedAttributeDescriptor",
     "tracked_attribute",
+    "AttributeChangeCallback",
+    # Tracked ability attributes
+    "TrackedAbilityAttribute",
+    "TrackedVitalAttribute",
+    "TrackedCooldownAttribute",
+    # Tracked attribute set
+    "TrackedAttributeSet",
+    "create_tracked_standard_attributes",
 ]

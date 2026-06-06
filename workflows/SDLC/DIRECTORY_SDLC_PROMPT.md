@@ -21,7 +21,7 @@ Replace `<DIRECTORY_NAME>` with the target directory from FOLDER_TODO_TRACKER.js
 Before ANY work, read these files IN FULL:
 
 ### Project Context
-1. **docs/TRINITY_LATEST.md** — Full project knowledge
+1. **docs/specs/TRINITY_LATEST.md** — Full project knowledge
 2. **CLAUDE.md** — Development rules and Python 3.13 requirement
 
 ### Directory-Specific RDC Outputs

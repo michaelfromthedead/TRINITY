@@ -49,6 +49,7 @@ def basic_sword_def():
     return EquipmentDefinition(
         id="sword_iron",
         name="Iron Sword",
+        item_type=ItemType.EQUIPMENT,
         slot=EquipmentSlot.MAIN_HAND,
         stats=EquipmentStats(damage=10.0),
         rarity=Rarity.COMMON,
@@ -62,6 +63,7 @@ def basic_shield_def():
     return EquipmentDefinition(
         id="shield_iron",
         name="Iron Shield",
+        item_type=ItemType.EQUIPMENT,
         slot=EquipmentSlot.OFF_HAND,
         stats=EquipmentStats(armor=15.0, block_chance=0.1),
         rarity=Rarity.COMMON,
@@ -75,6 +77,7 @@ def two_handed_sword_def():
     return EquipmentDefinition(
         id="sword_greatsword",
         name="Greatsword",
+        item_type=ItemType.EQUIPMENT,
         slot=EquipmentSlot.TWO_HAND,
         stats=EquipmentStats(damage=25.0),
         rarity=Rarity.UNCOMMON,
@@ -88,6 +91,7 @@ def helmet_def():
     return EquipmentDefinition(
         id="helm_steel",
         name="Steel Helmet",
+        item_type=ItemType.EQUIPMENT,
         slot=EquipmentSlot.HEAD,
         stats=EquipmentStats(
             armor=8.0,
@@ -106,6 +110,7 @@ def ring_def():
     return EquipmentDefinition(
         id="ring_power",
         name="Ring of Power",
+        item_type=ItemType.EQUIPMENT,
         slot=EquipmentSlot.RING_1,
         stats=EquipmentStats(
             attribute_modifiers=(
@@ -426,6 +431,7 @@ class TestEquipmentDefinition:
         eq_def = EquipmentDefinition(
             id="test",
             name="Test",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.HEAD,
             max_stack=99,  # This should be overridden
         )
@@ -440,6 +446,7 @@ class TestEquipmentDefinition:
         eq_def = EquipmentDefinition(
             id="heavy_armor",
             name="Heavy Plate Armor",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             required_attributes={
                 AttributeType.STRENGTH: 20,
@@ -454,6 +461,7 @@ class TestEquipmentDefinition:
         eq_def = EquipmentDefinition(
             id="socket_sword",
             name="Socketed Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             socket_count=3,
         )
@@ -464,6 +472,7 @@ class TestEquipmentDefinition:
         eq_def = EquipmentDefinition(
             id="dragon_helm",
             name="Dragon Helmet",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.HEAD,
             set_id="dragon_set",
         )
@@ -659,6 +668,7 @@ class TestEquipmentContainerEquip:
         sword_def = EquipmentDefinition(
             id="epic_sword",
             name="Epic Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             level_requirement=50,
         )
@@ -689,6 +699,7 @@ class TestEquipmentContainerRequirements:
         sword_def = EquipmentDefinition(
             id="level_sword",
             name="Level Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             level_requirement=20,
         )
@@ -704,6 +715,7 @@ class TestEquipmentContainerRequirements:
         sword_def = EquipmentDefinition(
             id="level_sword",
             name="Level Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             level_requirement=10,
         )
@@ -720,6 +732,7 @@ class TestEquipmentContainerRequirements:
         armor_def = EquipmentDefinition(
             id="heavy_armor",
             name="Heavy Armor",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             required_attributes={AttributeType.STRENGTH: 20},
         )
@@ -738,6 +751,7 @@ class TestEquipmentContainerRequirements:
         armor_def = EquipmentDefinition(
             id="complex_armor",
             name="Complex Armor",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             required_attributes={
                 AttributeType.STRENGTH: 15,
@@ -932,6 +946,7 @@ class TestEquipmentContainerStats:
         armor_def = EquipmentDefinition(
             id="fire_armor",
             name="Fire Armor",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             stats=EquipmentStats(
                 resistance_modifiers=(
@@ -951,6 +966,7 @@ class TestEquipmentContainerStats:
         sword_def = EquipmentDefinition(
             id="lifesteal_sword",
             name="Lifesteal Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             stats=EquipmentStats(
                 special_effects=(
@@ -969,6 +985,7 @@ class TestEquipmentContainerStats:
         sword_def = EquipmentDefinition(
             id="magic_sword",
             name="Magic Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             stats=EquipmentStats(
                 special_effects=(
@@ -1077,6 +1094,7 @@ class TestEquipmentSet:
         helm_def = EquipmentDefinition(
             id="helm_test",
             name="Test Helmet",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.HEAD,
             stats=EquipmentStats(armor=10.0),
             set_id="test_set",
@@ -1084,6 +1102,7 @@ class TestEquipmentSet:
         chest_def = EquipmentDefinition(
             id="chest_test",
             name="Test Chest",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             stats=EquipmentStats(armor=20.0),
             set_id="test_set",
@@ -1111,12 +1130,14 @@ class TestEquipmentSet:
         helm_def = EquipmentDefinition(
             id="warrior_helm",
             name="Warrior Helmet",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.HEAD,
             set_id="warrior_set",
         )
         chest_def = EquipmentDefinition(
             id="warrior_chest",
             name="Warrior Chest",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.CHEST,
             set_id="warrior_set",
         )
@@ -1243,6 +1264,7 @@ class TestEquipmentContainerVisual:
         sword_def = EquipmentDefinition(
             id="visual_sword",
             name="Visual Sword",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.MAIN_HAND,
             visual_model="models/swords/iron.obj",
             attachment_point="right_hand",
@@ -1259,6 +1281,7 @@ class TestEquipmentContainerVisual:
         helm_def = EquipmentDefinition(
             id="visual_helm",
             name="Visual Helm",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.HEAD,
             visual_model="models/helms/steel.obj",
         )
@@ -1449,6 +1472,7 @@ class TestSlotCompatibility:
         trinket_def = EquipmentDefinition(
             id="trinket_power",
             name="Power Trinket",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.TRINKET_1,
         )
         trinket = EquipmentInstance(definition=trinket_def)
@@ -1460,6 +1484,7 @@ class TestSlotCompatibility:
         trinket_def = EquipmentDefinition(
             id="trinket_power",
             name="Power Trinket",
+            item_type=ItemType.EQUIPMENT,
             slot=EquipmentSlot.TRINKET_1,
         )
         trinket = EquipmentInstance(definition=trinket_def)

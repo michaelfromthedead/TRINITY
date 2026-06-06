@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-05T10:12:21.697Z",
+  "timestamp": "2026-06-02T22:27:10.992Z",
   "projectRoot": "/home/user/dev/USER/PROJECTS_VOID/TRINITY",
   "structure": {
     "hasPackageJson": true,
@@ -7,5 +7,5 @@
     "hasClaudeConfig": true,
     "hasClaudeFlow": true
   },
-  "scannedAt": 1780654341697
+  "scannedAt": 1780439230992
 }

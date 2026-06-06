@@ -260,6 +260,64 @@ class BlendShapeSet:
 # =============================================================================
 
 
+def apply_blend_shape(
+    base_vertices: np.ndarray,
+    shape: BlendShape,
+    weight: float = 1.0,
+    clamp_weight: bool = True,
+) -> np.ndarray:
+    """
+    Apply a single blend shape to base vertices.
+
+    This is a convenience function for applying a single blend shape.
+    For multiple shapes, use apply_blend_shapes for better performance.
+
+    Args:
+        base_vertices: Base mesh vertices (N, 3)
+        shape: The blend shape to apply
+        weight: Weight value for the blend shape
+        clamp_weight: If True, clamp weight to [0, 1] range
+
+    Returns:
+        Morphed vertex positions (N, 3)
+
+    Example:
+        >>> shape = BlendShape(
+        ...     name="smile",
+        ...     vertex_indices=np.array([0, 5, 10]),
+        ...     deltas=np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+        ... )
+        >>> base_mesh = np.zeros((20, 3), dtype=np.float32)
+        >>> result = apply_blend_shape(base_mesh, shape, weight=0.5)
+        >>> assert result[0, 0] == 0.5
+        >>> assert result[5, 1] == 0.5
+        >>> assert result[10, 2] == 0.5
+    """
+    # Clamp weight to [0, 1] range if requested
+    if clamp_weight:
+        weight = max(0.0, min(1.0, weight))
+
+    # Early exit for zero weight
+    if weight == 0.0:
+        return base_vertices.copy()
+
+    # Copy base vertices to avoid mutation
+    result = base_vertices.copy()
+
+    # Apply deltas if shape has vertices
+    if shape.vertex_count == 0:
+        return result
+
+    if shape.is_sparse:
+        # Sparse application: only modify affected vertices
+        result[shape.vertex_indices] += shape.deltas * weight
+    else:
+        # Dense application: assumes deltas matches base vertex count
+        result += shape.deltas * weight
+
+    return result
+
+
 def apply_blend_shapes(
     base_vertices: np.ndarray,
     shapes: dict[str, BlendShape],
@@ -794,6 +852,64 @@ def apply_arkit_data(
     return result
 
 
+# Set for O(1) lookup
+_ARKIT_BLEND_SHAPES_SET = frozenset(ARKIT_BLEND_SHAPES)
+
+
+def validate_arkit_data(data: dict[str, float]) -> bool:
+    """
+    Validate that all keys in ARKit data are valid blend shape names.
+
+    Args:
+        data: Dictionary mapping blend shape names to weight values
+
+    Returns:
+        True if all keys are valid ARKit blend shape names, False otherwise
+
+    Example:
+        >>> validate_arkit_data({"eyeBlinkLeft": 0.5, "mouthSmileRight": 0.3})
+        True
+        >>> validate_arkit_data({"invalidShape": 0.5})
+        False
+    """
+    return all(key in _ARKIT_BLEND_SHAPES_SET for key in data.keys())
+
+
+def apply_arkit_data(blend_shape_set: BlendShapeSet, arkit_data: dict[str, float]) -> np.ndarray:
+    """
+    Apply ARKit face capture data to a blend shape set and return morphed vertices.
+
+    Applies the ARKit tracking weights to the blend shape set's base vertices
+    and returns the resulting deformed mesh. Only weights for shapes that exist
+    in the blend shape set are applied. Invalid ARKit shape names are silently ignored.
+
+    Args:
+        blend_shape_set: The BlendShapeSet containing base vertices and shapes
+        arkit_data: Dictionary mapping ARKit blend shape names to weight values (0.0-1.0)
+
+    Returns:
+        Morphed vertex positions (N, 3) as numpy array
+
+    Example:
+        >>> shape_set = create_arkit_compatible_set("face", 1000)
+        >>> arkit_data = {"eyeBlinkLeft": 0.8, "mouthSmileRight": 0.5}
+        >>> morphed_verts = apply_arkit_data(shape_set, arkit_data)
+    """
+    # Filter to valid ARKit weights that exist in the blend shape set
+    valid_weights = {
+        name: max(0.0, min(1.0, weight))
+        for name, weight in arkit_data.items()
+        if name in _ARKIT_BLEND_SHAPES_SET and name in blend_shape_set.blend_shapes
+    }
+
+    # Apply blend shapes with the ARKit weights
+    return apply_blend_shapes(
+        blend_shape_set.base_vertices,
+        blend_shape_set.blend_shapes,
+        valid_weights,
+    )
+
+
 def create_arkit_compatible_set(name: str, vertex_count: int) -> BlendShapeSet:
     """
     Create a blend shape set with ARKit-compatible shape names.
@@ -842,5 +958,124 @@ def remap_blend_shape_weights(
     for source_name, weight in weights.items():
         target_name = mapping.get(source_name, source_name)
         result[target_name] = weight
+
+    return result
+
+
+# =============================================================================
+# Simplified Corrective Shape API (Contract Compatibility)
+# =============================================================================
+
+
+@dataclass
+class CorrectiveShape:
+    """
+    Simplified corrective blend shape with direct threshold-based activation.
+
+    This is a convenience class that provides a simpler API for corrective shapes
+    that activate based on a single trigger weight threshold.
+
+    Attributes:
+        name: Unique name of the corrective shape
+        vertex_indices: Indices of affected vertices (sparse representation)
+        deltas: Position offsets for each affected vertex
+        trigger_threshold: Weight threshold at which corrective activates (default 0.5)
+    """
+    name: str
+    vertex_indices: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int32))
+    deltas: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.float32).reshape(0, 3))
+    trigger_threshold: float = 0.5
+
+    def __post_init__(self) -> None:
+        """Validate and convert data types."""
+        if isinstance(self.vertex_indices, (list, tuple)):
+            self.vertex_indices = np.array(self.vertex_indices, dtype=np.int32)
+        if isinstance(self.deltas, (list, tuple)):
+            self.deltas = np.array(self.deltas, dtype=np.float32)
+
+        # Ensure deltas is 2D (N, 3)
+        if len(self.deltas.shape) == 1 and len(self.deltas) > 0:
+            self.deltas = self.deltas.reshape(-1, 3)
+
+    @property
+    def vertex_count(self) -> int:
+        """Get number of affected vertices."""
+        return len(self.vertex_indices)
+
+    @property
+    def is_sparse(self) -> bool:
+        """Check if this is a sparse representation."""
+        return len(self.vertex_indices) > 0
+
+    def to_blend_shape(self) -> BlendShape:
+        """Convert to a standard BlendShape."""
+        return BlendShape(
+            name=self.name,
+            vertex_indices=self.vertex_indices,
+            deltas=self.deltas,
+        )
+
+    def to_corrective_blend_shape(self, driver_shape: str = "trigger") -> CorrectiveBlendShape:
+        """Convert to a CorrectiveBlendShape for use with BlendShapeSet."""
+        return CorrectiveBlendShape(
+            shape=self.to_blend_shape(),
+            driver_shapes=[driver_shape],
+            driver_weights=[self.trigger_threshold],
+            combination_mode="min",
+        )
+
+
+def apply_corrective_shape(
+    base_vertices: np.ndarray,
+    corrective: CorrectiveShape,
+    trigger_weight: float,
+) -> np.ndarray:
+    """
+    Apply a corrective blend shape based on trigger weight.
+
+    The corrective activates when trigger_weight >= corrective.trigger_threshold.
+    The corrective strength scales linearly from 0 at threshold to full at weight 1.0.
+
+    Args:
+        base_vertices: Base mesh vertices (N, 3)
+        corrective: The corrective shape to apply
+        trigger_weight: Current trigger weight (typically from a driving shape)
+
+    Returns:
+        Morphed vertex positions (N, 3)
+
+    Example:
+        >>> corrective = CorrectiveShape(
+        ...     name="smile_fix",
+        ...     vertex_indices=np.array([5]),
+        ...     deltas=np.array([[0.0, 1.0, 0.0]], dtype=np.float32),
+        ...     trigger_threshold=0.5
+        ... )
+        >>> base_mesh = np.zeros((10, 3), dtype=np.float32)
+        >>> result = apply_corrective_shape(base_mesh, corrective, trigger_weight=0.75)
+        >>> # At 0.75, halfway between threshold (0.5) and max (1.0), we get 0.5 strength
+    """
+    # Copy base vertices to avoid mutation
+    result = base_vertices.copy()
+
+    # Check if trigger weight meets threshold
+    if trigger_weight < corrective.trigger_threshold:
+        return result
+
+    # Corrective activates at threshold with strength = trigger_weight
+    # The threshold acts as a gate: once exceeded, the full trigger_weight
+    # is used as the blend strength (clamped to [0, 1])
+    strength = max(0.0, min(1.0, trigger_weight))
+
+    # Apply deltas if corrective has vertices
+    if corrective.vertex_count == 0:
+        return result
+
+    if corrective.is_sparse:
+        # Sparse application: only modify affected vertices
+        result[corrective.vertex_indices] += corrective.deltas * strength
+    else:
+        # Dense application: assumes deltas matches base vertex count
+        result += corrective.deltas * strength
 
     return result

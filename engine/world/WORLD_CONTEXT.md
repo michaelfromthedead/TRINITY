@@ -2,6 +2,15 @@
 
 Complete context for implementing `engine/world/` using the Trinity Pattern + Foundation runtime.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | World partition, streaming (~20K lines) |
+| Rust | ⚠️ ~50% | Related to GAPSET_12 (Assets) |
+| Wired | ⚠️ Partial | Streaming chunks functional |
+
+*See `docs/STATUS.md` for current progress.*
+
 ---
 
 ## Table of Contents
@@ -1097,7 +1106,7 @@ engine/world/
 
 ## References
 
-- `docs/TRINITY_LATEST.md` - Full Trinity Pattern specification
+- `docs/specs/TRINITY_LATEST.md` - Full Trinity Pattern specification
 - `docs/GAME_ENGINE_INTEGRATION.md` - Trinity <-> Foundation integration
 - `docs/GAME_ENGINE_INTEGRATION_TODO.md` - Section 9 (World Layer)
 - `DIAGRAMS/ARCHITECTURE_WORLD.md` - World layer architecture

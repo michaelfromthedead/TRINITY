@@ -484,8 +484,10 @@ class Screen(ABC):
         self._on_resume_callbacks.clear()
         self._on_state_change_callbacks.clear()
 
-        # Clear params (but preserve result for callers to read after pop)
+        # Clear params only, preserve result for caller to access
         self._params.clear()
+        # Note: _result is NOT cleared here - callers may need to access it
+        # after the screen is destroyed
 
     # =========================================================================
     # LIFECYCLE METHODS (OVERRIDE THESE)

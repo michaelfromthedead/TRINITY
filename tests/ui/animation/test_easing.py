@@ -330,7 +330,7 @@ class TestExpo:
 
     def test_expo_out_very_fast_at_start(self) -> None:
         """expo_out should be very fast at the start."""
-        assert expo_out(0.1) > 0.5
+        assert expo_out(0.1) >= 0.5  # At 10% progress, already at 50% output
 
     def test_expo_in_out_boundaries(self) -> None:
         """expo_in_out should handle boundaries correctly."""

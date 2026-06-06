@@ -113,13 +113,12 @@ from .mix_bus import (
     MixBus,
     BusType,
     BusState,
+    BusStateData,
     BusStatus,
-    FilterState as _FilterStateDataclass,
-    FilterStateEnum,
+    FilterState,
+    FilterParams,
     create_default_hierarchy,
 )
-# Re-export FilterStateEnum as FilterState for test compatibility
-FilterState = FilterStateEnum
 
 # Bus Routing
 from .bus_routing import (
@@ -183,7 +182,6 @@ __all__ = [
     # Bus types and states
     "BusType",
     "BusState",
-    "BusStatus",
     "FilterState",
     "RoutingMode",
     # Routing

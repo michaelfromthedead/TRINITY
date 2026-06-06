@@ -596,10 +596,26 @@ class ReflectionProbeConfig:
         capture_mode: Capture mode (baked/realtime/mixed)
         resolution: Cubemap resolution
         update_rate: Update rate in Hz for realtime probes
+        importance: Priority weight for blending (higher = more influence)
+        box_extents: Influence box half-extents (full size is 2x this)
+        inner_radius: Inner blend zone radius (full intensity inside)
+        outer_radius: Outer influence radius (zero intensity outside)
+        roughness_levels: Number of pre-filtered mip levels for roughness
+        capture_lod_bias: LOD bias applied during cubemap capture
+        include_layers: Bitmask of layers to include in capture
+        exclude_actors: List of actor tags to exclude from capture
     """
     capture_mode: CaptureMode = CaptureMode.BAKED
     resolution: int = 256
     update_rate: float = 0.0
+    importance: float = 1.0
+    box_extents: Vec3 = field(default_factory=lambda: Vec3(10.0, 10.0, 10.0))
+    inner_radius: float = 0.0
+    outer_radius: float = 10.0
+    roughness_levels: int = 8
+    capture_lod_bias: float = 0.0
+    include_layers: int = 0xFFFFFFFF
+    exclude_actors: list = field(default_factory=list)
 
 
 @dataclass
@@ -614,6 +630,8 @@ class ReflectionProbe:
         bounds: Influence bounds (for parallax correction)
         blend_distance: Blending distance at edges
         cubemap_data: Cubemap face data (6 faces x resolution x resolution)
+        box_min: Minimum corner of parallax correction box (computed)
+        box_max: Maximum corner of parallax correction box (computed)
     """
     position: Vec3 = field(default_factory=Vec3.zero)
     config: ReflectionProbeConfig = field(default_factory=ReflectionProbeConfig)
@@ -625,6 +643,10 @@ class ReflectionProbe:
     # Cubemap data placeholder (6 faces)
     cubemap_data: list = field(default_factory=list)
 
+    # Parallax correction bounding box (computed from config.box_extents)
+    box_min: Vec3 = field(default_factory=Vec3.zero)
+    box_max: Vec3 = field(default_factory=Vec3.zero)
+
     # Probe state
     _dirty: bool = True
     _last_update_time: float = 0.0
@@ -634,6 +656,18 @@ class ReflectionProbe:
     def __post_init__(self) -> None:
         ReflectionProbe._id_counter += 1
         self._probe_id = ReflectionProbe._id_counter
+        # Compute parallax correction box from config.box_extents
+        extents = self.config.box_extents
+        self.box_min = Vec3(
+            self.position.x - extents.x,
+            self.position.y - extents.y,
+            self.position.z - extents.z,
+        )
+        self.box_max = Vec3(
+            self.position.x + extents.x,
+            self.position.y + extents.y,
+            self.position.z + extents.z,
+        )
 
     @property
     def needs_update(self) -> bool:
@@ -753,6 +787,14 @@ def reflection_probe(
     capture_mode: str = "baked",
     resolution: int = 256,
     update_rate: float = 0.0,
+    importance: float = 1.0,
+    box_extents: Optional[Vec3] = None,
+    inner_radius: float = 0.0,
+    outer_radius: float = 10.0,
+    roughness_levels: int = 8,
+    capture_lod_bias: float = 0.0,
+    include_layers: int = 0xFFFFFFFF,
+    exclude_actors: Optional[list] = None,
 ):
     """Decorator to configure reflection probes.
 
@@ -760,6 +802,14 @@ def reflection_probe(
         capture_mode: Capture mode ("baked", "realtime", "mixed")
         resolution: Cubemap resolution
         update_rate: Update rate for realtime probes
+        importance: Priority weight for blending (higher = more influence)
+        box_extents: Influence box half-extents (defaults to 10x10x10)
+        inner_radius: Inner blend zone radius (full intensity inside)
+        outer_radius: Outer influence radius (zero intensity outside)
+        roughness_levels: Number of pre-filtered mip levels for roughness
+        capture_lod_bias: LOD bias applied during cubemap capture
+        include_layers: Bitmask of layers to include in capture
+        exclude_actors: List of actor tags to exclude from capture
 
     Returns:
         Decorated class
@@ -769,11 +819,27 @@ def reflection_probe(
             capture_mode=CaptureMode(capture_mode),
             resolution=resolution,
             update_rate=update_rate,
+            importance=importance,
+            box_extents=box_extents if box_extents is not None else Vec3(10.0, 10.0, 10.0),
+            inner_radius=inner_radius,
+            outer_radius=outer_radius,
+            roughness_levels=roughness_levels,
+            capture_lod_bias=capture_lod_bias,
+            include_layers=include_layers,
+            exclude_actors=exclude_actors if exclude_actors is not None else [],
         )
         cls._reflection_probe = True
         cls._reflection_capture_mode = CaptureMode(capture_mode)
         cls._reflection_resolution = resolution
         cls._reflection_update_rate = update_rate
+        cls._reflection_importance = importance
+        cls._reflection_box_extents = config.box_extents
+        cls._reflection_inner_radius = inner_radius
+        cls._reflection_outer_radius = outer_radius
+        cls._reflection_roughness_levels = roughness_levels
+        cls._reflection_capture_lod_bias = capture_lod_bias
+        cls._reflection_include_layers = include_layers
+        cls._reflection_exclude_actors = config.exclude_actors
         cls._reflection_config = config
         return cls
     return decorator

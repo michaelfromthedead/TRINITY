@@ -1,10 +1,19 @@
 """
 Quest System Module.
 
-Provides quest definitions, objectives, tracking, and event management.
+Provides the complete quest system including:
+- Quest definitions and state management
+- Objective types (kill, collect, talk, reach, escort, etc.)
+- Quest tracking and progress management
+- Quest journal UI support
+
+Foundation Integration (T-GP-9.5):
+- @quest decorator registers with Foundation Registry
+- Quest events logged via EventLog
+- Causal chains track objective -> quest -> reward dependencies
 """
 
-from .quest import (
+from engine.gameplay.quest.quest import (
     Quest,
     QuestDefinition,
     QuestRegistry,
@@ -23,7 +32,7 @@ from .quest import (
     get_registered_quests,
 )
 
-from .objectives import (
+from engine.gameplay.quest.objectives import (
     Objective,
     ObjectiveState,
     ObjectiveType,
@@ -41,7 +50,7 @@ from .objectives import (
     ObjectiveFactory,
 )
 
-from .tracker import (
+from engine.gameplay.quest.tracker import (
     QuestTracker,
     QuestEvent,
     QuestEventType,

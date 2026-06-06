@@ -5,6 +5,15 @@
 > needed to implement `engine/core/`. This document is the single source of truth —
 > implementation should require zero external references.
 
+**Implementation Status:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Python | ✅ COMPLETE | All algorithms implemented |
+| Rust | ⚠️ 49% | GAPSET_1_CORE — ThreadPool, JobGraph, Scheduler absent |
+| Wired | ❌ | Blocked on Rust completion |
+
+*See `docs/STATUS.md` for current progress. See `docs/gap_sets/GAPSET_1_CORE/` for tasks.*
+
 ---
 
 ## 1. Architecture Summary

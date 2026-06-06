@@ -87,7 +87,7 @@ class ComponentMeta(EngineMeta):
         ctypes.c_byte: ("i8", 1),
         ctypes.c_ubyte: ("u8", 1),
         bool: ("u8", 1),
-        str: ("Str8", 8),   # NOTE: 8-byte fixed buffer, NOT 24-byte Rust String — see docstring
+        str: ("Str8", 8),   # NOTE: 8-byte fixed buffer, NOT 24-byte Rust String
     }
 
     def __new__(
@@ -287,7 +287,7 @@ class ComponentMeta(EngineMeta):
         # Imports hoisted out of loop to avoid repeated import overhead
         from trinity.descriptors.base import BaseDescriptor
 
-        offset = 0
+        byte_offset = 0
         for field_name, field_type in annotations.items():
             if field_name.startswith("_"):
                 continue  # Skip private fields
@@ -308,17 +308,17 @@ class ComponentMeta(EngineMeta):
                         # Class: instantiate
                         annotated_descriptors.append(meta(field_type=actual_type))
 
-            # 8.6: Store unwrapped base type.
-            # _field_offsets now stores byte offsets matching Rust layout,
-            # computed using TYPE_MAP sizes and C-style alignment rules.
+            # 8.6: Store unwrapped base type and compute byte offset.
+            # NOTE: `_field_offsets` stores **byte offsets** with proper alignment,
+            # matching the Rust ECS memory layout.  Uses TYPE_MAP for size and
+            # alignment (min(size, 8) per repr(C) rules).
             cls._field_types[field_name] = actual_type
-
-            # Compute byte offset with alignment (matching _build_rust_layout)
-            type_code, size = ComponentMeta.TYPE_MAP.get(actual_type, (getattr(actual_type, '__name__', str(actual_type)), 4))
-            alignment = min(size, 8)
-            aligned_offset = (offset + alignment - 1) & ~(alignment - 1)
+            type_code_size = mcs.TYPE_MAP.get(actual_type, (None, 4))
+            field_size = type_code_size[1]
+            alignment = min(field_size, 8)
+            aligned_offset = (byte_offset + alignment - 1) & ~(alignment - 1)
             cls._field_offsets[field_name] = aligned_offset
-            offset = aligned_offset + size
+            byte_offset = aligned_offset + field_size
 
             # Capture default value if present
             if hasattr(cls, field_name):

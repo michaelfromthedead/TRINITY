@@ -11,9 +11,21 @@ Subsystems:
     4. Lighting & GI - Direct lights, shadows, global illumination
     5. Post-Processing - Tonemapping, bloom, DOF, TAA, upscaling
     6. Particles & VFX - GPU particles, trails, decals
+    7. Denoise - A-Trous wavelet spatial denoising for ray tracing
 
 See RENDERING_CONTEXT.md for complete implementation reference.
 """
+
+# Denoise - A-Trous Wavelet Spatial Denoiser
+from .denoise import (
+    ATrousDenoiser,
+    DenoiseConfig,
+    DenoiseQuality,
+    DenoiseTarget,
+    EdgeStopFunctions,
+    YCoCgConverter,
+    PSNRMetrics,
+)
 
 # Frame Graph - Core rendering orchestration
 from .framegraph import (
@@ -100,4 +112,12 @@ __all__ = [
     "QueueTimeline",
     "SyncPoint",
     "identify_async_candidates",
+    # Denoise (A-Trous Wavelet Spatial Denoiser)
+    "ATrousDenoiser",
+    "DenoiseConfig",
+    "DenoiseQuality",
+    "DenoiseTarget",
+    "EdgeStopFunctions",
+    "YCoCgConverter",
+    "PSNRMetrics",
 ]

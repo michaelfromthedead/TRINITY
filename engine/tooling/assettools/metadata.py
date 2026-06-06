@@ -553,18 +553,22 @@ class MetadataEditor:
         tag_name = tag.name if isinstance(tag, MetadataTag) else tag
         result = []
 
-        for metadata_path in self._iterate_metadata_files():
-            # Load metadata directly from the file since we're iterating metadata files
-            try:
-                with open(metadata_path, "r") as f:
-                    data = json.load(f)
-                metadata = AssetMetadata.from_dict(data)
-                if metadata.has_tag(tag_name):
-                    result.append(metadata.asset_path)
-            except Exception:
-                continue
+        for meta_path in self._iterate_metadata_files():
+            metadata = self._load_metadata_direct(meta_path)
+            if metadata and metadata.has_tag(tag_name):
+                result.append(metadata.asset_path)
 
         return result
+
+    def _load_metadata_direct(self, meta_path: Path) -> Optional["AssetMetadata"]:
+        """Load metadata directly from a .meta.json file path."""
+        import json
+        try:
+            with open(meta_path, "r") as f:
+                data = json.load(f)
+            return AssetMetadata.from_dict(data)
+        except Exception:
+            return None
 
     def register_tag(self, tag: MetadataTag) -> None:
         """Register a tag in the tag registry.
@@ -653,7 +657,11 @@ class MetadataEditor:
 
     def _metadata_path(self, asset_path: Path) -> Path:
         """Get metadata file path for an asset."""
-        relative = asset_path.relative_to(self.root_path) if self.root_path in asset_path.parents else asset_path
+        resolved = asset_path.resolve()
+        try:
+            relative = resolved.relative_to(self.root_path)
+        except ValueError:
+            relative = resolved
         return self.metadata_directory / f"{relative}.meta.json"
 
     def _load_metadata(self, asset_path: Path) -> Optional[AssetMetadata]:

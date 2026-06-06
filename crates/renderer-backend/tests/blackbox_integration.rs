@@ -104,9 +104,11 @@ fn all_passes_survive_compilation() {
     let compiled = CompiledFrameGraph::compile(passes, resources)
         .expect("Cleanroom graph compiles");
 
-    // All passes retained in list, dead pass eliminated from order.
-    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in list");
+    // Dead pass elimination marks P2 dead; 2 passes survive in execution order.
+    // Note: compiled.passes retains all input passes; use compiled.order for surviving count.
+    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in passes array");
     assert_eq!(compiled.order.len(), 2, "2 passes in execution order (P2 eliminated)");
+    assert_eq!(compiled.eliminated_passes.len(), 1, "P2 is in eliminated_passes");
 }
 
 /// Each surviving pass retains its correct type (Graphics, Compute).
@@ -227,12 +229,12 @@ fn barrier_entries_have_valid_references() {
     let valid_indices: std::collections::HashSet<PassIndex> =
         (0..3).map(PassIndex).collect();
 
-    for &(from, to, _resource, _edge_type, before, after) in &compiled.barriers {
+    for &(from, to, before, after, resource) in &compiled.barriers {
         assert!(valid_indices.contains(&from),
             "Barrier 'from' {:?} is valid", from);
         assert!(valid_indices.contains(&to),
             "Barrier 'to' {:?} is valid", to);
-        let _ = (before, after); // enum values -- structurally valid.
+        let _ = (before, after, resource); // enum values -- structurally valid.
     }
 }
 
@@ -509,13 +511,16 @@ fn frame_graph_compiler_is_consistent_with_direct_compile() {
     use renderer_backend::frame_graph::FrameGraphCompiler;
 
     let (passes, resources) = build_cleanroom_graph();
-    let compiled = FrameGraphCompiler::from_ir(passes, resources)
-        .expect("FrameGraphCompiler succeeds");
+    let compiled = FrameGraphCompiler::new(passes, resources)
+        .compile()
+        .expect("Compilation succeeds");
 
-    // All passes retained in list, dead pass eliminated from order.
-    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in list");
+    // Dead pass elimination marks P2 dead; passes array retains all 3.
+    assert_eq!(compiled.passes.len(), 3, "all 3 passes retained in passes array");
     // Verify execution order (P2 eliminated).
     assert_eq!(compiled.order.len(), 2, "2 surviving passes in order");
+    // Verify P2 is in eliminated passes.
+    assert_eq!(compiled.eliminated_passes.len(), 1, "P2 in eliminated_passes");
     // Verify barriers exist.
     assert!(!compiled.barriers.is_empty());
     // Verify cull stats.

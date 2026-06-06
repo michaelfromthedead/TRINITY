@@ -2,168 +2,181 @@
 
 This module centralizes magic numbers and configuration values for the
 animation crowds and systems modules, making them easy to tune and maintain.
+
+Configuration values can be modified at runtime without restart. All values
+are validated on assignment to ensure they remain within acceptable bounds.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypeVar, Generic, Callable, List, Dict
+from typing import Any, Callable, Generic, TypeVar, get_type_hints
+import copy
+
+
+T = TypeVar("T")
 
 
 class ConfigValidationError(ValueError):
-    """Raised when configuration validation fails."""
+    """Raised when a configuration value fails validation."""
+
     pass
 
 
-T = TypeVar('T')
+class ValidatedDescriptor(Generic[T]):
+    """Descriptor that validates values on assignment.
 
+    Provides runtime validation for configuration values with custom
+    validators and type checking.
+    """
 
-class MutableConfig(Generic[T]):
-    """Runtime-mutable configuration wrapper with change notification."""
-
-    def __init__(self, initial: T):
-        self._value = initial
-        self._listeners: List[Callable[[T], None]] = []
-
-    @property
-    def value(self) -> T:
-        return self._value
-
-    @value.setter
-    def value(self, new_value: T) -> None:
-        self._value = new_value
-        for listener in self._listeners:
-            listener(new_value)
-
-    def subscribe(self, callback: Callable[[T], None]) -> None:
-        """Register a callback for value changes."""
-        self._listeners.append(callback)
-
-    def unsubscribe(self, callback: Callable[[T], None]) -> None:
-        """Unregister a callback."""
-        if callback in self._listeners:
-            self._listeners.remove(callback)
-
-
-class ValidatedDescriptor:
-    """Descriptor that validates values on assignment."""
-
-    def __init__(self, validator: Callable[[Any], bool], error_msg: str = "Validation failed"):
+    def __init__(
+        self,
+        default: T,
+        validator: Callable[[T], bool] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.default = default
         self.validator = validator
-        self.error_msg = error_msg
-        self.name = ""
+        self.error_message = error_message
+        self.name: str = ""
 
     def __set_name__(self, owner: type, name: str) -> None:
         self.name = name
 
-    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+    def __get__(self, obj: object | None, objtype: type | None = None) -> T | "ValidatedDescriptor[T]":
         if obj is None:
-            return self
-        return getattr(obj, f"_validated_{self.name}", None)
+            # Return the descriptor itself when accessed on the class
+            return self  # type: ignore[return-value]
+        return getattr(obj, f"_val_{self.name}", self.default)
 
-    def __set__(self, obj: Any, value: Any) -> None:
-        if not self.validator(value):
-            raise ConfigValidationError(f"{self.name}: {self.error_msg}")
-        setattr(obj, f"_validated_{self.name}", value)
+    def __set__(self, obj: object, value: T) -> None:
+        # Type validation
+        expected_type = type(self.default)
+        if not isinstance(value, expected_type):
+            # Allow int for float fields
+            if expected_type is float and isinstance(value, int):
+                value = float(value)
+            else:
+                raise ConfigValidationError(
+                    f"'{self.name}' must be {expected_type.__name__}, "
+                    f"got {type(value).__name__}"
+                )
+
+        # Custom validation
+        if self.validator is not None and not self.validator(value):
+            msg = self.error_message or f"Invalid value for '{self.name}': {value}"
+            raise ConfigValidationError(msg)
+
+        setattr(obj, f"_val_{self.name}", value)
 
 
-def positive(value: float) -> bool:
+def positive(value: float | int) -> bool:
     """Validate that value is positive (> 0)."""
     return value > 0
 
 
-def non_negative(value: float) -> bool:
+def non_negative(value: float | int) -> bool:
     """Validate that value is non-negative (>= 0)."""
     return value >= 0
 
 
-def at_least(minimum: float) -> Callable[[float], bool]:
+def at_least(minimum: float | int) -> Callable[[float | int], bool]:
     """Create validator that checks value >= minimum."""
-    def validator(value: float) -> bool:
-        return value >= minimum
-    return validator
+    return lambda v: v >= minimum
 
 
-def in_range(min_val: float, max_val: float) -> Callable[[float], bool]:
+def in_range(
+    min_val: float | int, max_val: float | int
+) -> Callable[[float | int], bool]:
     """Create validator that checks min_val <= value <= max_val."""
-    def validator(value: float) -> bool:
-        return min_val <= value <= max_val
-    return validator
+    return lambda v: min_val <= v <= max_val
 
 
-class MutableConfigBase:
-    """Base class for mutable configuration with validation, serialization, and callbacks."""
+def power_of_two(value: int) -> bool:
+    """Validate that value is a power of 2."""
+    return value > 0 and (value & (value - 1)) == 0
 
-    # Subclasses should define _field_defaults, _field_validators, _field_types
-    _field_defaults: Dict[str, Any] = {}
-    _field_validators: Dict[str, Callable[[Any], bool]] = {}
-    _field_types: Dict[str, type] = {}
+
+class MutableConfig:
+    """Base class for mutable configuration objects.
+
+    Supports runtime modification with validation, reset to defaults,
+    and change notification callbacks.
+    """
 
     def __init__(self) -> None:
-        self._change_callbacks: List[Callable[[str, Any, Any], None]] = []
-        self._values: Dict[str, Any] = {}
-        # Initialize with defaults
-        for name, default in self._field_defaults.items():
-            self._values[name] = default
+        object.__setattr__(self, "_change_callbacks", [])
 
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith('_'):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-        if name in self._field_defaults:
-            return self._values.get(name, self._field_defaults[name])
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+    def _ensure_init(self) -> None:
+        """Ensure instance is properly initialized."""
+        if not hasattr(self, "_change_callbacks"):
+            object.__setattr__(self, "_change_callbacks", [])
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name.startswith('_'):
-            object.__setattr__(self, name, value)
-            return
-
-        if name not in self._field_defaults:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-        # Type validation
-        expected_type = self._field_types.get(name, type(self._field_defaults[name]))
-        if expected_type == float and isinstance(value, int):
-            value = float(value)
-        elif expected_type == int and isinstance(value, float) and value == int(value):
-            value = int(value)
-        elif not isinstance(value, expected_type):
-            raise ConfigValidationError(f"{name}: expected {expected_type.__name__}, got {type(value).__name__}")
-
-        # Custom validation
-        validator = self._field_validators.get(name)
-        if validator and not validator(value):
-            raise ConfigValidationError(f"{name}: validation failed")
-
-        old_value = self._values.get(name, self._field_defaults[name])
-        self._values[name] = value
-
-        # Notify callbacks
-        for callback in self._change_callbacks:
-            callback(name, old_value, value)
+    def _get_descriptors(self) -> dict[str, ValidatedDescriptor]:
+        """Get all ValidatedDescriptor attributes from class hierarchy."""
+        descriptors = {}
+        for cls in type(self).__mro__:
+            for name, attr in vars(cls).items():
+                if isinstance(attr, ValidatedDescriptor) and name not in descriptors:
+                    descriptors[name] = attr
+        return descriptors
 
     def reset(self) -> None:
-        """Reset all fields to default values."""
-        self._values = dict(self._field_defaults)
+        """Reset all values to their defaults."""
+        self._ensure_init()
+        for name, descriptor in self._get_descriptors().items():
+            # Directly set the underlying storage to avoid callbacks during reset
+            object.__setattr__(self, f"_val_{name}", descriptor.default)
 
     def on_change(self, callback: Callable[[str, Any, Any], None]) -> None:
-        """Register a callback for value changes."""
+        """Register a callback for configuration changes.
+
+        Callback receives (field_name, old_value, new_value).
+        """
+        self._ensure_init()
         self._change_callbacks.append(callback)
 
-    def remove_change_callback(self, callback: Callable[[str, Any, Any], None]) -> None:
-        """Remove a change callback."""
+    def remove_change_callback(
+        self, callback: Callable[[str, Any, Any], None]
+    ) -> None:
+        """Remove a previously registered change callback."""
+        self._ensure_init()
         if callback in self._change_callbacks:
             self._change_callbacks.remove(callback)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Export configuration as dictionary."""
-        return dict(self._values)
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
 
-    def from_dict(self, data: Dict[str, Any]) -> None:
-        """Import configuration from dictionary."""
-        for name, value in data.items():
-            if name in self._field_defaults:
-                setattr(self, name, value)
+        descriptor = getattr(type(self), name, None)
+        if isinstance(descriptor, ValidatedDescriptor):
+            self._ensure_init()
+            old_value = getattr(self, name)
+            descriptor.__set__(self, value)
+            new_value = getattr(self, name)
+            # Notify callbacks
+            for cb in self._change_callbacks:
+                cb(name, old_value, new_value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Export configuration as a dictionary."""
+        result = {}
+        for name, descriptor in self._get_descriptors().items():
+            result[name] = getattr(self, name)
+        return result
+
+    def from_dict(self, data: dict[str, Any]) -> None:
+        """Import configuration from a dictionary.
+
+        Raises ConfigValidationError if any value is invalid.
+        """
+        for key, value in data.items():
+            if hasattr(type(self), key):
+                setattr(self, key, value)
 
 
 @dataclass(frozen=True)
@@ -205,304 +218,474 @@ class CrowdRendererConfig:
     COLOR_FLOATS: int = 4       # RGBA tint
 
 
-class CrowdLODConfig(MutableConfigBase):
-    """Configuration for crowd LOD system."""
+class CrowdLODConfig(MutableConfig):
+    """Configuration for crowd LOD system.
 
-    _field_defaults = {
-        'DEFAULT_LOD_DISTANCES': (10.0, 25.0, 50.0, 100.0),
-        'MAX_LOD_LEVELS': 8,
-        'DEFAULT_CULL_DISTANCE': 300.0,
-        'DEFAULT_TRANSITION_DURATION': 0.2,
-        'DEFAULT_HYSTERESIS': 1.0,
-        'MIN_UPDATE_RATE': 0.25,
-        'MIN_BONES_AT_LOWEST_LOD': 4,
-    }
+    All values can be modified at runtime. Invalid values raise
+    ConfigValidationError.
+    """
 
-    _field_validators = {
-        'DEFAULT_CULL_DISTANCE': positive,
-        'DEFAULT_TRANSITION_DURATION': non_negative,
-        'DEFAULT_HYSTERESIS': non_negative,
-        'MIN_UPDATE_RATE': positive,
-        'MAX_LOD_LEVELS': lambda x: x >= 1,
-        'MIN_BONES_AT_LOWEST_LOD': lambda x: x >= 1,
-    }
+    # Default LOD distance thresholds (meters) - immutable tuple
+    DEFAULT_LOD_DISTANCES: tuple[float, ...] = (10.0, 25.0, 50.0, 100.0)
 
-    _field_types = {
-        'DEFAULT_LOD_DISTANCES': tuple,
-        'MAX_LOD_LEVELS': int,
-        'DEFAULT_CULL_DISTANCE': float,
-        'DEFAULT_TRANSITION_DURATION': float,
-        'DEFAULT_HYSTERESIS': float,
-        'MIN_UPDATE_RATE': float,
-        'MIN_BONES_AT_LOWEST_LOD': int,
-    }
+    # Maximum LOD levels
+    MAX_LOD_LEVELS = ValidatedDescriptor(
+        8,
+        in_range(1, 16),
+        "MAX_LOD_LEVELS must be between 1 and 16",
+    )
 
+    # Default culling distance (meters)
+    DEFAULT_CULL_DISTANCE = ValidatedDescriptor(
+        300.0,
+        positive,
+        "DEFAULT_CULL_DISTANCE must be positive",
+    )
 
-class CrowdBehaviorConfig(MutableConfigBase):
-    """Configuration for crowd behavior simulation."""
+    # LOD transition settings
+    DEFAULT_TRANSITION_DURATION = ValidatedDescriptor(
+        0.2,
+        non_negative,
+        "DEFAULT_TRANSITION_DURATION must be non-negative",
+    )
 
-    _field_defaults = {
-        'DEFAULT_AGENT_SPEED': 1.4,
-        'DEFAULT_AGENT_TURN_SPEED': 3.14,
-        'DEFAULT_AGENT_RADIUS': 0.4,
-        'DEFAULT_AVOIDANCE_RADIUS': 2.0,
-        'DEFAULT_AVOIDANCE_STRENGTH': 1.5,
-        'AVOIDANCE_PRIORITY_MULTIPLIER': 1.5,
-        'ARRIVAL_THRESHOLD': 0.5,
-        'VELOCITY_SMOOTHING': 4.0,
-        'FLEE_ACCELERATION': 8.0,
-        'IDLE_VARIATION_MIN': 3.0,
-        'IDLE_VARIATION_MAX': 8.0,
-        'FLEE_SPEED_MULTIPLIER': 1.5,
-        'FLEE_SAFE_DISTANCE': 20.0,
-        'MIN_DISTANCE_EPSILON': 0.01,
-        'avoidance_radius': 2.0,
-    }
+    DEFAULT_HYSTERESIS = ValidatedDescriptor(
+        1.0,
+        non_negative,
+        "DEFAULT_HYSTERESIS must be non-negative",
+    )
 
-    _field_validators = {
-        'DEFAULT_AGENT_SPEED': positive,
-        'DEFAULT_AGENT_TURN_SPEED': positive,
-        'DEFAULT_AGENT_RADIUS': non_negative,
-        'DEFAULT_AVOIDANCE_RADIUS': positive,
-        'DEFAULT_AVOIDANCE_STRENGTH': positive,
-        'AVOIDANCE_PRIORITY_MULTIPLIER': at_least(1.0),
-        'ARRIVAL_THRESHOLD': positive,
-        'VELOCITY_SMOOTHING': positive,
-        'FLEE_ACCELERATION': positive,
-        'IDLE_VARIATION_MIN': positive,
-        'IDLE_VARIATION_MAX': positive,
-        'FLEE_SPEED_MULTIPLIER': at_least(1.0),
-        'FLEE_SAFE_DISTANCE': positive,
-        'MIN_DISTANCE_EPSILON': positive,
-        'avoidance_radius': positive,
-    }
+    # Minimum update rate for distant LODs
+    MIN_UPDATE_RATE = ValidatedDescriptor(
+        0.25,
+        positive,
+        "MIN_UPDATE_RATE must be positive",
+    )
 
-    _field_types = {
-        'DEFAULT_AGENT_SPEED': float,
-        'DEFAULT_AGENT_TURN_SPEED': float,
-        'DEFAULT_AGENT_RADIUS': float,
-        'DEFAULT_AVOIDANCE_RADIUS': float,
-        'DEFAULT_AVOIDANCE_STRENGTH': float,
-        'AVOIDANCE_PRIORITY_MULTIPLIER': float,
-        'ARRIVAL_THRESHOLD': float,
-        'VELOCITY_SMOOTHING': float,
-        'FLEE_ACCELERATION': float,
-        'IDLE_VARIATION_MIN': float,
-        'IDLE_VARIATION_MAX': float,
-        'FLEE_SPEED_MULTIPLIER': float,
-        'FLEE_SAFE_DISTANCE': float,
-        'MIN_DISTANCE_EPSILON': float,
-        'avoidance_radius': float,
-    }
+    # Minimum bone count at lowest LOD
+    MIN_BONES_AT_LOWEST_LOD = ValidatedDescriptor(
+        4,
+        at_least(1),
+        "MIN_BONES_AT_LOWEST_LOD must be at least 1",
+    )
 
 
-class AnimationSystemConfig(MutableConfigBase):
-    """Configuration for animation ECS systems."""
+class CrowdBehaviorConfig(MutableConfig):
+    """Configuration for crowd behavior simulation.
 
-    _field_defaults = {
-        'PRIORITY_ANIMATION_GRAPH': 100,
-        'PRIORITY_MOTION_MATCHING': 150,
-        'PRIORITY_IK': 200,
-        'PRIORITY_PROCEDURAL': 300,
-        'PRIORITY_FACIAL': 300,
-        'PRIORITY_SKINNING': 400,
-        'PRIORITY_CROWD': 500,
-        'DEFAULT_GRAPH_TRANSITION': 0.2,
-        'DEFAULT_MOTION_MATCH_TRANSITION': 0.2,
-        'MOTION_MATCH_SEARCH_INTERVAL': 10,
-        'MOTION_MATCH_CONTINUATION_COST': 0.5,
-    }
+    All values can be modified at runtime without restart. Invalid values
+    are rejected with ConfigValidationError.
 
-    _field_validators = {
-        'PRIORITY_ANIMATION_GRAPH': non_negative,
-        'PRIORITY_MOTION_MATCHING': non_negative,
-        'PRIORITY_IK': non_negative,
-        'PRIORITY_PROCEDURAL': non_negative,
-        'PRIORITY_FACIAL': non_negative,
-        'PRIORITY_SKINNING': non_negative,
-        'PRIORITY_CROWD': non_negative,
-        'DEFAULT_GRAPH_TRANSITION': non_negative,
-        'DEFAULT_MOTION_MATCH_TRANSITION': non_negative,
-        'MOTION_MATCH_SEARCH_INTERVAL': lambda x: x >= 1,
-        'MOTION_MATCH_CONTINUATION_COST': non_negative,
-    }
+    Example:
+        >>> config = CrowdBehaviorConfig()
+        >>> config.DEFAULT_AGENT_SPEED = 2.0  # OK
+        >>> config.DEFAULT_AGENT_SPEED = -1   # Raises ConfigValidationError
+    """
 
-    _field_types = {
-        'PRIORITY_ANIMATION_GRAPH': int,
-        'PRIORITY_MOTION_MATCHING': int,
-        'PRIORITY_IK': int,
-        'PRIORITY_PROCEDURAL': int,
-        'PRIORITY_FACIAL': int,
-        'PRIORITY_SKINNING': int,
-        'PRIORITY_CROWD': int,
-        'DEFAULT_GRAPH_TRANSITION': float,
-        'DEFAULT_MOTION_MATCH_TRANSITION': float,
-        'MOTION_MATCH_SEARCH_INTERVAL': int,
-        'MOTION_MATCH_CONTINUATION_COST': float,
-    }
+    # Default agent settings
+    DEFAULT_AGENT_SPEED = ValidatedDescriptor(
+        1.4,
+        positive,
+        "DEFAULT_AGENT_SPEED must be positive (got negative or zero value)",
+    )
+
+    DEFAULT_AGENT_TURN_SPEED = ValidatedDescriptor(
+        3.14,
+        positive,
+        "DEFAULT_AGENT_TURN_SPEED must be positive",
+    )
+
+    DEFAULT_AGENT_RADIUS = ValidatedDescriptor(
+        0.4,
+        positive,
+        "DEFAULT_AGENT_RADIUS must be positive",
+    )
+
+    # Avoidance settings
+    DEFAULT_AVOIDANCE_RADIUS = ValidatedDescriptor(
+        2.0,
+        positive,
+        "DEFAULT_AVOIDANCE_RADIUS must be positive",
+    )
+
+    # Alias for backward compatibility
+    @property
+    def avoidance_radius(self) -> float:
+        """Alias for DEFAULT_AVOIDANCE_RADIUS."""
+        return self.DEFAULT_AVOIDANCE_RADIUS
+
+    @avoidance_radius.setter
+    def avoidance_radius(self, value: float) -> None:
+        """Set avoidance radius with validation."""
+        self.DEFAULT_AVOIDANCE_RADIUS = value
+
+    DEFAULT_AVOIDANCE_STRENGTH = ValidatedDescriptor(
+        1.5,
+        positive,
+        "DEFAULT_AVOIDANCE_STRENGTH must be positive",
+    )
+
+    AVOIDANCE_PRIORITY_MULTIPLIER = ValidatedDescriptor(
+        1.5,
+        at_least(1.0),
+        "AVOIDANCE_PRIORITY_MULTIPLIER must be >= 1.0",
+    )
+
+    # Movement settings
+    ARRIVAL_THRESHOLD = ValidatedDescriptor(
+        0.5,
+        positive,
+        "ARRIVAL_THRESHOLD must be positive",
+    )
+
+    VELOCITY_SMOOTHING = ValidatedDescriptor(
+        4.0,
+        positive,
+        "VELOCITY_SMOOTHING must be positive",
+    )
+
+    FLEE_ACCELERATION = ValidatedDescriptor(
+        8.0,
+        positive,
+        "FLEE_ACCELERATION must be positive",
+    )
+
+    # Idle behavior
+    IDLE_VARIATION_MIN = ValidatedDescriptor(
+        3.0,
+        non_negative,
+        "IDLE_VARIATION_MIN must be non-negative",
+    )
+
+    IDLE_VARIATION_MAX = ValidatedDescriptor(
+        8.0,
+        positive,
+        "IDLE_VARIATION_MAX must be positive",
+    )
+
+    # Fleeing behavior
+    FLEE_SPEED_MULTIPLIER = ValidatedDescriptor(
+        1.5,
+        positive,
+        "FLEE_SPEED_MULTIPLIER must be positive",
+    )
+
+    FLEE_SAFE_DISTANCE = ValidatedDescriptor(
+        20.0,
+        positive,
+        "FLEE_SAFE_DISTANCE must be positive",
+    )
+
+    # Minimum distance to avoid division by zero
+    MIN_DISTANCE_EPSILON = ValidatedDescriptor(
+        0.01,
+        positive,
+        "MIN_DISTANCE_EPSILON must be positive (prevents division by zero)",
+    )
 
 
-class IKConfig(MutableConfigBase):
+class AnimationSystemConfig(MutableConfig):
+    """Configuration for animation ECS systems.
+
+    Priorities can be adjusted at runtime to reorder system execution.
+    """
+
+    # System execution priorities (lower = earlier)
+    PRIORITY_ANIMATION_GRAPH = ValidatedDescriptor(
+        100,
+        non_negative,
+        "PRIORITY_ANIMATION_GRAPH must be non-negative",
+    )
+
+    PRIORITY_MOTION_MATCHING = ValidatedDescriptor(
+        150,
+        non_negative,
+        "PRIORITY_MOTION_MATCHING must be non-negative",
+    )
+
+    PRIORITY_IK = ValidatedDescriptor(
+        200,
+        non_negative,
+        "PRIORITY_IK must be non-negative",
+    )
+
+    PRIORITY_PROCEDURAL = ValidatedDescriptor(
+        300,
+        non_negative,
+        "PRIORITY_PROCEDURAL must be non-negative",
+    )
+
+    PRIORITY_FACIAL = ValidatedDescriptor(
+        300,  # Parallel to procedural (different bones)
+        non_negative,
+        "PRIORITY_FACIAL must be non-negative",
+    )
+
+    PRIORITY_SKINNING = ValidatedDescriptor(
+        400,
+        non_negative,
+        "PRIORITY_SKINNING must be non-negative",
+    )
+
+    PRIORITY_CROWD = ValidatedDescriptor(
+        500,
+        non_negative,
+        "PRIORITY_CROWD must be non-negative",
+    )
+
+    # Default transition durations
+    DEFAULT_GRAPH_TRANSITION = ValidatedDescriptor(
+        0.2,
+        non_negative,
+        "DEFAULT_GRAPH_TRANSITION must be non-negative",
+    )
+
+    DEFAULT_MOTION_MATCH_TRANSITION = ValidatedDescriptor(
+        0.2,
+        non_negative,
+        "DEFAULT_MOTION_MATCH_TRANSITION must be non-negative",
+    )
+
+    # Motion matching settings
+    MOTION_MATCH_SEARCH_INTERVAL = ValidatedDescriptor(
+        10,
+        at_least(1),
+        "MOTION_MATCH_SEARCH_INTERVAL must be at least 1",
+    )
+
+    MOTION_MATCH_CONTINUATION_COST = ValidatedDescriptor(
+        0.5,
+        non_negative,
+        "MOTION_MATCH_CONTINUATION_COST must be non-negative",
+    )
+
+
+class IKConfig(MutableConfig):
     """Configuration for IK system."""
 
-    _field_defaults = {
-        'DEFAULT_MAX_ITERATIONS': 10,
-        'DEFAULT_POSITION_TOLERANCE': 0.001,
-        'DEFAULT_ROTATION_TOLERANCE': 0.01,
-        'MAX_CHAIN_LENGTH': 10,
-        'MIN_BONE_LENGTH': 0.001,
-        'MIN_TARGET_DISTANCE': 0.001,
-    }
+    # Solver defaults
+    DEFAULT_MAX_ITERATIONS = ValidatedDescriptor(
+        10,
+        at_least(1),
+        "DEFAULT_MAX_ITERATIONS must be at least 1",
+    )
 
-    _field_validators = {
-        'DEFAULT_MAX_ITERATIONS': lambda x: x >= 1,
-        'DEFAULT_POSITION_TOLERANCE': positive,
-        'DEFAULT_ROTATION_TOLERANCE': positive,
-        'MAX_CHAIN_LENGTH': lambda x: x >= 1,
-        'MIN_BONE_LENGTH': positive,
-        'MIN_TARGET_DISTANCE': positive,
-    }
+    DEFAULT_POSITION_TOLERANCE = ValidatedDescriptor(
+        0.001,
+        positive,
+        "DEFAULT_POSITION_TOLERANCE must be positive",
+    )
 
-    _field_types = {
-        'DEFAULT_MAX_ITERATIONS': int,
-        'DEFAULT_POSITION_TOLERANCE': float,
-        'DEFAULT_ROTATION_TOLERANCE': float,
-        'MAX_CHAIN_LENGTH': int,
-        'MIN_BONE_LENGTH': float,
-        'MIN_TARGET_DISTANCE': float,
-    }
+    DEFAULT_ROTATION_TOLERANCE = ValidatedDescriptor(
+        0.01,
+        positive,
+        "DEFAULT_ROTATION_TOLERANCE must be positive",
+    )
+
+    # Solver constraints
+    MAX_CHAIN_LENGTH = ValidatedDescriptor(
+        10,
+        at_least(1),
+        "MAX_CHAIN_LENGTH must be at least 1",
+    )
+
+    # Distance thresholds to avoid numerical issues
+    MIN_BONE_LENGTH = ValidatedDescriptor(
+        0.001,
+        positive,
+        "MIN_BONE_LENGTH must be positive",
+    )
+
+    MIN_TARGET_DISTANCE = ValidatedDescriptor(
+        0.001,
+        positive,
+        "MIN_TARGET_DISTANCE must be positive",
+    )
 
 
-class ProceduralConfig(MutableConfigBase):
+class ProceduralConfig(MutableConfig):
     """Configuration for procedural animation."""
 
-    _field_defaults = {
-        'DEFAULT_SPRING_STIFFNESS': 10.0,
-        'DEFAULT_SPRING_DAMPING': 0.5,
-        'DEFAULT_SPRING_MASS': 1.0,
-        'DEFAULT_MAX_STRETCH': 0.5,
-        'DEFAULT_LOOK_SPEED': 5.0,
-        'DEFAULT_HORIZONTAL_LIMIT': 1.5708,
-        'DEFAULT_VERTICAL_LIMIT': 1.0472,
-        'DEFAULT_SWAY_FREQUENCY': 1.0,
-        'DEFAULT_NOISE_AMOUNT': 0.2,
-        'DEFAULT_BREATH_RATE': 0.25,
-        'DEFAULT_BREATH_DEPTH': 0.02,
-    }
+    # Spring defaults
+    DEFAULT_SPRING_STIFFNESS = ValidatedDescriptor(
+        10.0,
+        positive,
+        "DEFAULT_SPRING_STIFFNESS must be positive",
+    )
 
-    _field_validators = {
-        'DEFAULT_SPRING_STIFFNESS': positive,
-        'DEFAULT_SPRING_DAMPING': non_negative,
-        'DEFAULT_SPRING_MASS': positive,
-        'DEFAULT_MAX_STRETCH': non_negative,
-        'DEFAULT_LOOK_SPEED': positive,
-        'DEFAULT_HORIZONTAL_LIMIT': positive,
-        'DEFAULT_VERTICAL_LIMIT': positive,
-        'DEFAULT_SWAY_FREQUENCY': positive,
-        'DEFAULT_NOISE_AMOUNT': non_negative,
-        'DEFAULT_BREATH_RATE': positive,
-        'DEFAULT_BREATH_DEPTH': non_negative,
-    }
+    DEFAULT_SPRING_DAMPING = ValidatedDescriptor(
+        0.5,
+        non_negative,
+        "DEFAULT_SPRING_DAMPING must be non-negative",
+    )
 
-    _field_types = {
-        'DEFAULT_SPRING_STIFFNESS': float,
-        'DEFAULT_SPRING_DAMPING': float,
-        'DEFAULT_SPRING_MASS': float,
-        'DEFAULT_MAX_STRETCH': float,
-        'DEFAULT_LOOK_SPEED': float,
-        'DEFAULT_HORIZONTAL_LIMIT': float,
-        'DEFAULT_VERTICAL_LIMIT': float,
-        'DEFAULT_SWAY_FREQUENCY': float,
-        'DEFAULT_NOISE_AMOUNT': float,
-        'DEFAULT_BREATH_RATE': float,
-        'DEFAULT_BREATH_DEPTH': float,
-    }
+    DEFAULT_SPRING_MASS = ValidatedDescriptor(
+        1.0,
+        positive,
+        "DEFAULT_SPRING_MASS must be positive",
+    )
+
+    DEFAULT_MAX_STRETCH = ValidatedDescriptor(
+        0.5,
+        positive,
+        "DEFAULT_MAX_STRETCH must be positive",
+    )
+
+    # Look-at defaults
+    DEFAULT_LOOK_SPEED = ValidatedDescriptor(
+        5.0,
+        positive,
+        "DEFAULT_LOOK_SPEED must be positive",
+    )
+
+    DEFAULT_HORIZONTAL_LIMIT = ValidatedDescriptor(
+        1.5708,  # pi/2 radians (90 degrees)
+        positive,
+        "DEFAULT_HORIZONTAL_LIMIT must be positive",
+    )
+
+    DEFAULT_VERTICAL_LIMIT = ValidatedDescriptor(
+        1.0472,  # pi/3 radians (60 degrees)
+        positive,
+        "DEFAULT_VERTICAL_LIMIT must be positive",
+    )
+
+    # Sway defaults
+    DEFAULT_SWAY_FREQUENCY = ValidatedDescriptor(
+        1.0,
+        positive,
+        "DEFAULT_SWAY_FREQUENCY must be positive",
+    )
+
+    DEFAULT_NOISE_AMOUNT = ValidatedDescriptor(
+        0.2,
+        non_negative,
+        "DEFAULT_NOISE_AMOUNT must be non-negative",
+    )
+
+    # Breathing defaults
+    DEFAULT_BREATH_RATE = ValidatedDescriptor(
+        0.25,  # breaths/sec (15/min)
+        positive,
+        "DEFAULT_BREATH_RATE must be positive",
+    )
+
+    DEFAULT_BREATH_DEPTH = ValidatedDescriptor(
+        0.02,
+        positive,
+        "DEFAULT_BREATH_DEPTH must be positive",
+    )
 
 
-class SkinningConfig(MutableConfigBase):
+class SkinningConfig(MutableConfig):
     """Configuration for skinning system."""
 
-    _field_defaults = {
-        'DEFAULT_MAX_INFLUENCES': 4,
-        'DQ_BLEND_THRESHOLD': 0.5,
-        'MIN_QUATERNION_LENGTH': 0.0001,
-        'MIN_WEIGHT_THRESHOLD': 0.0001,
-    }
+    # Vertex skinning
+    DEFAULT_MAX_INFLUENCES = ValidatedDescriptor(
+        4,
+        at_least(1),
+        "DEFAULT_MAX_INFLUENCES must be at least 1",
+    )
 
-    _field_validators = {
-        'DEFAULT_MAX_INFLUENCES': lambda x: x >= 1,
-        'DQ_BLEND_THRESHOLD': in_range(0.0, 1.0),
-        'MIN_QUATERNION_LENGTH': positive,
-        'MIN_WEIGHT_THRESHOLD': positive,
-    }
+    # Dual quaternion threshold
+    DQ_BLEND_THRESHOLD = ValidatedDescriptor(
+        0.5,
+        in_range(0.0, 1.0),
+        "DQ_BLEND_THRESHOLD must be between 0.0 and 1.0",
+    )
 
-    _field_types = {
-        'DEFAULT_MAX_INFLUENCES': int,
-        'DQ_BLEND_THRESHOLD': float,
-        'MIN_QUATERNION_LENGTH': float,
-        'MIN_WEIGHT_THRESHOLD': float,
-    }
+    # Numerical stability
+    MIN_QUATERNION_LENGTH = ValidatedDescriptor(
+        0.0001,
+        positive,
+        "MIN_QUATERNION_LENGTH must be positive",
+    )
+
+    MIN_WEIGHT_THRESHOLD = ValidatedDescriptor(
+        0.0001,
+        positive,
+        "MIN_WEIGHT_THRESHOLD must be positive",
+    )
 
 
-class FacialConfig(MutableConfigBase):
+class FacialConfig(MutableConfig):
     """Configuration for facial animation."""
 
-    _field_defaults = {
-        'DEFAULT_PHONEME_TRANSITION': 0.08,
-        'SILENCE_VOLUME_THRESHOLD': 0.01,
-        'DEFAULT_BLINK_INTERVAL_MIN': 2.0,
-        'DEFAULT_BLINK_INTERVAL_MAX': 6.0,
-        'DEFAULT_BLINK_DURATION': 0.15,
-        'DEFAULT_SACCADE_INTENSITY': 0.01,
-    }
+    # Lip sync
+    DEFAULT_PHONEME_TRANSITION = ValidatedDescriptor(
+        0.08,
+        positive,
+        "DEFAULT_PHONEME_TRANSITION must be positive",
+    )
 
-    _field_validators = {
-        'DEFAULT_PHONEME_TRANSITION': non_negative,
-        'SILENCE_VOLUME_THRESHOLD': non_negative,
-        'DEFAULT_BLINK_INTERVAL_MIN': positive,
-        'DEFAULT_BLINK_INTERVAL_MAX': positive,
-        'DEFAULT_BLINK_DURATION': positive,
-        'DEFAULT_SACCADE_INTENSITY': non_negative,
-    }
+    SILENCE_VOLUME_THRESHOLD = ValidatedDescriptor(
+        0.01,
+        non_negative,
+        "SILENCE_VOLUME_THRESHOLD must be non-negative",
+    )
 
-    _field_types = {
-        'DEFAULT_PHONEME_TRANSITION': float,
-        'SILENCE_VOLUME_THRESHOLD': float,
-        'DEFAULT_BLINK_INTERVAL_MIN': float,
-        'DEFAULT_BLINK_INTERVAL_MAX': float,
-        'DEFAULT_BLINK_DURATION': float,
-        'DEFAULT_SACCADE_INTENSITY': float,
-    }
+    # Eye tracking
+    DEFAULT_BLINK_INTERVAL_MIN = ValidatedDescriptor(
+        2.0,
+        positive,
+        "DEFAULT_BLINK_INTERVAL_MIN must be positive",
+    )
+
+    DEFAULT_BLINK_INTERVAL_MAX = ValidatedDescriptor(
+        6.0,
+        positive,
+        "DEFAULT_BLINK_INTERVAL_MAX must be positive",
+    )
+
+    DEFAULT_BLINK_DURATION = ValidatedDescriptor(
+        0.15,
+        positive,
+        "DEFAULT_BLINK_DURATION must be positive",
+    )
+
+    DEFAULT_SACCADE_INTENSITY = ValidatedDescriptor(
+        0.01,
+        non_negative,
+        "DEFAULT_SACCADE_INTENSITY must be non-negative",
+    )
 
 
-class CrowdSystemConfig(MutableConfigBase):
+class CrowdSystemConfig(MutableConfig):
     """Configuration for crowd system."""
 
-    _field_defaults = {
-        'DEFAULT_UPDATE_RATE': 30.0,
-        'DEFAULT_MAX_VISIBLE': 10000,
-        'DEFAULT_MAX_AGENTS': 100000,
-        'DEFAULT_LOD_DISTANCES': (20.0, 50.0, 100.0, 200.0),
-        'DEFAULT_CULL_DISTANCE': 300.0,
-    }
+    # Default update rate
+    DEFAULT_UPDATE_RATE = ValidatedDescriptor(
+        30.0,
+        positive,
+        "DEFAULT_UPDATE_RATE must be positive",
+    )
 
-    _field_validators = {
-        'DEFAULT_UPDATE_RATE': positive,
-        'DEFAULT_MAX_VISIBLE': lambda x: x >= 1,
-        'DEFAULT_MAX_AGENTS': lambda x: x >= 1,
-        'DEFAULT_CULL_DISTANCE': positive,
-    }
+    # Instance limits
+    DEFAULT_MAX_VISIBLE = ValidatedDescriptor(
+        10000,
+        at_least(1),
+        "DEFAULT_MAX_VISIBLE must be at least 1",
+    )
 
-    _field_types = {
-        'DEFAULT_UPDATE_RATE': float,
-        'DEFAULT_MAX_VISIBLE': int,
-        'DEFAULT_MAX_AGENTS': int,
-        'DEFAULT_LOD_DISTANCES': tuple,
-        'DEFAULT_CULL_DISTANCE': float,
-    }
+    DEFAULT_MAX_AGENTS = ValidatedDescriptor(
+        100000,
+        at_least(1),
+        "DEFAULT_MAX_AGENTS must be at least 1",
+    )
+
+    # Default LOD distances for crowd system (immutable tuple)
+    DEFAULT_LOD_DISTANCES: tuple[float, ...] = (20.0, 50.0, 100.0, 200.0)
+
+    DEFAULT_CULL_DISTANCE = ValidatedDescriptor(
+        300.0,
+        positive,
+        "DEFAULT_CULL_DISTANCE must be positive",
+    )
 
 
 # Global configuration instances
+# These can be modified at runtime without application restart.
+# Invalid values will raise ConfigValidationError.
 ANIMATION_TEXTURE_CONFIG = AnimationTextureConfig()
 CROWD_RENDERER_CONFIG = CrowdRendererConfig()
 CROWD_LOD_CONFIG = CrowdLODConfig()
@@ -515,13 +698,56 @@ FACIAL_CONFIG = FacialConfig()
 CROWD_SYSTEM_CONFIG = CrowdSystemConfig()
 
 
+# Convenience function to reset all configs to defaults
 def reset_all_configs() -> None:
-    """Reset all mutable configs to their default values."""
-    CROWD_LOD_CONFIG.reset()
-    CROWD_BEHAVIOR_CONFIG.reset()
-    ANIMATION_SYSTEM_CONFIG.reset()
-    IK_CONFIG.reset()
-    PROCEDURAL_CONFIG.reset()
-    SKINNING_CONFIG.reset()
-    FACIAL_CONFIG.reset()
-    CROWD_SYSTEM_CONFIG.reset()
+    """Reset all mutable configurations to their default values."""
+    for config in [
+        CROWD_LOD_CONFIG,
+        CROWD_BEHAVIOR_CONFIG,
+        ANIMATION_SYSTEM_CONFIG,
+        IK_CONFIG,
+        PROCEDURAL_CONFIG,
+        SKINNING_CONFIG,
+        FACIAL_CONFIG,
+        CROWD_SYSTEM_CONFIG,
+    ]:
+        config.reset()
+
+
+__all__ = [
+    # Exception
+    "ConfigValidationError",
+    # Validation helpers
+    "ValidatedDescriptor",
+    "positive",
+    "non_negative",
+    "at_least",
+    "in_range",
+    "power_of_two",
+    # Base class
+    "MutableConfig",
+    # Config classes
+    "AnimationTextureConfig",
+    "CrowdRendererConfig",
+    "CrowdLODConfig",
+    "CrowdBehaviorConfig",
+    "AnimationSystemConfig",
+    "IKConfig",
+    "ProceduralConfig",
+    "SkinningConfig",
+    "FacialConfig",
+    "CrowdSystemConfig",
+    # Global instances
+    "ANIMATION_TEXTURE_CONFIG",
+    "CROWD_RENDERER_CONFIG",
+    "CROWD_LOD_CONFIG",
+    "CROWD_BEHAVIOR_CONFIG",
+    "ANIMATION_SYSTEM_CONFIG",
+    "IK_CONFIG",
+    "PROCEDURAL_CONFIG",
+    "SKINNING_CONFIG",
+    "FACIAL_CONFIG",
+    "CROWD_SYSTEM_CONFIG",
+    # Utility
+    "reset_all_configs",
+]

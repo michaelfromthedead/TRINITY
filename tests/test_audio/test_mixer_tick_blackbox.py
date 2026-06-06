@@ -83,10 +83,10 @@ class CallTrackingNode(DSPNode):
     """A DSP node that records all process_block calls and applies a gain."""
 
     def __init__(self, gain_factor: float = 1.0) -> None:
-        super().__init__()
         self._gain_factor = gain_factor
         self.process_block_calls: list[np.ndarray] = []
         self.process_block_count = 0
+        super().__init__()
 
     @property
     def gain_factor(self) -> float:

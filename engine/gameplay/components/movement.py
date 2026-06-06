@@ -333,6 +333,7 @@ class MovementComponent:
             self._ground_normal = Vec3.up()
 
         if grounded:
+            self._last_grounded_time = current_time
             self._jumps_remaining = self._max_jumps
 
             # Handle landing
@@ -346,7 +347,7 @@ class MovementComponent:
                     self._execute_jump()
         else:
             if was_grounded:
-                # Just left ground - record time for coyote time calculation
+                # Just left ground - record time for coyote time
                 self._last_grounded_time = current_time
                 if self.movement_state != MovementState.JUMPING:
                     self.movement_state = MovementState.AIRBORNE
@@ -521,6 +522,16 @@ class MovementComponent:
 
         settings = self.current_settings
 
+        # Update movement state based on input
+        if self._is_grounded:
+            if self.has_input:
+                self.movement_state = MovementState.MOVING
+            elif self.speed < MovementConstants.IDLE_SPEED_THRESHOLD:
+                self.movement_state = MovementState.IDLE
+        else:
+            if self.movement_state not in (MovementState.JUMPING,):
+                self.movement_state = MovementState.AIRBORNE
+
         # Determine control factor (reduced in air)
         control = 1.0 if self._is_grounded else settings.air_control
 
@@ -553,19 +564,13 @@ class MovementComponent:
             new_horizontal = current_horizontal + accel
             self.velocity = Vec3(new_horizontal.x, self.velocity.y, new_horizontal.z)
 
-        # Update movement state based on input (after velocity update)
-        if self._is_grounded:
-            if self.has_input:
-                self.movement_state = MovementState.MOVING
-            elif self.speed < MovementConstants.IDLE_SPEED_THRESHOLD:
-                self.movement_state = MovementState.IDLE
-        else:
-            if self.movement_state not in (MovementState.JUMPING,):
-                self.movement_state = MovementState.AIRBORNE
-
         # Update facing direction based on movement
         if self.is_moving and self.has_input:
             self.facing_direction = self.horizontal_velocity
+
+        # Post-update state check: transition to IDLE if speed dropped below threshold
+        if self._is_grounded and not self.has_input and self.speed < MovementConstants.IDLE_SPEED_THRESHOLD:
+            self.movement_state = MovementState.IDLE
 
     def apply_gravity(self, gravity: float, delta_time: float) -> None:
         """

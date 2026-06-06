@@ -113,6 +113,55 @@ class Registry:
         with self._lock:
             return [cls for cls in self._names if predicate(cls)]
 
+    def query(
+        self,
+        tag: Optional[str] = None,
+        **metadata_filters: Any,
+    ) -> list[type]:
+        """
+        Query registered types by tag and/or metadata filters.
+
+        Args:
+            tag: If provided, filter types that have this tag.
+            **metadata_filters: Key-value pairs to match against type metadata.
+
+        Returns:
+            List of types matching all specified criteria.
+
+        Examples:
+            >>> registry.query(tag="bt_node")  # All BT nodes
+            >>> registry.query(tag="bt_node", node_type="action")  # Action BT nodes
+            >>> registry.query(tag="goap_action", effect="has_weapon")  # GOAP with effect
+        """
+        with self._lock:
+            result = []
+            for cls in self._names:
+                meta = self._metadata.get(cls, {})
+
+                # Check tag filter
+                if tag is not None:
+                    tags = meta.get("_tags")
+                    if not tags or tag not in tags:
+                        continue
+
+                # Check metadata filters
+                match = True
+                for key, expected in metadata_filters.items():
+                    actual = meta.get(key)
+                    # Handle set membership for list-based filters (e.g., effects, preconditions)
+                    if isinstance(expected, str) and isinstance(actual, (list, set, frozenset)):
+                        if expected not in actual:
+                            match = False
+                            break
+                    elif actual != expected:
+                        match = False
+                        break
+
+                if match:
+                    result.append(cls)
+
+            return result
+
     # --- Instance Tracking ---
 
     def _wrap_init(self, cls: type) -> None:
@@ -150,6 +199,41 @@ class Registry:
             if cls not in self._metadata:
                 raise ValueError(f"Type {cls.__name__} is not registered")
             self._metadata[cls][key] = value
+
+    def add_tag(self, cls: type, tag: str) -> None:
+        """Add a tag to a registered type for query-based discovery."""
+        with self._lock:
+            if cls not in self._metadata:
+                raise ValueError(f"Type {cls.__name__} is not registered")
+            tags = self._metadata[cls].setdefault("_tags", set())
+            tags.add(tag)
+
+    def remove_tag(self, cls: type, tag: str) -> bool:
+        """Remove a tag from a registered type. Returns True if tag was present."""
+        with self._lock:
+            if cls not in self._metadata:
+                return False
+            tags = self._metadata[cls].get("_tags")
+            if tags and tag in tags:
+                tags.remove(tag)
+                return True
+            return False
+
+    def has_tag(self, cls: type, tag: str) -> bool:
+        """Check if a registered type has the given tag."""
+        with self._lock:
+            if cls not in self._metadata:
+                return False
+            tags = self._metadata[cls].get("_tags")
+            return tags is not None and tag in tags
+
+    def get_tags(self, cls: type) -> set[str]:
+        """Get all tags for a registered type."""
+        with self._lock:
+            if cls not in self._metadata:
+                return set()
+            tags = self._metadata[cls].get("_tags")
+            return set(tags) if tags else set()
 
     def get_metadata(self, cls: type, key: str) -> Any:
         """Get metadata value for a registered type."""

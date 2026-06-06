@@ -16,6 +16,7 @@ from .crowd_renderer import (
 )
 from .crowd_lod import (
     LODLevel,
+    LODTransitionMode,
     CrowdLOD,
     LODTransition,
     create_reduced_skeleton,
@@ -30,6 +31,9 @@ from .crowd_behavior import (
     FormationBehavior,
     CrowdSimulator,
     AgentState,
+    InvalidTransitionError,
+    is_valid_transition,
+    calculate_avoidance,
 )
 
 __all__ = [
@@ -47,6 +51,7 @@ __all__ = [
     "InstanceBuffer",
     # Crowd LOD
     "LODLevel",
+    "LODTransitionMode",
     "CrowdLOD",
     "LODTransition",
     "create_reduced_skeleton",
@@ -60,4 +65,7 @@ __all__ = [
     "FormationBehavior",
     "CrowdSimulator",
     "AgentState",
+    "InvalidTransitionError",
+    "is_valid_transition",
+    "calculate_avoidance",
 ]

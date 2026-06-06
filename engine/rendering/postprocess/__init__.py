@@ -74,6 +74,19 @@ from .bloom import (
     LensDirtSettings,
 )
 
+# Lens Flare
+from .lens_flare import (
+    create_cinematic_lens_flare,
+    create_disabled_lens_flare,
+    create_subtle_lens_flare,
+    GhostSettings,
+    HaloSettings,
+    LensFlareEffect,
+    LensFlareQuality,
+    LensFlareSettings,
+    StreakSettings,
+)
+
 # Tone Mapping
 from .tonemapping import (
     ACES,
@@ -183,6 +196,40 @@ from .upscaling import (
     XeSSUpscaler,
 )
 
+# Upscaler Plugins (T-PP-6.5)
+from .upscaler_plugins import (
+    DLSSPlugin,
+    FSRPlugin,
+    QualityPreset as UpscalerQualityPreset,
+    TSRLanczosPlugin,
+    UpscalerCapabilities,
+    UpscalerManager,
+    UpscalerPlugin,
+    XeSSPlugin,
+)
+
+# Cosmetic Effects
+from .cosmetic import (
+    CAQuality,
+    ChromaticAberrationEffect,
+    ChromaticAberrationSettings,
+    FilmGrainEffect,
+    FilmGrainSettings,
+    GrainQuality,
+    VignetteEffect,
+    VignetteSettings,
+)
+
+# Denoiser (Ray Tracing)
+from .denoiser import (
+    create_default_params,
+    create_quality_params,
+    Denoiser,
+    DenoiserParams,
+    DenoiserQuality,
+    GBuffer,
+)
+
 # Constants
 from .constants import (
     AA,
@@ -254,6 +301,16 @@ __all__ = [
     "BloomBlur",
     "BloomUpsample",
     "BloomEffect",
+    # Lens Flare
+    "LensFlareQuality",
+    "GhostSettings",
+    "HaloSettings",
+    "StreakSettings",
+    "LensFlareSettings",
+    "LensFlareEffect",
+    "create_cinematic_lens_flare",
+    "create_subtle_lens_flare",
+    "create_disabled_lens_flare",
     # Tone Mapping
     "TonemapOperator",
     "TonemapCurvePoint",
@@ -342,6 +399,15 @@ __all__ = [
     "DLSSUpscaler",
     "XeSSUpscaler",
     "UpscalingEffect",
+    # Upscaler Plugins (T-PP-6.5)
+    "DLSSPlugin",
+    "FSRPlugin",
+    "TSRLanczosPlugin",
+    "UpscalerCapabilities",
+    "UpscalerManager",
+    "UpscalerPlugin",
+    "UpscalerQualityPreset",
+    "XeSSPlugin",
     # Constants
     "EPSILON",
     "SAFE_LOG_MIN",
@@ -358,4 +424,20 @@ __all__ = [
     "LUMINANCE_COEFFS_BT709",
     "LUMINANCE_COEFFS_BT601",
     "calculate_luminance",
+    # Cosmetic Effects
+    "CAQuality",
+    "ChromaticAberrationEffect",
+    "ChromaticAberrationSettings",
+    "FilmGrainEffect",
+    "FilmGrainSettings",
+    "GrainQuality",
+    "VignetteEffect",
+    "VignetteSettings",
+    # Denoiser (Ray Tracing)
+    "create_default_params",
+    "create_quality_params",
+    "Denoiser",
+    "DenoiserParams",
+    "DenoiserQuality",
+    "GBuffer",
 ]

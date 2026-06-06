@@ -40,6 +40,7 @@ from engine.ui.binding.validation import (
     RequiredValidator,
     ValidationContext,
     ValidationResult,
+    ValidationTrigger,
 )
 
 
@@ -1091,7 +1092,9 @@ class TestBindingValidation:
     def test_validation_context_integration(self, source_object, target_object):
         """Test ValidationContext integration."""
         context = ValidationContext()
-        context.add_validator("name", RequiredValidator())
+        context.add_validator(
+            "name", RequiredValidator(trigger=ValidationTrigger.ON_CHANGE)
+        )
 
         binding = Binding(
             source=source_object,

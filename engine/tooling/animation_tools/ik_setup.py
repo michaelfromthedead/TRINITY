@@ -23,8 +23,6 @@ class IKChainType(Enum):
     """Types of IK chains."""
 
     LIMB = auto()       # Two-bone limb (arm, leg)
-    ARM = auto()        # Arm IK chain
-    LEG = auto()        # Leg IK chain
     SPINE = auto()      # Spine/tail chain
     CHAIN = auto()      # General multi-bone chain
     FULL_BODY = auto()  # Full body IK
@@ -46,10 +44,8 @@ class IKConstraintType(Enum):
     NONE = auto()           # No constraint
     HINGE = auto()          # Single-axis rotation (knee, elbow)
     BALL_SOCKET = auto()    # Cone constraint
-    CONE = auto()           # Cone angle constraint
     TWIST_LIMIT = auto()    # Twist rotation limit
     ANGLE_LIMIT = auto()    # General angle limit
-    DISTANCE = auto()       # Distance constraint
 
 
 # =============================================================================
@@ -62,7 +58,7 @@ class IKBone:
     """A bone in an IK chain.
 
     Attributes:
-        name: Name of the bone
+        bone_name: Name of the bone
         bone_index: Index in skeleton
         length: Bone length
         constraint_type: Type of constraint
@@ -72,7 +68,7 @@ class IKBone:
         stiffness: Bone stiffness (0-1)
     """
 
-    name: str
+    bone_name: str
     bone_index: int
     length: float = 0.0
     constraint_type: IKConstraintType = IKConstraintType.NONE
@@ -82,10 +78,15 @@ class IKBone:
     stiffness: float = 0.0
 
     def __post_init__(self) -> None:
-        if not self.name:
+        if not self.bone_name:
             raise ValueError("Bone name cannot be empty")
         if self.bone_index < 0:
-            raise ValueError(f"bone_index must be >= 0, got {self.bone_index}")
+            raise ValueError(f"Bone index must be >= 0, got {self.bone_index}")
+
+    @property
+    def name(self) -> str:
+        """Alias for bone_name."""
+        return self.bone_name
 
     def is_within_limits(self, angle: float) -> bool:
         """Check if angle is within limits."""
@@ -98,7 +99,7 @@ class IKBone:
     def copy(self) -> "IKBone":
         """Create a copy of this bone."""
         return IKBone(
-            name=self.name,
+            bone_name=self.bone_name,
             bone_index=self.bone_index,
             length=self.length,
             constraint_type=self.constraint_type,
@@ -107,7 +108,6 @@ class IKBone:
             max_angle=self.max_angle,
             stiffness=self.stiffness,
         )
-        return max(self.min_angle, min(self.max_angle, angle))
 
 
 # =============================================================================
@@ -115,73 +115,89 @@ class IKBone:
 # =============================================================================
 
 
+@dataclass
 class IKEffector:
     """An IK end effector.
 
     Attributes:
         name: Effector name
-        target_bone: Bone this effector is attached to
-        position: Target world position
-        rotation: Target world rotation
-        weight: Influence weight (0-1)
+        bone_name: Bone this effector is attached to
         position_weight: Weight for position solving (0-1)
         rotation_weight: Weight for rotation solving (0-1)
+        target_position: Target world position
+        target_rotation: Target world rotation
         offset: Local offset from bone
     """
 
-    def __init__(
-        self,
-        name: str,
-        target_bone: str,
-        position: Optional[Vec3] = None,
-        rotation: Optional[Quat] = None,
-        weight: float = 1.0,
-        position_weight: float = 1.0,
-        rotation_weight: float = 0.0,
-        offset: Optional[Vec3] = None,
-    ) -> None:
-        if not name:
-            raise ValueError("Effector name cannot be empty")
-        if not target_bone:
-            raise ValueError("Target bone cannot be empty")
+    name: str
+    bone_name: str
+    position_weight: float = 1.0
+    rotation_weight: float = 0.0
+    target_position: Vec3 = field(default_factory=lambda: Vec3(0, 0, 0))
+    target_rotation: Quat = field(default_factory=Quat.identity)
+    offset: Vec3 = field(default_factory=lambda: Vec3(0, 0, 0))
 
-        self.name = name
-        self.target_bone = target_bone
-        self.position = position if position is not None else Vec3(0, 0, 0)
-        self.rotation = rotation
-        self._weight = max(0.0, min(1.0, weight))
-        self.position_weight = position_weight
-        self.rotation_weight = rotation_weight
-        self.offset = offset if offset is not None else Vec3(0, 0, 0)
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("Effector name cannot be empty")
+        if not self.bone_name:
+            raise ValueError("Bone name cannot be empty")
+        self._clamp_weights()
+
+    def _clamp_weights(self) -> None:
+        """Clamp weight values to [0, 1]."""
+        self.position_weight = max(0.0, min(1.0, self.position_weight))
+        self.rotation_weight = max(0.0, min(1.0, self.rotation_weight))
+
+    @property
+    def target_bone(self) -> str:
+        """Alias for bone_name."""
+        return self.bone_name
 
     @property
     def weight(self) -> float:
-        """Get weight value."""
-        return self._weight
+        """Combined weight (alias for position_weight)."""
+        return self.position_weight
 
     @weight.setter
     def weight(self, value: float) -> None:
-        """Set weight, clamping to [0, 1]."""
-        self._weight = max(0.0, min(1.0, value))
+        self.position_weight = max(0.0, min(1.0, value))
 
-    def set_target(self, position: Vec3, rotation: Optional[Quat] = None) -> None:
-        """Set target position and optional rotation."""
-        self.position = position
-        if rotation is not None:
-            self.rotation = rotation
+    @property
+    def position(self) -> Vec3:
+        """Alias for target_position."""
+        return self.target_position
+
+    @position.setter
+    def position(self, value: Vec3) -> None:
+        self.target_position = value
+
+    @property
+    def rotation(self) -> Quat:
+        """Alias for target_rotation."""
+        return self.target_rotation
+
+    @rotation.setter
+    def rotation(self, value: Quat) -> None:
+        self.target_rotation = value
 
     def copy(self) -> "IKEffector":
         """Create a copy of this effector."""
         return IKEffector(
             name=self.name,
-            target_bone=self.target_bone,
-            position=Vec3(self.position.x, self.position.y, self.position.z),
-            rotation=self.rotation,
-            weight=self._weight,
+            bone_name=self.bone_name,
             position_weight=self.position_weight,
             rotation_weight=self.rotation_weight,
+            target_position=Vec3(self.target_position.x, self.target_position.y, self.target_position.z),
+            target_rotation=self.target_rotation,
             offset=Vec3(self.offset.x, self.offset.y, self.offset.z),
         )
+
+    def set_target(self, position: Vec3, rotation: Optional[Quat] = None) -> None:
+        """Set target position and optional rotation."""
+        self.target_position = position
+        if rotation is not None:
+            self.target_rotation = rotation
 
 
 # =============================================================================
@@ -226,46 +242,20 @@ class IKConstraint:
     """A constraint applied to IK solving.
 
     Attributes:
-        name: Constraint name
         constraint_type: Type of constraint
         bone_name: Bone to constrain
         axis: Constraint axis
         min_value: Minimum value
         max_value: Maximum value
-        cone_angle: Cone angle for CONE constraints
-        twist_limit: Twist limit for BALL_SOCKET constraints
-        min_distance: Minimum distance for DISTANCE constraints
-        max_distance: Maximum distance for DISTANCE constraints
         enabled: Whether constraint is active
     """
 
-    name: str
     constraint_type: IKConstraintType
     bone_name: str
     axis: Vec3 = field(default_factory=lambda: Vec3(0, 1, 0))
     min_value: float = -math.pi
     max_value: float = math.pi
-    cone_angle: float = 45.0
-    twist_limit: float = 90.0
-    min_distance: float = 0.0
-    max_distance: float = 1.0
     enabled: bool = True
-
-    def copy(self) -> "IKConstraint":
-        """Create a copy of this constraint."""
-        return IKConstraint(
-            name=self.name,
-            constraint_type=self.constraint_type,
-            bone_name=self.bone_name,
-            axis=Vec3(self.axis.x, self.axis.y, self.axis.z),
-            min_value=self.min_value,
-            max_value=self.max_value,
-            cone_angle=self.cone_angle,
-            twist_limit=self.twist_limit,
-            min_distance=self.min_distance,
-            max_distance=self.max_distance,
-            enabled=self.enabled,
-        )
 
     def apply(self, rotation: Quat, reference_axis: Vec3) -> Quat:
         """Apply constraint to a rotation.
@@ -360,13 +350,13 @@ class IKSolverConfig:
     """Base configuration for IK solvers.
 
     Attributes:
-        solver_type: Type of solver
+        solver_type: Type of solver (set by subclasses)
         iterations: Maximum iterations
         tolerance: Convergence tolerance
         damping: Damping factor for stability
     """
 
-    solver_type: IKSolverType = IKSolverType.FABRIK
+    solver_type: IKSolverType = field(default=IKSolverType.FABRIK, init=False)
     iterations: int = 10
     tolerance: float = 0.001
     damping: float = 0.1
@@ -380,19 +370,11 @@ class TwoBoneSolverConfig(IKSolverConfig):
         allow_twist: Whether to allow twist around bone axis
         use_pole_vector: Whether to use pole vector
         maintain_bone_lengths: Whether to preserve bone lengths
-        allow_stretching: Whether to allow bone stretching
-        stretch_start: Threshold to start stretching
-        stretch_max: Maximum stretch factor
-        softness: Softness factor for reaching target
     """
 
     allow_twist: bool = True
     use_pole_vector: bool = True
     maintain_bone_lengths: bool = True
-    allow_stretching: bool = False
-    stretch_start: float = 0.9
-    stretch_max: float = 1.2
-    softness: float = 0.0
 
     def __post_init__(self) -> None:
         self.solver_type = IKSolverType.TWO_BONE
@@ -406,19 +388,13 @@ class FABRIKSolverConfig(IKSolverConfig):
     Attributes:
         use_constraints: Whether to apply joint constraints
         blend_to_source: Blend factor with source pose
-        max_iterations: Maximum iterations (alias for iterations)
-        root_motion_enabled: Whether root motion is enabled
     """
 
     use_constraints: bool = True
     blend_to_source: float = 0.0
-    max_iterations: int = 10
-    root_motion_enabled: bool = False
 
     def __post_init__(self) -> None:
         self.solver_type = IKSolverType.FABRIK
-        # Sync iterations with max_iterations
-        self.iterations = self.max_iterations
 
 
 @dataclass
@@ -427,19 +403,14 @@ class CCDSolverConfig(IKSolverConfig):
 
     Attributes:
         limit_rotation: Maximum rotation per iteration
-        rotation_limit_per_iteration: Rotation limit per iteration in degrees
-        max_iterations: Maximum iterations
         joint_weights: Per-joint influence weights
     """
 
     limit_rotation: float = math.pi / 4  # 45 degrees
-    rotation_limit_per_iteration: float = 45.0  # In degrees
-    max_iterations: int = 10
     joint_weights: List[float] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.solver_type = IKSolverType.CCD
-        self.iterations = self.max_iterations
 
 
 @dataclass
@@ -449,15 +420,11 @@ class FullBodySolverConfig(IKSolverConfig):
     Attributes:
         root_motion_weight: Weight for root motion
         maintain_center_of_mass: Whether to maintain CoM
-        spine_stiffness: Stiffness of spine chain
-        pelvis_rotation_weight: Weight for pelvis rotation
         chain_configs: Per-chain configurations
     """
 
     root_motion_weight: float = 1.0
     maintain_center_of_mass: bool = True
-    spine_stiffness: float = 0.5
-    pelvis_rotation_weight: float = 1.0
     chain_configs: Dict[str, IKSolverConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -493,7 +460,6 @@ class IKChain:
         self._name = name
         self._chain_type = chain_type
         self._bones: List[IKBone] = []
-        self._constraints: List[IKConstraint] = []
         self._effector: Optional[IKEffector] = None
         self._pole_vector: Optional[IKPoleVector] = None
         self._solver_config: IKSolverConfig = IKSolverConfig(IKSolverType.FABRIK)
@@ -549,24 +515,14 @@ class IKChain:
         """Get total chain length."""
         return sum(bone.length for bone in self._bones)
 
-    @property
-    def constraints(self) -> List[IKConstraint]:
-        """Get all constraints on this chain."""
-        return list(self._constraints)
-
-    def add_bone(self, bone: IKBone) -> bool:
-        """Add a bone to the chain. Returns False if bone with same name exists."""
-        # Check for duplicate
-        for existing in self._bones:
-            if existing.name == bone.name:
-                return False
+    def add_bone(self, bone: IKBone) -> None:
+        """Add a bone to the chain."""
         self._bones.append(bone)
-        return True
 
     def remove_bone(self, bone_name: str) -> bool:
         """Remove a bone from the chain."""
         for i, bone in enumerate(self._bones):
-            if bone.name == bone_name:
+            if bone.bone_name == bone_name:
                 self._bones.pop(i)
                 return True
         return False
@@ -574,7 +530,7 @@ class IKChain:
     def get_bone(self, bone_name: str) -> Optional[IKBone]:
         """Get bone by name."""
         for bone in self._bones:
-            if bone.name == bone_name:
+            if bone.bone_name == bone_name:
                 return bone
         return None
 
@@ -585,11 +541,6 @@ class IKChain:
     def set_pole_vector(self, pole_vector: IKPoleVector) -> None:
         """Set the pole vector."""
         self._pole_vector = pole_vector
-
-    def add_constraint(self, constraint: IKConstraint) -> bool:
-        """Add a constraint to the chain."""
-        self._constraints.append(constraint)
-        return True
 
     def set_solver_config(self, config: IKSolverConfig) -> None:
         """Set solver configuration."""
@@ -626,22 +577,6 @@ class IKChain:
     def get_bone_indices(self) -> List[int]:
         """Get bone indices for solver."""
         return [bone.bone_index for bone in self._bones]
-
-    def copy(self) -> "IKChain":
-        """Create a copy of this chain."""
-        new_chain = IKChain(name=self._name, chain_type=self._chain_type)
-        for bone in self._bones:
-            new_chain.add_bone(bone.copy())
-        if self._effector:
-            new_chain.set_effector(self._effector.copy())
-        if self._pole_vector:
-            new_chain.set_pole_vector(self._pole_vector.copy())
-        new_chain._solver_config = self._solver_config
-        new_chain._enabled = self._enabled
-        if hasattr(self, '_constraints'):
-            for constraint in self._constraints:
-                new_chain.add_constraint(constraint.copy())
-        return new_chain
 
 
 # =============================================================================
@@ -684,17 +619,6 @@ class IKSetupEditor:
         self._selected_chain: Optional[str] = None
         self._selected_bone: Optional[str] = None
         self._on_change_callbacks: List[Callable[[], None]] = []
-        self._skeleton: Any = None
-
-    def load_skeleton(self, skeleton: Any) -> None:
-        """Load a skeleton for IK setup."""
-        self._skeleton = skeleton
-        self._notify_change()
-
-    @property
-    def skeleton(self) -> Any:
-        """Get the loaded skeleton."""
-        return self._skeleton
 
     @property
     def chains(self) -> List[IKChain]:
@@ -725,10 +649,10 @@ class IKSetupEditor:
         self,
         name: str,
         chain_type: IKChainType = IKChainType.CHAIN,
-    ) -> Optional[IKChain]:
-        """Create a new IK chain. Returns None if chain already exists."""
+    ) -> IKChain:
+        """Create a new IK chain."""
         if name in self._chains:
-            return None
+            raise ValueError(f"Chain '{name}' already exists")
 
         chain = IKChain(name, chain_type)
         self._chains[name] = chain
@@ -773,11 +697,6 @@ class IKSetupEditor:
             self._selected_chain = name
             self._selected_bone = None
 
-    def clear_selection(self) -> None:
-        """Clear chain and bone selection."""
-        self._selected_chain = None
-        self._selected_bone = None
-
     def select_bone(self, bone_name: Optional[str]) -> None:
         """Select a bone within the selected chain."""
         self._selected_bone = bone_name
@@ -795,7 +714,7 @@ class IKSetupEditor:
             return False
 
         bone = IKBone(
-            name=bone_name,
+            bone_name=bone_name,
             bone_index=bone_index,
             length=length,
         )
@@ -819,46 +738,44 @@ class IKSetupEditor:
     def set_effector(
         self,
         chain_name: str,
-        effector_name: str,
-        target_bone: str,
+        bone_name: str,
         position_weight: float = 1.0,
         rotation_weight: float = 0.0,
-    ) -> Optional[IKEffector]:
+    ) -> bool:
         """Set effector for a chain."""
         chain = self.get_chain(chain_name)
         if chain is None:
-            return None
+            return False
 
         effector = IKEffector(
-            name=effector_name,
-            target_bone=target_bone,
+            name=f"{chain_name}_effector",
+            bone_name=bone_name,
             position_weight=position_weight,
             rotation_weight=rotation_weight,
         )
         chain.set_effector(effector)
         self._notify_change()
-        return effector
+        return True
 
     def set_pole_vector(
         self,
         chain_name: str,
-        pole_name: str,
         position: Vec3,
         weight: float = 1.0,
-    ) -> Optional[IKPoleVector]:
+    ) -> bool:
         """Set pole vector for a chain."""
         chain = self.get_chain(chain_name)
         if chain is None:
-            return None
+            return False
 
         pole = IKPoleVector(
-            name=pole_name,
+            name=f"{chain_name}_pole",
             position=position,
             weight=weight,
         )
         chain.set_pole_vector(pole)
         self._notify_change()
-        return pole
+        return True
 
     def set_bone_constraint(
         self,
@@ -917,7 +834,7 @@ class IKSetupEditor:
 
         # Add bones
         chain.add_bone(IKBone(
-            name=upper_bone,
+            bone_name=upper_bone,
             bone_index=upper_index,
             length=upper_length,
             constraint_type=IKConstraintType.BALL_SOCKET,
@@ -925,7 +842,7 @@ class IKSetupEditor:
         ))
 
         chain.add_bone(IKBone(
-            name=lower_bone,
+            bone_name=lower_bone,
             bone_index=lower_index,
             length=lower_length,
             constraint_type=IKConstraintType.HINGE,
@@ -934,7 +851,7 @@ class IKSetupEditor:
         ))
 
         chain.add_bone(IKBone(
-            name=end_bone,
+            bone_name=end_bone,
             bone_index=end_index,
             length=0,
         ))
@@ -942,7 +859,7 @@ class IKSetupEditor:
         # Set effector
         chain.set_effector(IKEffector(
             name=f"{name}_effector",
-            target_bone=end_bone,
+            bone_name=end_bone,
         ))
 
         # Set pole vector
@@ -961,23 +878,18 @@ class IKSetupEditor:
     def create_spine_ik(
         self,
         name: str,
-        bones: List[Tuple[str, int]],  # (name, index) - length is optional
-    ) -> Optional[IKChain]:
+        bones: List[Tuple[str, int, float]],  # (name, index, length)
+    ) -> IKChain:
         """Create a spine IK setup."""
-        if len(bones) < 2:
-            return None
+        if len(bones) < 3:
+            raise ValueError("Spine chain requires at least 3 bones")
 
         chain = self.create_chain(name, IKChainType.SPINE)
-        if chain is None:
-            return None
 
-        # Add bones - bones can be 2-tuple (name, index) or 3-tuple (name, index, length)
-        for bone_data in bones:
-            bone_name = bone_data[0]
-            bone_index = bone_data[1]
-            length = bone_data[2] if len(bone_data) > 2 else 1.0
+        # Add bones
+        for bone_name, bone_index, length in bones:
             chain.add_bone(IKBone(
-                name=bone_name,
+                bone_name=bone_name,
                 bone_index=bone_index,
                 length=length,
                 constraint_type=IKConstraintType.BALL_SOCKET,
@@ -988,226 +900,17 @@ class IKSetupEditor:
         last_bone = bones[-1][0]
         chain.set_effector(IKEffector(
             name=f"{name}_effector",
-            target_bone=last_bone,
+            bone_name=last_bone,
         ))
 
         # Configure FABRIK solver
         chain.set_solver_config(FABRIKSolverConfig(
-            max_iterations=15,
+            iterations=15,
             tolerance=0.001,
         ))
 
         self._notify_change()
         return chain
-
-    @property
-    def available_bones(self) -> List[Any]:
-        """Get list of available bones from loaded skeleton."""
-        if self._skeleton is None:
-            return []
-        if hasattr(self._skeleton, '__iter__'):
-            return list(self._skeleton)
-        return []
-
-    def add_constraint(
-        self,
-        chain_name: str,
-        constraint_name: str,
-        constraint_type: IKConstraintType,
-        bone_name: str,
-    ) -> Optional[IKConstraint]:
-        """Add a constraint to a chain."""
-        chain = self.get_chain(chain_name)
-        if chain is None:
-            return None
-
-        constraint = IKConstraint(
-            name=constraint_name,
-            constraint_type=constraint_type,
-            bone_name=bone_name,
-        )
-        chain.add_constraint(constraint)
-        self._notify_change()
-        return constraint
-
-    def set_solver_config(
-        self,
-        chain_name: str,
-        config: IKSolverConfig,
-    ) -> bool:
-        """Set solver config for a chain."""
-        chain = self.get_chain(chain_name)
-        if chain is None:
-            return False
-
-        chain.set_solver_config(config)
-        self._notify_change()
-        return True
-
-    def create_arm_ik(
-        self,
-        name: str,
-        upper_bone: str,
-        upper_index: int,
-        lower_bone: str,
-        lower_index: int,
-        hand_bone: str,
-        hand_index: int,
-        upper_length: float = 1.0,
-        lower_length: float = 1.0,
-        pole_position: Optional[Vec3] = None,
-    ) -> IKChain:
-        """Create an arm IK setup."""
-        chain = self.create_chain(name, IKChainType.ARM)
-
-        chain.add_bone(IKBone(
-            name=upper_bone,
-            bone_index=upper_index,
-            length=upper_length,
-            constraint_type=IKConstraintType.BALL_SOCKET,
-            max_angle=math.pi * 0.8,
-        ))
-
-        chain.add_bone(IKBone(
-            name=lower_bone,
-            bone_index=lower_index,
-            length=lower_length,
-            constraint_type=IKConstraintType.HINGE,
-            min_angle=0,
-            max_angle=math.pi * 0.9,
-        ))
-
-        chain.add_bone(IKBone(
-            name=hand_bone,
-            bone_index=hand_index,
-            length=0,
-        ))
-
-        chain.set_effector(IKEffector(
-            name=f"{name}_effector",
-            target_bone=hand_bone,
-        ))
-
-        if pole_position:
-            chain.set_pole_vector(IKPoleVector(
-                name=f"{name}_pole",
-                position=pole_position,
-            ))
-
-        chain.set_solver_config(TwoBoneSolverConfig())
-        self._notify_change()
-        return chain
-
-    def create_leg_ik(
-        self,
-        name: str,
-        thigh_bone: str,
-        thigh_index: int,
-        calf_bone: str,
-        calf_index: int,
-        foot_bone: str,
-        foot_index: int,
-        thigh_length: float = 1.0,
-        calf_length: float = 1.0,
-        pole_position: Optional[Vec3] = None,
-    ) -> IKChain:
-        """Create a leg IK setup."""
-        chain = self.create_chain(name, IKChainType.LEG)
-
-        chain.add_bone(IKBone(
-            name=thigh_bone,
-            bone_index=thigh_index,
-            length=thigh_length,
-            constraint_type=IKConstraintType.BALL_SOCKET,
-            max_angle=math.pi * 0.7,
-        ))
-
-        chain.add_bone(IKBone(
-            name=calf_bone,
-            bone_index=calf_index,
-            length=calf_length,
-            constraint_type=IKConstraintType.HINGE,
-            min_angle=-math.pi * 0.9,
-            max_angle=0,
-        ))
-
-        chain.add_bone(IKBone(
-            name=foot_bone,
-            bone_index=foot_index,
-            length=0,
-        ))
-
-        chain.set_effector(IKEffector(
-            name=f"{name}_effector",
-            target_bone=foot_bone,
-        ))
-
-        if pole_position:
-            chain.set_pole_vector(IKPoleVector(
-                name=f"{name}_pole",
-                position=pole_position,
-            ))
-
-        chain.set_solver_config(TwoBoneSolverConfig())
-        self._notify_change()
-        return chain
-
-    def auto_detect_chains(self) -> int:
-        """Auto-detect IK chains from skeleton naming conventions."""
-        count = 0
-        # Simple auto-detection based on common naming patterns
-        if self._skeleton is not None:
-            # This would analyze skeleton structure and create chains
-            # For now, return 0 as we need skeleton structure info
-            pass
-        return count
-
-    def validate_chain(self, chain_name: str) -> List[str]:
-        """Validate a specific chain."""
-        errors = []
-        chain = self.get_chain(chain_name)
-        if chain is None:
-            errors.append(f"Chain '{chain_name}' not found")
-            return errors
-
-        if chain.bone_count < 2:
-            errors.append(f"Chain '{chain_name}' has fewer than 2 bones")
-        if chain.effector is None:
-            errors.append(f"Chain '{chain_name}' has no effector")
-
-        indices = chain.get_bone_indices()
-        if len(indices) != len(set(indices)):
-            errors.append(f"Chain '{chain_name}' has duplicate bone indices")
-
-        return errors
-
-    def get_chains_by_type(self, chain_type: IKChainType) -> List[IKChain]:
-        """Get all chains of a specific type."""
-        return [chain for chain in self._chains.values() if chain.chain_type == chain_type]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Export editor state to dictionary."""
-        return {
-            "chains": {
-                name: {
-                    "name": chain.name,
-                    "chain_type": chain.chain_type.name,
-                    "bone_count": chain.bone_count,
-                }
-                for name, chain in self._chains.items()
-            },
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "IKSetupEditor":
-        """Create editor from dictionary."""
-        editor = cls()
-        if "chains" in data:
-            for name, chain_data in data["chains"].items():
-                chain_type_name = chain_data.get("chain_type", "CHAIN")
-                chain_type = IKChainType[chain_type_name]
-                editor.create_chain(name, chain_type)
-        return editor
 
     def validate(self) -> List[str]:
         """Validate all IK setups."""

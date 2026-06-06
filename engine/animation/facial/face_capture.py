@@ -680,6 +680,11 @@ class FaceCaptureRetargeter:
     Retargets face capture data between different blend shape sets.
 
     Handles name mapping, scaling, and value transformations.
+
+    Supports:
+    - Single source -> single target mappings
+    - Single source -> multiple targets (one-to-many)
+    - Multiple sources -> single target (many-to-one, accumulates)
     """
 
     def __init__(
@@ -692,10 +697,16 @@ class FaceCaptureRetargeter:
         Args:
             mappings: Initial retarget mappings
         """
-        self._mappings: dict[str, RetargetMapping] = {}
+        # Store mappings as list per source for one-to-many support
+        self._mappings: dict[str, list[RetargetMapping]] = {}
         if mappings:
             for mapping in mappings:
-                self._mappings[mapping.source_name] = mapping
+                self.add_mapping(
+                    mapping.source_name,
+                    mapping.target_name,
+                    mapping.scale,
+                    mapping.offset,
+                )
 
         # Unmapped shape behavior
         self._pass_through_unmapped: bool = True
@@ -703,36 +714,82 @@ class FaceCaptureRetargeter:
 
     @property
     def mapping_count(self) -> int:
-        """Get number of mappings."""
-        return len(self._mappings)
+        """Get total number of mappings."""
+        return sum(len(mappings) for mappings in self._mappings.values())
 
-    def add_mapping(self, mapping: RetargetMapping) -> None:
+    def add_mapping(
+        self,
+        source_name: str,
+        target_name: str,
+        scale: float = 1.0,
+        offset: float = 0.0,
+    ) -> None:
         """
         Add a retarget mapping.
 
         Args:
-            mapping: The mapping to add
+            source_name: Source blend shape name
+            target_name: Target blend shape name
+            scale: Value scale factor (default 1.0)
+            offset: Value offset (default 0.0)
         """
-        self._mappings[mapping.source_name] = mapping
+        mapping = RetargetMapping(
+            source_name=source_name,
+            target_name=target_name,
+            scale=scale,
+            offset=offset,
+        )
+        if source_name not in self._mappings:
+            self._mappings[source_name] = []
+        self._mappings[source_name].append(mapping)
 
-    def remove_mapping(self, source_name: str) -> bool:
+    def remove_mapping(
+        self,
+        source_name: str,
+        target_name: Optional[str] = None,
+    ) -> bool:
         """
-        Remove a mapping.
+        Remove a mapping or all mappings for a source.
 
         Args:
             source_name: Source shape name
+            target_name: Optional target name. If None, removes all mappings
+                for the source.
 
         Returns:
-            True if removed
+            True if any mapping was removed
         """
-        if source_name in self._mappings:
+        if source_name not in self._mappings:
+            return False
+
+        if target_name is None:
+            # Remove all mappings for this source
             del self._mappings[source_name]
             return True
-        return False
+        else:
+            # Remove specific source->target mapping
+            mappings = self._mappings[source_name]
+            original_len = len(mappings)
+            self._mappings[source_name] = [
+                m for m in mappings if m.target_name != target_name
+            ]
+            # Clean up empty list
+            if not self._mappings[source_name]:
+                del self._mappings[source_name]
+            return len(self._mappings.get(source_name, [])) < original_len
+
+    def clear_mappings(self) -> None:
+        """Remove all mappings."""
+        self._mappings.clear()
 
     def get_mapping(self, source_name: str) -> Optional[RetargetMapping]:
-        """Get mapping for a source shape."""
-        return self._mappings.get(source_name)
+        """Get first mapping for a source shape (legacy compatibility)."""
+        mappings = self._mappings.get(source_name)
+        return mappings[0] if mappings else None
+
+    def get_mappings(self, source_name: str) -> list[RetargetMapping]:
+        """Get all mappings for a source shape."""
+        return self._mappings.get(source_name, []).copy()
 
     def set_pass_through(self, enabled: bool, scale: float = 1.0) -> None:
         """
@@ -745,12 +802,59 @@ class FaceCaptureRetargeter:
         self._pass_through_unmapped = enabled
         self._unmapped_scale = scale
 
-    def retarget_weights(
+    def retarget(
         self,
         source_weights: dict[str, float],
     ) -> dict[str, float]:
         """
         Retarget blend shape weights.
+
+        Applies all configured mappings:
+        - Single source -> single target: target = source * scale + offset
+        - Single source -> multiple targets: each gets source * scale + offset
+        - Multiple sources -> single target: accumulates (sums contributions)
+        - Missing source shapes are skipped silently
+        - Results are clamped to [0, 1]
+
+        Args:
+            source_weights: Source blend shape weights
+
+        Returns:
+            Retargeted weights dictionary
+        """
+        result: dict[str, float] = {}
+
+        for source_name, value in source_weights.items():
+            mappings = self._mappings.get(source_name)
+
+            if mappings:
+                # Apply all mappings for this source (one-to-many)
+                for mapping in mappings:
+                    target_name = mapping.target_name
+                    target_value = mapping.apply(value)
+
+                    # Accumulate (for many-to-one mappings)
+                    if target_name in result:
+                        result[target_name] += target_value
+                    else:
+                        result[target_name] = target_value
+
+            elif self._pass_through_unmapped:
+                # Pass through with optional scaling
+                result[source_name] = value * self._unmapped_scale
+
+        # Clamp all values to [0, 1]
+        for name in result:
+            result[name] = max(0.0, min(1.0, result[name]))
+
+        return result
+
+    def retarget_weights(
+        self,
+        source_weights: dict[str, float],
+    ) -> dict[str, float]:
+        """
+        Retarget blend shape weights (legacy alias for retarget).
 
         Args:
             source_weights: Source weights
@@ -758,31 +862,7 @@ class FaceCaptureRetargeter:
         Returns:
             Retargeted weights
         """
-        result: dict[str, float] = {}
-
-        for source_name, value in source_weights.items():
-            mapping = self._mappings.get(source_name)
-
-            if mapping:
-                # Apply mapping
-                target_name = mapping.target_name
-                target_value = mapping.apply(value)
-
-                # Accumulate (for many-to-one mappings)
-                if target_name in result:
-                    result[target_name] = min(1.0, result[target_name] + target_value)
-                else:
-                    result[target_name] = target_value
-
-            elif self._pass_through_unmapped:
-                # Pass through with optional scaling
-                result[source_name] = value * self._unmapped_scale
-
-        # Clamp all values
-        for name in result:
-            result[name] = max(0.0, min(1.0, result[name]))
-
-        return result
+        return self.retarget(source_weights)
 
     def retarget_clip(
         self,
@@ -810,39 +890,70 @@ class FaceCaptureRetargeter:
 
         # Process each curve
         for source_name, source_curve in source_clip.curves.items():
-            mapping = self._mappings.get(source_name)
+            mappings = self._mappings.get(source_name)
 
-            if mapping:
-                target_curve_name = mapping.target_name
-                scale = mapping.scale
-                offset = mapping.offset
+            if mappings:
+                # Apply all mappings (one-to-many support)
+                for mapping in mappings:
+                    target_curve_name = mapping.target_name
+                    scale = mapping.scale
+                    offset = mapping.offset
+
+                    self._apply_curve_mapping(
+                        source_curve,
+                        target_clip,
+                        target_curve_name,
+                        scale,
+                        offset,
+                    )
             elif self._pass_through_unmapped:
-                target_curve_name = source_name
-                scale = self._unmapped_scale
-                offset = 0.0
-            else:
-                continue
-
-            # Create or get target curve
-            if target_curve_name not in target_clip.curves:
-                target_curve = AnimationCurve(
-                    name=target_curve_name,
-                    interpolation=source_curve.interpolation,
-                )
-                target_clip.add_curve(target_curve)
-            else:
-                target_curve = target_clip.curves[target_curve_name]
-
-            # Copy and transform keyframes
-            for kf in source_curve.keyframes:
-                target_curve.add_keyframe(
-                    time=kf.time,
-                    value=max(0.0, min(1.0, kf.value * scale + offset)),
-                    in_tangent=kf.in_tangent * scale,
-                    out_tangent=kf.out_tangent * scale,
+                # Pass through unmapped
+                self._apply_curve_mapping(
+                    source_curve,
+                    target_clip,
+                    source_name,
+                    self._unmapped_scale,
+                    0.0,
                 )
 
         return target_clip
+
+    def _apply_curve_mapping(
+        self,
+        source_curve: AnimationCurve,
+        target_clip: FaceCaptureClip,
+        target_curve_name: str,
+        scale: float,
+        offset: float,
+    ) -> None:
+        """
+        Apply a mapping from source curve to target clip.
+
+        Args:
+            source_curve: Source animation curve
+            target_clip: Target clip to add curve to
+            target_curve_name: Name for target curve
+            scale: Scale factor
+            offset: Offset value
+        """
+        # Create or get target curve
+        if target_curve_name not in target_clip.curves:
+            target_curve = AnimationCurve(
+                name=target_curve_name,
+                interpolation=source_curve.interpolation,
+            )
+            target_clip.add_curve(target_curve)
+        else:
+            target_curve = target_clip.curves[target_curve_name]
+
+        # Copy and transform keyframes
+        for kf in source_curve.keyframes:
+            target_curve.add_keyframe(
+                time=kf.time,
+                value=max(0.0, min(1.0, kf.value * scale + offset)),
+                in_tangent=kf.in_tangent * scale,
+                out_tangent=kf.out_tangent * scale,
+            )
 
     def create_identity_mappings(self, shape_names: Sequence[str]) -> None:
         """
@@ -852,25 +963,21 @@ class FaceCaptureRetargeter:
             shape_names: List of shape names
         """
         for name in shape_names:
-            self._mappings[name] = RetargetMapping(
-                source_name=name,
-                target_name=name,
-                scale=1.0,
-                offset=0.0,
-            )
+            self.add_mapping(name, name, scale=1.0, offset=0.0)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""
-        return {
-            "mappings": [
-                {
+        all_mappings = []
+        for mappings in self._mappings.values():
+            for m in mappings:
+                all_mappings.append({
                     "source_name": m.source_name,
                     "target_name": m.target_name,
                     "scale": m.scale,
                     "offset": m.offset,
-                }
-                for m in self._mappings.values()
-            ],
+                })
+        return {
+            "mappings": all_mappings,
             "pass_through_unmapped": self._pass_through_unmapped,
             "unmapped_scale": self._unmapped_scale,
         }

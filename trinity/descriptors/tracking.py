@@ -55,16 +55,16 @@ class TrackedDescriptor(BaseDescriptor[T]):
     def post_set(self, obj: Any, value: T, old_value: Optional[T]) -> None:
         """Mark field as dirty if value changed."""
         if value != old_value:
+            # Always track in set for is_dirty() compatibility
+            if not hasattr(obj, "_dirty_fields"):
+                obj._dirty_fields = set()
+            obj._dirty_fields.add(self._name)
+
             if self._use_bitmask:
-                # Use bitmask for high-performance tracking
+                # Also use bitmask for high-performance network delta
                 if not hasattr(obj, "_dirty_mask"):
                     obj._dirty_mask = 0
                 obj._dirty_mask |= 1 << self._field_offset
-            else:
-                # Use set for flexibility
-                if not hasattr(obj, "_dirty_fields"):
-                    obj._dirty_fields = set()
-                obj._dirty_fields.add(self._name)
 
             # Foundation integration: notify central tracker
             self._notify_foundation_tracker(obj, old_value, value)

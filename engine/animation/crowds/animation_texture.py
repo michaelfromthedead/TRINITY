@@ -112,7 +112,7 @@ class AnimationTexture:
         )
 
     def sample_bone_transform(self, bone_index: int, time: float) -> Transform:
-        """Sample bone transform at arbitrary time with interpolation.
+        """Sample bone transform at arbitrary time with linear interpolation.
 
         Args:
             bone_index: Index of the bone
@@ -138,44 +138,44 @@ class AnimationTexture:
         return transform_a.lerp(transform_b, blend)
 
     def sample_bone_transform_cubic(self, bone_index: int, time: float) -> Transform:
-        """Sample bone transform at arbitrary time with cubic interpolation.
+        """Sample bone transform at arbitrary time with Cubic Hermite interpolation.
 
-        Uses Catmull-Rom for translation/scale and SQUAD for rotation.
-        Falls back to linear interpolation if fewer than 4 frames.
+        Provides smoother animation curves than linear interpolation by using
+        Catmull-Rom splines for position/scale and SQUAD for rotation.
 
         Args:
             bone_index: Index of the bone
             time: Time in seconds
 
         Returns:
-            Interpolated transform using cubic interpolation
+            Smoothly interpolated transform
         """
-        if bone_index >= self.bone_count:
-            return Transform.identity()
-
+        # Edge case: single frame or invalid animation
         if self.duration <= 0 or self.frame_count <= 1:
             return self.get_bone_transform(bone_index, 0)
 
-        # Fall back to linear for 2-3 frames
-        if self.frame_count < 4:
+        # Edge case: only 2 frames - fall back to linear interpolation
+        if self.frame_count == 2:
             return self.sample_bone_transform(bone_index, time)
 
         # Normalize time to frame
         normalized_time = (time % self.duration) / self.duration
         frame_float = normalized_time * (self.frame_count - 1)
 
-        frame_1 = int(frame_float)
-        blend = frame_float - frame_1
+        # Get the four frames needed for cubic interpolation
+        frame1 = int(frame_float)
+        frame2 = min(frame1 + 1, self.frame_count - 1)
 
-        # Get four frames for cubic interpolation
-        frame_0 = max(0, frame_1 - 1)
-        frame_2 = min(frame_1 + 1, self.frame_count - 1)
-        frame_3 = min(frame_1 + 2, self.frame_count - 1)
+        # Clamp frame0 and frame3 to valid range
+        frame0 = max(frame1 - 1, 0)
+        frame3 = min(frame2 + 1, self.frame_count - 1)
 
-        t0 = self.get_bone_transform(bone_index, frame_0)
-        t1 = self.get_bone_transform(bone_index, frame_1)
-        t2 = self.get_bone_transform(bone_index, frame_2)
-        t3 = self.get_bone_transform(bone_index, frame_3)
+        blend = frame_float - frame1
+
+        t0 = self.get_bone_transform(bone_index, frame0)
+        t1 = self.get_bone_transform(bone_index, frame1)
+        t2 = self.get_bone_transform(bone_index, frame2)
+        t3 = self.get_bone_transform(bone_index, frame3)
 
         return cubic_hermite_interpolate_transform(t0, t1, t2, t3, blend)
 
@@ -242,7 +242,7 @@ class AnimationTextureAtlas:
         return (start_row / self.height, (start_row + frame_count) / self.height)
 
     def sample_clip(self, name: str, bone_index: int, time: float) -> Transform:
-        """Sample a specific clip at given time.
+        """Sample a specific clip at given time with linear interpolation.
 
         Args:
             name: Clip name
@@ -274,10 +274,9 @@ class AnimationTextureAtlas:
         return transform_a.lerp(transform_b, blend)
 
     def sample_clip_cubic(self, name: str, bone_index: int, time: float) -> Transform:
-        """Sample a specific clip at given time with cubic interpolation.
+        """Sample a specific clip with Cubic Hermite interpolation.
 
-        Uses Catmull-Rom for translation/scale and SQUAD for rotation.
-        Falls back to linear interpolation if fewer than 4 frames.
+        Provides smoother animation curves than linear interpolation.
 
         Args:
             name: Clip name
@@ -285,36 +284,38 @@ class AnimationTextureAtlas:
             time: Time in seconds
 
         Returns:
-            Sampled transform using cubic interpolation
+            Smoothly interpolated transform
         """
         info = self.clips.get(name)
         if info is None:
             return Transform.identity()
 
         start_row, frame_count, frame_rate = info
+
+        # Edge case: single frame or invalid frame rate
         if frame_count <= 1 or frame_rate <= 0:
             return self._get_bone_transform(bone_index, start_row)
 
-        # Fall back to linear for 2-3 frames
-        if frame_count < 4:
+        # Edge case: only 2 frames - fall back to linear
+        if frame_count == 2:
             return self.sample_clip(name, bone_index, time)
 
         duration = frame_count / frame_rate
         normalized_time = (time % duration) / duration
         frame_float = normalized_time * (frame_count - 1)
 
-        frame_1 = int(frame_float)
-        blend = frame_float - frame_1
+        # Get the four frames needed for cubic interpolation
+        frame1 = int(frame_float)
+        frame2 = min(frame1 + 1, frame_count - 1)
+        frame0 = max(frame1 - 1, 0)
+        frame3 = min(frame2 + 1, frame_count - 1)
 
-        # Get four frames for cubic interpolation
-        frame_0 = max(0, frame_1 - 1)
-        frame_2 = min(frame_1 + 1, frame_count - 1)
-        frame_3 = min(frame_1 + 2, frame_count - 1)
+        blend = frame_float - frame1
 
-        t0 = self._get_bone_transform(bone_index, start_row + frame_0)
-        t1 = self._get_bone_transform(bone_index, start_row + frame_1)
-        t2 = self._get_bone_transform(bone_index, start_row + frame_2)
-        t3 = self._get_bone_transform(bone_index, start_row + frame_3)
+        t0 = self._get_bone_transform(bone_index, start_row + frame0)
+        t1 = self._get_bone_transform(bone_index, start_row + frame1)
+        t2 = self._get_bone_transform(bone_index, start_row + frame2)
+        t3 = self._get_bone_transform(bone_index, start_row + frame3)
 
         return cubic_hermite_interpolate_transform(t0, t1, t2, t3, blend)
 
@@ -597,21 +598,19 @@ def unpack_rgba8_to_float(
     return min_val + normalized * (max_val - min_val)
 
 
-# =============================================================================
-# CUBIC HERMITE (CATMULL-ROM) INTERPOLATION
-# =============================================================================
+def cubic_hermite_interpolate(
+    p0: float, p1: float, p2: float, p3: float, t: float
+) -> float:
+    """Cubic Hermite (Catmull-Rom) interpolation between p1 and p2.
 
-def cubic_hermite_interpolate(p0: float, p1: float, p2: float, p3: float, t: float) -> float:
-    """Catmull-Rom spline interpolation for scalar values.
-
-    Interpolates between p1 and p2, using p0 and p3 as control points.
-    At t=0 returns p1, at t=1 returns p2.
+    Uses p0 and p3 as control points to compute tangents.
+    The result interpolates between p1 (t=0) and p2 (t=1).
 
     Args:
-        p0: Control point before p1
+        p0: Point before p1 (for tangent calculation)
         p1: Start point (t=0)
         p2: End point (t=1)
-        p3: Control point after p2
+        p3: Point after p2 (for tangent calculation)
         t: Interpolation parameter [0, 1]
 
     Returns:
@@ -620,30 +619,24 @@ def cubic_hermite_interpolate(p0: float, p1: float, p2: float, p3: float, t: flo
     t2 = t * t
     t3 = t2 * t
 
-    # Catmull-Rom basis functions
-    return 0.5 * (
-        (2.0 * p1) +
-        (-p0 + p2) * t +
-        (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
-        (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
-    )
+    # Catmull-Rom coefficients
+    # m0 = (p2 - p0) / 2, m1 = (p3 - p1) / 2
+    # Result = (2t^3 - 3t^2 + 1)*p1 + (t^3 - 2t^2 + t)*m0 + (-2t^3 + 3t^2)*p2 + (t^3 - t^2)*m1
+    m0 = (p2 - p0) * 0.5
+    m1 = (p3 - p1) * 0.5
+
+    a = 2.0 * t3 - 3.0 * t2 + 1.0
+    b = t3 - 2.0 * t2 + t
+    c = -2.0 * t3 + 3.0 * t2
+    d = t3 - t2
+
+    return a * p1 + b * m0 + c * p2 + d * m1
 
 
-def cubic_hermite_interpolate_vec3(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: float) -> Vec3:
-    """Catmull-Rom spline interpolation for Vec3 values.
-
-    Interpolates between p1 and p2, using p0 and p3 as control points.
-
-    Args:
-        p0: Control point before p1
-        p1: Start point (t=0)
-        p2: End point (t=1)
-        p3: Control point after p2
-        t: Interpolation parameter [0, 1]
-
-    Returns:
-        Interpolated Vec3
-    """
+def cubic_hermite_interpolate_vec3(
+    p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: float
+) -> Vec3:
+    """Cubic Hermite interpolation for Vec3."""
     return Vec3(
         cubic_hermite_interpolate(p0.x, p1.x, p2.x, p3.x, t),
         cubic_hermite_interpolate(p0.y, p1.y, p2.y, p3.y, t),
@@ -651,277 +644,160 @@ def cubic_hermite_interpolate_vec3(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: fl
     )
 
 
-# =============================================================================
-# SQUAD QUATERNION INTERPOLATION (PRIVATE HELPERS)
-# =============================================================================
+def cubic_hermite_interpolate_transform(
+    t0: Transform, t1: Transform, t2: Transform, t3: Transform, blend: float
+) -> Transform:
+    """Cubic Hermite interpolation for transforms.
 
-def _quat_log(q: Quat) -> Vec3:
-    """Compute quaternion logarithm.
-
-    For a unit quaternion q = (v*sin(theta), cos(theta)) where v is unit axis,
-    log(q) = v * theta (a 3D vector).
+    Interpolates position and scale with Catmull-Rom spline,
+    rotation with squad (spherical cubic interpolation approximation).
 
     Args:
-        q: Unit quaternion
+        t0: Transform before t1 (control point)
+        t1: Start transform (blend=0)
+        t2: End transform (blend=1)
+        t3: Transform after t2 (control point)
+        blend: Interpolation parameter [0, 1]
 
     Returns:
-        3D vector representing the logarithm
+        Smoothly interpolated transform
     """
-    # Handle identity quaternion
-    sin_half_angle = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z)
-
-    if sin_half_angle < 1e-8:
-        # Near identity, use small angle approximation
-        return Vec3(q.x, q.y, q.z)
-
-    # Compute half-angle
-    half_angle = math.atan2(sin_half_angle, q.w)
-
-    # Scale vector part by half_angle / sin(half_angle)
-    scale = half_angle / sin_half_angle
-    return Vec3(q.x * scale, q.y * scale, q.z * scale)
-
-
-def _quat_exp(v: Vec3) -> Quat:
-    """Compute quaternion exponential.
-
-    exp(v) = (v/|v| * sin(|v|), cos(|v|)) for 3D vector v.
-
-    Args:
-        v: 3D vector (half-angle * axis)
-
-    Returns:
-        Unit quaternion
-    """
-    half_angle = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-
-    if half_angle < 1e-8:
-        # Near zero, return identity
-        return Quat(v.x, v.y, v.z, 1.0).normalized()
-
-    sin_half = math.sin(half_angle)
-    cos_half = math.cos(half_angle)
-    scale = sin_half / half_angle
-
-    return Quat(
-        v.x * scale,
-        v.y * scale,
-        v.z * scale,
-        cos_half,
-    ).normalized()
-
-
-def _compute_squad_intermediate(q_prev: Quat, q_curr: Quat, q_next: Quat) -> Quat:
-    """Compute SQUAD intermediate control point.
-
-    For smooth quaternion interpolation, we need intermediate control points
-    s_i = q_i * exp(-(log(q_i^-1 * q_{i+1}) + log(q_i^-1 * q_{i-1})) / 4)
-
-    Args:
-        q_prev: Previous quaternion in sequence
-        q_curr: Current quaternion
-        q_next: Next quaternion in sequence
-
-    Returns:
-        Intermediate control quaternion
-    """
-    # Ensure quaternions are in same hemisphere
-    if q_prev.dot(q_curr) < 0:
-        q_prev = Quat(-q_prev.x, -q_prev.y, -q_prev.z, -q_prev.w)
-    if q_next.dot(q_curr) < 0:
-        q_next = Quat(-q_next.x, -q_next.y, -q_next.z, -q_next.w)
-
-    # Compute q_curr^-1 (conjugate for unit quaternion)
-    q_curr_inv = Quat(-q_curr.x, -q_curr.y, -q_curr.z, q_curr.w)
-
-    # q_curr^-1 * q_next
-    q_to_next = Quat(
-        q_curr_inv.w * q_next.x + q_curr_inv.x * q_next.w + q_curr_inv.y * q_next.z - q_curr_inv.z * q_next.y,
-        q_curr_inv.w * q_next.y - q_curr_inv.x * q_next.z + q_curr_inv.y * q_next.w + q_curr_inv.z * q_next.x,
-        q_curr_inv.w * q_next.z + q_curr_inv.x * q_next.y - q_curr_inv.y * q_next.x + q_curr_inv.z * q_next.w,
-        q_curr_inv.w * q_next.w - q_curr_inv.x * q_next.x - q_curr_inv.y * q_next.y - q_curr_inv.z * q_next.z,
+    # Cubic Hermite for position
+    pos = cubic_hermite_interpolate_vec3(
+        t0.translation, t1.translation, t2.translation, t3.translation, blend
     )
 
-    # q_curr^-1 * q_prev
-    q_to_prev = Quat(
-        q_curr_inv.w * q_prev.x + q_curr_inv.x * q_prev.w + q_curr_inv.y * q_prev.z - q_curr_inv.z * q_prev.y,
-        q_curr_inv.w * q_prev.y - q_curr_inv.x * q_prev.z + q_curr_inv.y * q_prev.w + q_curr_inv.z * q_prev.x,
-        q_curr_inv.w * q_prev.z + q_curr_inv.x * q_prev.y - q_curr_inv.y * q_prev.x + q_curr_inv.z * q_prev.w,
-        q_curr_inv.w * q_prev.w - q_curr_inv.x * q_prev.x - q_curr_inv.y * q_prev.y - q_curr_inv.z * q_prev.z,
+    # Cubic Hermite for scale
+    scale = cubic_hermite_interpolate_vec3(
+        t0.scale, t1.scale, t2.scale, t3.scale, blend
     )
 
-    # Logarithms
-    log_next = _quat_log(q_to_next)
-    log_prev = _quat_log(q_to_prev)
+    # For rotation, use squad (spherical and quadrangle) approximation
+    # This provides C1 continuity for quaternion interpolation
+    rot = _squad_interpolate(t0.rotation, t1.rotation, t2.rotation, t3.rotation, blend)
 
-    # -(log_next + log_prev) / 4
-    neg_sum = Vec3(
-        -(log_next.x + log_prev.x) / 4.0,
-        -(log_next.y + log_prev.y) / 4.0,
-        -(log_next.z + log_prev.z) / 4.0,
-    )
-
-    # exp and multiply by q_curr
-    exp_result = _quat_exp(neg_sum)
-
-    # q_curr * exp_result
-    result = Quat(
-        q_curr.w * exp_result.x + q_curr.x * exp_result.w + q_curr.y * exp_result.z - q_curr.z * exp_result.y,
-        q_curr.w * exp_result.y - q_curr.x * exp_result.z + q_curr.y * exp_result.w + q_curr.z * exp_result.x,
-        q_curr.w * exp_result.z + q_curr.x * exp_result.y - q_curr.y * exp_result.x + q_curr.z * exp_result.w,
-        q_curr.w * exp_result.w - q_curr.x * exp_result.x - q_curr.y * exp_result.y - q_curr.z * exp_result.z,
-    )
-
-    return result.normalized()
-
-
-def _slerp(q1: Quat, q2: Quat, t: float) -> Quat:
-    """Spherical linear interpolation between two quaternions.
-
-    Args:
-        q1: Start quaternion
-        q2: End quaternion
-        t: Interpolation parameter [0, 1]
-
-    Returns:
-        Interpolated quaternion
-    """
-    # Ensure shortest path
-    dot = q1.dot(q2)
-    if dot < 0:
-        q2 = Quat(-q2.x, -q2.y, -q2.z, -q2.w)
-        dot = -dot
-
-    # If very close, use linear interpolation
-    if dot > 0.9995:
-        result = Quat(
-            q1.x + t * (q2.x - q1.x),
-            q1.y + t * (q2.y - q1.y),
-            q1.z + t * (q2.z - q1.z),
-            q1.w + t * (q2.w - q1.w),
-        )
-        return result.normalized()
-
-    # Standard slerp
-    theta_0 = math.acos(dot)
-    theta = theta_0 * t
-    sin_theta = math.sin(theta)
-    sin_theta_0 = math.sin(theta_0)
-
-    s0 = math.cos(theta) - dot * sin_theta / sin_theta_0
-    s1 = sin_theta / sin_theta_0
-
-    return Quat(
-        s0 * q1.x + s1 * q2.x,
-        s0 * q1.y + s1 * q2.y,
-        s0 * q1.z + s1 * q2.z,
-        s0 * q1.w + s1 * q2.w,
-    ).normalized()
+    return Transform(translation=pos, rotation=rot.normalized(), scale=scale)
 
 
 def _squad_interpolate(q0: Quat, q1: Quat, q2: Quat, q3: Quat, t: float) -> Quat:
-    """SQUAD (Spherical Quadrangle) interpolation for quaternions.
+    """Spherical cubic interpolation (SQUAD) for quaternions.
 
-    Provides C1-continuous cubic interpolation on the unit sphere.
-    Interpolates between q1 and q2, using q0 and q3 as control points.
+    Provides smooth, C1 continuous quaternion interpolation.
 
     Args:
-        q0: Control point before q1
+        q0: Quaternion before q1
         q1: Start quaternion (t=0)
         q2: End quaternion (t=1)
-        q3: Control point after q2
+        q3: Quaternion after q2
         t: Interpolation parameter [0, 1]
 
     Returns:
         Interpolated quaternion
     """
-    # Ensure all quaternions are in same hemisphere relative to q1
+    # Ensure quaternions are in the same hemisphere
     if q0.dot(q1) < 0:
         q0 = Quat(-q0.x, -q0.y, -q0.z, -q0.w)
-    if q2.dot(q1) < 0:
+    if q1.dot(q2) < 0:
         q2 = Quat(-q2.x, -q2.y, -q2.z, -q2.w)
-    if q3.dot(q2) < 0:
+    if q2.dot(q3) < 0:
         q3 = Quat(-q3.x, -q3.y, -q3.z, -q3.w)
 
-    # Compute intermediate control points
+    # Calculate intermediate control quaternions
     s1 = _compute_squad_intermediate(q0, q1, q2)
     s2 = _compute_squad_intermediate(q1, q2, q3)
 
-    # SQUAD formula: slerp(slerp(q1, q2, t), slerp(s1, s2, t), 2t(1-t))
-    slerp_q = _slerp(q1, q2, t)
-    slerp_s = _slerp(s1, s2, t)
+    # SQUAD: slerp(slerp(q1, q2, t), slerp(s1, s2, t), 2t(1-t))
+    slerp1 = q1.slerp(q2, t)
+    slerp2 = s1.slerp(s2, t)
 
-    return _slerp(slerp_q, slerp_s, 2.0 * t * (1.0 - t))
+    return slerp1.slerp(slerp2, 2.0 * t * (1.0 - t))
 
 
-def cubic_hermite_interpolate_transform(
-    t0: Transform, t1: Transform, t2: Transform, t3: Transform, t: float
-) -> Transform:
-    """Catmull-Rom spline interpolation for Transforms.
+def _compute_squad_intermediate(q_prev: Quat, q_curr: Quat, q_next: Quat) -> Quat:
+    """Compute intermediate quaternion for SQUAD.
 
-    Uses Catmull-Rom for translation and scale, SQUAD for rotation.
-    Interpolates between t1 and t2, using t0 and t3 as control points.
-
-    Args:
-        t0: Control transform before t1
-        t1: Start transform (t=0)
-        t2: End transform (t=1)
-        t3: Control transform after t2
-        t: Interpolation parameter [0, 1]
-
-    Returns:
-        Interpolated transform
+    Returns the intermediate control quaternion for q_curr given
+    its neighbors q_prev and q_next.
     """
-    # Interpolate translation with Catmull-Rom
-    translation = cubic_hermite_interpolate_vec3(
-        t0.translation, t1.translation, t2.translation, t3.translation, t
+    q_curr_inv = q_curr.inverse()
+
+    # Log of relative rotations
+    log_prev = _quat_log(q_curr_inv * q_prev)
+    log_next = _quat_log(q_curr_inv * q_next)
+
+    # Average in tangent space
+    avg = Vec3(
+        -(log_prev.x + log_next.x) * 0.25,
+        -(log_prev.y + log_next.y) * 0.25,
+        -(log_prev.z + log_next.z) * 0.25,
     )
 
-    # Interpolate scale with Catmull-Rom
-    scale = cubic_hermite_interpolate_vec3(
-        t0.scale, t1.scale, t2.scale, t3.scale, t
-    )
-
-    # Interpolate rotation with SQUAD
-    rotation = _squad_interpolate(
-        t0.rotation, t1.rotation, t2.rotation, t3.rotation, t
-    )
-
-    return Transform(
-        translation=translation,
-        rotation=rotation.normalized(),
-        scale=scale,
-    )
+    return q_curr * _quat_exp(avg)
 
 
-# =============================================================================
-# ATLAS VALIDATION
-# =============================================================================
+def _quat_log(q: Quat) -> Vec3:
+    """Quaternion logarithm (returns rotation axis * half-angle)."""
+    # Ensure unit quaternion
+    q = q.normalized()
+
+    # Handle identity quaternion
+    sin_half_angle = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z)
+    if sin_half_angle < 1e-10:
+        return Vec3(0.0, 0.0, 0.0)
+
+    half_angle = math.atan2(sin_half_angle, q.w)
+    k = half_angle / sin_half_angle
+
+    return Vec3(q.x * k, q.y * k, q.z * k)
+
+
+def _quat_exp(v: Vec3) -> Quat:
+    """Quaternion exponential (converts axis * half-angle to quaternion)."""
+    half_angle = math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+
+    if half_angle < 1e-10:
+        return Quat(0.0, 0.0, 0.0, 1.0)
+
+    sin_half = math.sin(half_angle)
+    cos_half = math.cos(half_angle)
+    k = sin_half / half_angle
+
+    return Quat(v.x * k, v.y * k, v.z * k, cos_half)
+
 
 def validate_atlas_uv_ranges(atlas: AnimationTextureAtlas) -> tuple[bool, list[tuple[str, str]]]:
-    """Validate that all clips in an atlas have non-overlapping UV ranges.
+    """Validate that all clip UV ranges in an atlas are non-overlapping.
 
     Args:
-        atlas: Animation texture atlas to validate
+        atlas: The animation texture atlas to validate
 
     Returns:
         Tuple of (is_valid, list of overlapping clip name pairs)
+        If is_valid is True, the overlap list will be empty.
     """
-    overlaps: list[tuple[str, str]] = []
+    if atlas.height == 0:
+        return (True, [])
 
+    overlaps: list[tuple[str, str]] = []
     clip_names = list(atlas.clips.keys())
+
     for i, name_a in enumerate(clip_names):
-        info_a = atlas.clips[name_a]
-        start_a, count_a, _ = info_a
-        end_a = start_a + count_a
+        range_a = atlas.get_clip_uv_range(name_a)
+        if range_a is None:
+            continue
+
+        start_a, end_a = range_a
 
         for name_b in clip_names[i + 1:]:
-            info_b = atlas.clips[name_b]
-            start_b, count_b, _ = info_b
-            end_b = start_b + count_b
+            range_b = atlas.get_clip_uv_range(name_b)
+            if range_b is None:
+                continue
 
-            # Check for overlap (exclusive ends)
-            if start_a < end_b and start_b < end_a:
+            start_b, end_b = range_b
+
+            # Check for overlap: ranges overlap if one starts before the other ends
+            # and ends after the other starts
+            if start_a < end_b and end_a > start_b:
                 overlaps.append((name_a, name_b))
 
     return (len(overlaps) == 0, overlaps)

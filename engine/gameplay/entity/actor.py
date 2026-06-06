@@ -40,6 +40,11 @@ from trinity.decorators.ops import Op, Step, make_decorator, run_steps
 from trinity.descriptors.base import BaseDescriptor
 from trinity.metaclasses.engine_meta import EngineMeta
 
+def _get_entity_event_log():
+    """Get the EntityEventLog singleton (lazy import to avoid circular imports)."""
+    from .eventlog_integration import EntityEventLog
+    return EntityEventLog()
+
 from .constants import (
     CROUCH_SPEED_MULTIPLIER,
     DEFAULT_JUMP_VELOCITY,
@@ -54,7 +59,6 @@ from .constants import (
     TickGroup,
 )
 from .lifecycle import LifecycleCallback, LifecycleEvent, LifecycleManager, LifecycleMixin
-from .eventlog_integration import EntityEventLog
 
 if TYPE_CHECKING:
     from .possession import Controller
@@ -235,10 +239,7 @@ class ComponentContainer:
         """Remove a component from the container."""
         component = self._components.pop(name, None)
         if component is not None:
-            # Only remove from type_to_name if this name is the tracked one
-            component_type = type(component)
-            if self._type_to_name.get(component_type) == name:
-                del self._type_to_name[component_type]
+            del self._type_to_name[type(component)]
 
             # Notify owner
             owner = self._owner()
@@ -347,8 +348,8 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
             self._entity_id = Actor._next_entity_id
             Actor._next_entity_id += 1
 
-        # Basic properties - allow empty string, only use default if None
-        self._name = name if name is not None else f"{self.__class__.__name__}_{self._entity_id}"
+        # Basic properties
+        self._name = name or f"{self.__class__.__name__}_{self._entity_id}"
         if len(self._name) > ENTITY_NAME_MAX_LENGTH:
             self._name = self._name[:ENTITY_NAME_MAX_LENGTH]
 
@@ -371,11 +372,34 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
         self._init_lifecycle()
         self._lifecycle_state = LifecycleState.CREATED
 
+        # Log spawn event to EventLog
+        try:
+            event_log = _get_entity_event_log()
+            position = self._transform.position if self._transform else (0.0, 0.0, 0.0)
+            spawn_event = event_log.record_spawn(
+                self._entity_id,
+                prefab_name=self._name,
+                position=position,
+                entity_type=type(self).__name__,
+            )
+            # Store spawn event ID for causal chain tracking
+            self._spawn_event_id = spawn_event.id
+        except Exception:
+            self._spawn_event_id = None
+
+        # Log state change from UNINITIALIZED to CREATED
+        try:
+            event_log = _get_entity_event_log()
+            event_log.record_state_change(
+                self._entity_id,
+                LifecycleState.UNINITIALIZED,
+                LifecycleState.CREATED,
+            )
+        except Exception:
+            pass
+
         # Initialize declared components
         self._init_declared_components()
-
-        # Record spawn event in EntityEventLog
-        self._record_spawn_event()
 
     def _init_declared_components(self) -> None:
         """Initialize components declared in class definition."""
@@ -392,22 +416,6 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
                         self._components.add(name, instance)
                     except TypeError:
                         pass  # Component requires arguments
-
-    def _record_spawn_event(self) -> None:
-        """Record entity spawn event to EntityEventLog."""
-        event_log = EntityEventLog()
-        spawn_event = event_log.record_spawn(
-            entity_id=self._entity_id,
-            prefab_name=self._name,
-            position=self._transform.position,
-            entity_type=self.__class__.__name__,
-        )
-        # Record state change: UNINITIALIZED -> CREATED
-        event_log.record_state_change(
-            entity_id=self._entity_id,
-            old_state="UNINITIALIZED",
-            new_state="CREATED",
-        )
 
     # =========================================================================
     # IDENTIFICATION
@@ -569,23 +577,42 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
 
     def _on_component_added(self, name: str, component: Any) -> None:
         """Called when a component is added."""
-        # Record component added event
-        event_log = EntityEventLog()
-        event_log.record_component_added(
-            entity_id=self._entity_id,
-            component_type=type(component).__name__,
-            component_name=name,
-        )
+        # Log to EventLog
+        try:
+            event_log = _get_entity_event_log()
+            from .eventlog_integration import CausalChain
+
+            # Link to spawn event if available
+            causal_chain = None
+            spawn_event_id = getattr(self, "_spawn_event_id", None)
+            if spawn_event_id is not None:
+                causal_chain = CausalChain(
+                    root_event_id=spawn_event_id,
+                    parent_event_id=spawn_event_id,
+                    depth=1,
+                )
+
+            event_log.record_component_added(
+                self._entity_id,
+                component_type=type(component).__name__,
+                component_name=name,
+                causal_chain=causal_chain,
+            )
+        except Exception:
+            pass  # Don't let logging errors break component addition
 
     def _on_component_removed(self, name: str, component: Any) -> None:
         """Called when a component is removed."""
-        # Record component removed event
-        event_log = EntityEventLog()
-        event_log.record_component_removed(
-            entity_id=self._entity_id,
-            component_type=type(component).__name__,
-            component_name=name,
-        )
+        # Log to EventLog
+        try:
+            event_log = _get_entity_event_log()
+            event_log.record_component_removed(
+                self._entity_id,
+                component_type=type(component).__name__,
+                component_name=name,
+            )
+        except Exception:
+            pass  # Don't let logging errors break component removal
 
     # =========================================================================
     # TAGS
@@ -687,13 +714,6 @@ class Actor(LifecycleMixin, metaclass=ActorMeta):
         Args:
             immediate: If True, destroy immediately; otherwise defer
         """
-        # Record destroy event in EntityEventLog
-        event_log = EntityEventLog()
-        event_log.record_destroy(
-            entity_id=self._entity_id,
-            reason="normal",
-            final_state=self._lifecycle_state.name,
-        )
         self.transition_to(LifecycleState.DESTROYING, immediate=immediate)
 
     # =========================================================================

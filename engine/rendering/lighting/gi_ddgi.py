@@ -5,20 +5,469 @@ Implements DDGI from Section 6.4 of RENDERING_CONTEXT.md:
 - DDGIProbeGrid: Grid of DDGI probes
 - DDGIUpdatePass: Ray tracing and irradiance update
 - DDGILookup: Trilinear interpolation at shading points
+
+Camera-relative probe placement system (T-GIR-P2.1):
+- DDGIQualityPreset: Quality tier configuration
+- DDGIConfig: Configuration for camera-relative probe grids
+- DDGICameraRelativeGrid: Camera-following probe volume
 """
 
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from engine.core.math.geometry import AABB
 from engine.core.math.vec import Vec2, Vec3, Vec4
 
 if TYPE_CHECKING:
     pass
+
+
+# ============================================================================
+# Quality Presets and Configuration (T-GIR-P2.1)
+# ============================================================================
+
+
+class DDGIQualityPreset(Enum):
+    """Quality presets for DDGI probe grids.
+
+    Each preset balances probe density, coverage, and GPU memory usage.
+
+    | Preset | Probes       | Spacing | GPU Memory |
+    |--------|--------------|---------|------------|
+    | LOW    | 16x16x4 (1K) | 4m      | ~200KB     |
+    | MEDIUM | 24x24x6 (3K) | 3m      | ~650KB     |
+    | HIGH   | 32x32x8 (8K) | 2m      | ~1.5MB     |
+    | ULTRA  | 48x48x12(27K)| 1.5m    | ~5MB       |
+    """
+    LOW = auto()
+    MEDIUM = auto()
+    HIGH = auto()
+    ULTRA = auto()
+
+
+# Quality preset parameters: (dimensions, spacing, rays_per_probe)
+_QUALITY_PARAMS: dict[DDGIQualityPreset, tuple[tuple[int, int, int], float, int]] = {
+    DDGIQualityPreset.LOW: ((16, 16, 4), 4.0, 32),
+    DDGIQualityPreset.MEDIUM: ((24, 24, 6), 3.0, 48),
+    DDGIQualityPreset.HIGH: ((32, 32, 8), 2.0, 64),
+    DDGIQualityPreset.ULTRA: ((48, 48, 12), 1.5, 128),
+}
+
+
+def get_preset_params(
+    preset: DDGIQualityPreset,
+) -> tuple[tuple[int, int, int], float, int]:
+    """Get parameters for a quality preset.
+
+    Args:
+        preset: Quality preset to query
+
+    Returns:
+        Tuple of (dimensions, spacing, rays_per_probe)
+    """
+    return _QUALITY_PARAMS[preset]
+
+
+def estimate_gpu_memory(preset: DDGIQualityPreset) -> int:
+    """Estimate GPU memory usage in bytes for a quality preset.
+
+    Memory breakdown per probe:
+    - Irradiance SH (L2): 192 bytes (ProbeSH)
+    - Visibility: 16 bytes (ProbeVis)
+    - Grid uniform: 64 bytes (ProbeGridGpu, shared)
+
+    Args:
+        preset: Quality preset to estimate
+
+    Returns:
+        Estimated GPU memory in bytes
+    """
+    dims, _, _ = _QUALITY_PARAMS[preset]
+    probe_count = dims[0] * dims[1] * dims[2]
+
+    # Per-probe storage
+    probe_sh_size = 192  # ProbeSH struct
+    probe_vis_size = 16  # ProbeVis struct
+    per_probe = probe_sh_size + probe_vis_size
+
+    # Grid uniform buffer (shared)
+    grid_uniform_size = 64  # ProbeGridGpu struct
+
+    return probe_count * per_probe + grid_uniform_size
+
+
+@dataclass
+class DDGIConfig:
+    """Configuration for camera-relative DDGI probe grids.
+
+    Attributes:
+        preset: Quality preset (determines dimensions, spacing, rays)
+        probe_spacing: Override spacing between probes (meters)
+        grid_dimensions: Override probe counts along each axis
+        rays_per_probe: Override rays traced per probe per update
+        max_ray_distance: Maximum ray trace distance
+        hysteresis: Temporal blending factor (0.0-1.0, higher = more stable)
+        update_fraction: Fraction of probes updated per frame (1/8 = 0.125)
+        scroll_threshold: Camera movement threshold to trigger grid scroll
+    """
+    preset: DDGIQualityPreset = DDGIQualityPreset.HIGH
+
+    # Override parameters (None = use preset defaults)
+    probe_spacing: Optional[float] = None
+    grid_dimensions: Optional[tuple[int, int, int]] = None
+    rays_per_probe: Optional[int] = None
+
+    # Ray tracing parameters
+    max_ray_distance: float = 50.0
+    hysteresis: float = 0.97
+    update_fraction: float = 0.125  # 1/8 probes per frame
+
+    # Camera tracking
+    scroll_threshold: float = 0.5  # meters
+
+    def get_dimensions(self) -> tuple[int, int, int]:
+        """Get effective grid dimensions."""
+        if self.grid_dimensions is not None:
+            return self.grid_dimensions
+        return _QUALITY_PARAMS[self.preset][0]
+
+    def get_spacing(self) -> float:
+        """Get effective probe spacing."""
+        if self.probe_spacing is not None:
+            return self.probe_spacing
+        return _QUALITY_PARAMS[self.preset][1]
+
+    def get_rays_per_probe(self) -> int:
+        """Get effective rays per probe."""
+        if self.rays_per_probe is not None:
+            return self.rays_per_probe
+        return _QUALITY_PARAMS[self.preset][2]
+
+    def total_probes(self) -> int:
+        """Get total number of probes."""
+        dims = self.get_dimensions()
+        return dims[0] * dims[1] * dims[2]
+
+    def estimated_memory_bytes(self) -> int:
+        """Estimate GPU memory usage in bytes."""
+        # Custom dimensions require recalculation
+        if self.grid_dimensions is not None:
+            probe_count = self.total_probes()
+            per_probe = 192 + 16  # ProbeSH + ProbeVis
+            return probe_count * per_probe + 64
+        return estimate_gpu_memory(self.preset)
+
+    def validate(self) -> list[str]:
+        """Validate configuration, returning list of error messages."""
+        errors = []
+
+        dims = self.get_dimensions()
+        if any(d <= 0 for d in dims):
+            errors.append("Grid dimensions must be positive")
+        if any(d > 64 for d in dims):
+            errors.append("Grid dimension exceeds maximum of 64")
+
+        spacing = self.get_spacing()
+        if spacing <= 0:
+            errors.append("Probe spacing must be positive")
+        if spacing < 0.5:
+            errors.append("Probe spacing below 0.5m may cause precision issues")
+
+        if not 0.0 <= self.hysteresis <= 1.0:
+            errors.append("Hysteresis must be between 0.0 and 1.0")
+
+        if not 0.0 < self.update_fraction <= 1.0:
+            errors.append("Update fraction must be between 0.0 and 1.0")
+
+        return errors
+
+
+@dataclass
+class DDGICameraRelativeGrid:
+    """Camera-relative uniform 3D probe grid.
+
+    This class implements a probe grid that follows the camera, with
+    the origin snapped to probe spacing intervals for stable updates.
+
+    The grid uses infinite scrolling: as the camera moves, probes wrap
+    around the grid edges rather than being reallocated.
+
+    Attributes:
+        config: Grid configuration
+        origin: Current world-space origin (minimum corner)
+        scroll_offset: Current scroll offset in probe units
+        frame_index: Current frame for temporal updates
+    """
+    config: DDGIConfig
+    origin: Vec3 = field(default_factory=Vec3.zero)
+    scroll_offset: tuple[int, int, int] = (0, 0, 0)
+    frame_index: int = 0
+
+    # Private
+    _gpu_buffer: Optional[Any] = None
+    _last_camera_position: Optional[Vec3] = None
+    _needs_upload: bool = True
+
+    def compute_grid_origin(self, camera_position: Vec3) -> Vec3:
+        """Compute grid origin centered on camera (snapped to spacing).
+
+        The origin is computed such that the grid is centered on the camera,
+        then snapped to the nearest probe spacing multiple for stability.
+
+        Args:
+            camera_position: World-space camera position
+
+        Returns:
+            Snapped grid origin (minimum corner)
+        """
+        spacing = self.config.get_spacing()
+        dims = self.config.get_dimensions()
+
+        # Compute unsnapped origin (grid centered on camera)
+        half_extent_x = (dims[0] - 1) * spacing * 0.5
+        half_extent_y = (dims[1] - 1) * spacing * 0.5
+        half_extent_z = (dims[2] - 1) * spacing * 0.5
+
+        unsnapped_x = camera_position.x - half_extent_x
+        unsnapped_y = camera_position.y - half_extent_y
+        unsnapped_z = camera_position.z - half_extent_z
+
+        # Snap to spacing multiples
+        snapped_x = math.floor(unsnapped_x / spacing) * spacing
+        snapped_y = math.floor(unsnapped_y / spacing) * spacing
+        snapped_z = math.floor(unsnapped_z / spacing) * spacing
+
+        return Vec3(snapped_x, snapped_y, snapped_z)
+
+    def world_to_probe_index(self, world_pos: Vec3) -> tuple[int, int, int]:
+        """Convert world position to probe grid indices.
+
+        Args:
+            world_pos: World-space position
+
+        Returns:
+            Tuple of (ix, iy, iz) probe indices, clamped to grid bounds
+        """
+        spacing = self.config.get_spacing()
+        dims = self.config.get_dimensions()
+
+        # Compute relative position
+        local = world_pos - self.origin
+
+        # Convert to grid coordinates
+        fx = local.x / spacing
+        fy = local.y / spacing
+        fz = local.z / spacing
+
+        # Clamp to valid range
+        ix = max(0, min(int(fx), dims[0] - 1))
+        iy = max(0, min(int(fy), dims[1] - 1))
+        iz = max(0, min(int(fz), dims[2] - 1))
+
+        return (ix, iy, iz)
+
+    def probe_index_to_linear(self, ix: int, iy: int, iz: int) -> int:
+        """Convert 3D probe index to linear buffer index.
+
+        Args:
+            ix, iy, iz: Probe grid indices
+
+        Returns:
+            Linear index for buffer access
+        """
+        dims = self.config.get_dimensions()
+        return ix + iy * dims[0] + iz * dims[0] * dims[1]
+
+    def get_probe_world_position(self, ix: int, iy: int, iz: int) -> Vec3:
+        """Get world position of probe at grid indices.
+
+        Args:
+            ix, iy, iz: Probe grid indices
+
+        Returns:
+            World-space position of the probe center
+        """
+        spacing = self.config.get_spacing()
+        return Vec3(
+            self.origin.x + ix * spacing,
+            self.origin.y + iy * spacing,
+            self.origin.z + iz * spacing,
+        )
+
+    def get_scrolled_probe_index(
+        self, ix: int, iy: int, iz: int
+    ) -> tuple[int, int, int]:
+        """Apply scroll offset to probe indices (wrapping).
+
+        Args:
+            ix, iy, iz: Base probe grid indices
+
+        Returns:
+            Scrolled indices with wrapping
+        """
+        dims = self.config.get_dimensions()
+
+        sx = (ix + self.scroll_offset[0]) % dims[0]
+        sy = (iy + self.scroll_offset[1]) % dims[1]
+        sz = (iz + self.scroll_offset[2]) % dims[2]
+
+        return (sx, sy, sz)
+
+    def update_for_camera(self, camera_position: Vec3) -> bool:
+        """Update grid origin if camera moved significantly.
+
+        This method checks if the camera has moved beyond the scroll threshold
+        and updates the grid origin and scroll offset accordingly.
+
+        Args:
+            camera_position: Current camera position
+
+        Returns:
+            True if the grid was scrolled, False otherwise
+        """
+        spacing = self.config.get_spacing()
+        threshold = self.config.scroll_threshold
+
+        # First update: initialize origin
+        if self._last_camera_position is None:
+            self.origin = self.compute_grid_origin(camera_position)
+            self._last_camera_position = camera_position
+            self._needs_upload = True
+            return True
+
+        # Compute new origin
+        new_origin = self.compute_grid_origin(camera_position)
+
+        # Check if we need to scroll
+        delta = new_origin - self.origin
+
+        # Convert delta to probe cells
+        cell_delta_x = int(round(delta.x / spacing))
+        cell_delta_y = int(round(delta.y / spacing))
+        cell_delta_z = int(round(delta.z / spacing))
+
+        if cell_delta_x == 0 and cell_delta_y == 0 and cell_delta_z == 0:
+            return False
+
+        # Update scroll offset (wrapping)
+        dims = self.config.get_dimensions()
+        new_scroll = (
+            (self.scroll_offset[0] + cell_delta_x) % dims[0],
+            (self.scroll_offset[1] + cell_delta_y) % dims[1],
+            (self.scroll_offset[2] + cell_delta_z) % dims[2],
+        )
+
+        self.scroll_offset = new_scroll
+        self.origin = new_origin
+        self._last_camera_position = camera_position
+        self._needs_upload = True
+
+        return True
+
+    def advance_frame(self) -> None:
+        """Advance frame counter for temporal updates."""
+        self.frame_index = (self.frame_index + 1) % (2**32)
+
+    def get_bounds(self) -> AABB:
+        """Get world-space bounds of the probe grid.
+
+        Returns:
+            AABB covering the entire probe volume
+        """
+        spacing = self.config.get_spacing()
+        dims = self.config.get_dimensions()
+
+        extent = Vec3(
+            (dims[0] - 1) * spacing,
+            (dims[1] - 1) * spacing,
+            (dims[2] - 1) * spacing,
+        )
+
+        return AABB(self.origin, self.origin + extent)
+
+    def build_gpu_data(self) -> bytes:
+        """Serialize to ProbeGridGpu format for GPU upload.
+
+        Returns 64 bytes matching the Rust ProbeGridGpu struct layout:
+        - origin: vec3<f32> (12 bytes)
+        - _pad0: f32 (4 bytes)
+        - cell_size: vec3<f32> (12 bytes)
+        - _pad1: f32 (4 bytes)
+        - dimensions: vec3<u32> (12 bytes)
+        - total_probes: u32 (4 bytes)
+        - scroll_offset: vec3<i32> (12 bytes)
+        - frame_index: u32 (4 bytes)
+
+        Returns:
+            64 bytes of packed GPU data
+        """
+        dims = self.config.get_dimensions()
+        spacing = self.config.get_spacing()
+        total = dims[0] * dims[1] * dims[2]
+
+        # Pack using struct module
+        # Format: 3f f 3f f 3I I 3i I = 64 bytes
+        return struct.pack(
+            "<3ff3ff3II3iI",
+            # origin (vec3<f32>)
+            self.origin.x, self.origin.y, self.origin.z,
+            # _pad0 (f32)
+            0.0,
+            # cell_size (vec3<f32>)
+            spacing, spacing, spacing,
+            # _pad1 (f32)
+            0.0,
+            # dimensions (vec3<u32>)
+            dims[0], dims[1], dims[2],
+            # total_probes (u32)
+            total,
+            # scroll_offset (vec3<i32>)
+            self.scroll_offset[0], self.scroll_offset[1], self.scroll_offset[2],
+            # frame_index (u32)
+            self.frame_index,
+        )
+
+    def needs_gpu_upload(self) -> bool:
+        """Check if GPU data needs to be re-uploaded."""
+        return self._needs_upload
+
+    def mark_uploaded(self) -> None:
+        """Mark GPU data as uploaded."""
+        self._needs_upload = False
+
+    def get_probes_to_update(self) -> list[tuple[int, int, int]]:
+        """Get indices of probes to update this frame.
+
+        Uses the update_fraction to determine which subset of probes
+        to update, cycling through all probes over multiple frames.
+
+        Returns:
+            List of (ix, iy, iz) tuples for probes to update
+        """
+        dims = self.config.get_dimensions()
+        total = dims[0] * dims[1] * dims[2]
+        fraction = self.config.update_fraction
+
+        # Determine which probes to update this frame
+        probes_per_frame = max(1, int(total * fraction))
+        start_idx = (self.frame_index * probes_per_frame) % total
+
+        result = []
+        for i in range(probes_per_frame):
+            linear = (start_idx + i) % total
+            # Convert linear to 3D index
+            iz = linear // (dims[0] * dims[1])
+            rem = linear % (dims[0] * dims[1])
+            iy = rem // dims[0]
+            ix = rem % dims[0]
+            result.append((ix, iy, iz))
+
+        return result
 
 
 class DDGIProbeState(Enum):

@@ -16,20 +16,22 @@
 //   7.  Stress: 50 passes with varied dependencies, sort completes without
 //       error (no assertion on timing)
 
+use std::sync::Arc;
 use renderer_backend::frame_graph::{
     build_dag, topological_sort, DispatchSource, EdgeType, EmptyView, InstanceSource, IrEdge,
-    IrPass, IrResource, PassIndex, PassType, ResourceAccessSet, ResourceHandle, ViewType,
+    IrPass, IrResource, PassFlags, PassIndex, PassType, ResourceAccessSet, ResourceHandle,
+    ViewType,
 };
-use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helper: create a single IrPass with a given access pattern
 // ---------------------------------------------------------------------------
 
 fn make_pass(index: usize, reads: &[ResourceHandle], writes: &[ResourceHandle]) -> IrPass {
+    let name = format!("pass_{}", index);
     IrPass {
         index: PassIndex(index),
-        name: format!("pass_{}", index),
+        name: name.clone(),
         pass_type: PassType::Compute,
         access_set: ResourceAccessSet {
             reads: reads.to_vec(),
@@ -50,9 +52,9 @@ fn make_pass(index: usize, reads: &[ResourceHandle], writes: &[ResourceHandle]) 
             group_count_z: 1,
         }),
         view_type: ViewType::Storage,
+        view: Arc::new(EmptyView { name }),
         tags: Vec::new(),
-        feature_flags: 0,
-        view: Arc::new(EmptyView { name: format!("pass_{}", index) }),
+        flags: PassFlags::empty(),
     }
 }
 

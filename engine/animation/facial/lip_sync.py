@@ -647,6 +647,35 @@ class LipSyncController:
         viseme_events = self.process_audio_events(phoneme_events)
         self.set_timeline(viseme_events)
 
+    def add_phoneme_event(self, event: PhonemeEvent) -> None:
+        """
+        Add a single phoneme event to the timeline.
+
+        Args:
+            event: The phoneme event to add
+        """
+        viseme = phoneme_to_viseme(event.phoneme)
+        viseme_event = VisemeEvent(
+            viseme=viseme,
+            start_time=event.start_time,
+            end_time=event.end_time,
+            weight=event.confidence,
+        )
+        # Insert in sorted order
+        idx = bisect.bisect_left(self._timeline_times, event.start_time)
+        self._viseme_timeline.insert(idx, viseme_event)
+        self._timeline_times.insert(idx, event.start_time)
+        self._dirty = True
+
+    def get_viseme_events(self) -> list[VisemeEvent]:
+        """
+        Get the current viseme timeline.
+
+        Returns:
+            List of viseme events in the timeline
+        """
+        return list(self._viseme_timeline)
+
     def play(self) -> None:
         """Start or resume playback."""
         self._is_playing = True
@@ -674,20 +703,38 @@ class LipSyncController:
         self._current_time = max(0.0, time)
         self._update_viseme_at_time(self._current_time)
 
-    def update(self, dt: float) -> dict[str, float]:
+    def update(self, dt: Optional[float] = None, *, time: Optional[float] = None) -> dict[str, float]:
         """
         Update lip sync animation.
 
+        Can be called with either delta time (dt) or absolute time.
+        If 'time' is provided, seeks to that time and returns weights.
+        If 'dt' is provided, advances playback by that amount.
+        If neither is provided and playing, returns current weights.
+
         Args:
-            dt: Delta time in seconds
+            dt: Delta time in seconds (optional)
+            time: Absolute time in seconds (optional, keyword-only)
 
         Returns:
             Current blend shape weights
         """
-        if not self._is_playing or not self._viseme_timeline:
+        # If absolute time provided, seek directly
+        if time is not None:
+            return self._update_viseme_at_time(time)
+
+        # If no timeline, return empty/current weights
+        if not self._viseme_timeline:
             return self._current_weights
 
-        self._current_time += dt
+        # If delta time provided but not playing, still update for convenience
+        if dt is not None:
+            if not self._is_playing:
+                # Allow direct time-based queries even when not playing
+                return self._update_viseme_at_time(self._current_time + dt)
+            self._current_time += dt
+        elif not self._is_playing:
+            return self._current_weights
 
         # Check if we've finished
         if self._current_time >= self.duration:

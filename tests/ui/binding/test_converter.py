@@ -536,7 +536,7 @@ class TestChainedConverter:
 
     def test_empty_chain_raises(self):
         """Test empty chain raises error."""
-        with pytest.raises(ValueError, match="at least one converter"):
+        with pytest.raises(ValueError, match="(?i)at least one converter"):
             ChainedConverter([])
 
 

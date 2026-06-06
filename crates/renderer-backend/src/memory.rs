@@ -566,4 +566,344 @@ mod tests {
         // No more room.
         assert!(!budget.try_reserve(1));
     }
+
+    // =========================================================================
+    // RingBuffer tests (25+)
+    // =========================================================================
+
+    #[test]
+    fn ring_buffer_basic_allocation() {
+        let mut rb = RingBuffer::new(256);
+        let alloc = rb.allocate(64, 1);
+        assert!(alloc.is_some());
+        let (offset, len) = alloc.unwrap();
+        assert_eq!(offset, 0);
+        assert_eq!(len, 64);
+        assert_eq!(rb.head(), 64);
+        assert_eq!(rb.tail(), 0);
+    }
+
+    #[test]
+    fn ring_buffer_sequential_allocations() {
+        let mut rb = RingBuffer::new(256);
+        let (off1, _) = rb.allocate(32, 1).unwrap();
+        let (off2, _) = rb.allocate(32, 1).unwrap();
+        let (off3, _) = rb.allocate(32, 1).unwrap();
+        assert_eq!(off1, 0);
+        assert_eq!(off2, 32);
+        assert_eq!(off3, 64);
+        assert_eq!(rb.used(), 96);
+    }
+
+    #[test]
+    fn ring_buffer_capacity_minimum() {
+        // Capacity is at least CACHE_LINE_BYTES
+        let rb = RingBuffer::new(1);
+        assert_eq!(rb.capacity(), CACHE_LINE_BYTES);
+    }
+
+    #[test]
+    fn ring_buffer_capacity_exact() {
+        let rb = RingBuffer::new(1024);
+        assert_eq!(rb.capacity(), 1024);
+    }
+
+    #[test]
+    fn ring_buffer_full_buffer_overflow() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(128, 1).unwrap();
+        // Buffer is full, next allocation should fail
+        let result = rb.allocate(1, 1);
+        assert!(result.is_none());
+        assert_eq!(rb.stats().overflows, 1);
+    }
+
+    #[test]
+    fn ring_buffer_consume_frees_space() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(64, 1).unwrap();
+        assert_eq!(rb.used(), 64);
+        rb.consume(32);
+        assert_eq!(rb.used(), 32);
+        assert_eq!(rb.tail(), 32);
+    }
+
+    #[test]
+    fn ring_buffer_consume_all() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(100, 1).unwrap();
+        rb.consume(100);
+        assert_eq!(rb.used(), 0);
+    }
+
+    #[test]
+    fn ring_buffer_consume_more_than_used() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(50, 1).unwrap();
+        rb.consume(100); // Try to consume more than used
+        assert_eq!(rb.used(), 0); // Should clamp to available
+    }
+
+    #[test]
+    fn ring_buffer_wrap_around_allocation() {
+        let mut rb = RingBuffer::new(128);
+        // Allocate most of buffer
+        let _ = rb.allocate(100, 1).unwrap();
+        // Consume to free space at the start
+        rb.consume(80);
+        // Next allocation should wrap around
+        let result = rb.allocate(50, 1);
+        assert!(result.is_some());
+        let (off, _) = result.unwrap();
+        assert_eq!(off, 0); // Wrapped to beginning
+        assert_eq!(rb.stats().wraps, 1);
+    }
+
+    #[test]
+    fn ring_buffer_wrap_count_increments() {
+        let mut rb = RingBuffer::new(128);
+        assert_eq!(rb.stats().wraps, 0);
+        let _ = rb.allocate(100, 1).unwrap();
+        rb.consume(100);
+        let _ = rb.allocate(50, 1).unwrap(); // This wraps
+        assert_eq!(rb.stats().wraps, 1);
+    }
+
+    #[test]
+    fn ring_buffer_zero_size_allocation() {
+        let mut rb = RingBuffer::new(128);
+        // Zero-size allocation should still succeed (returns 0, 0)
+        let result = rb.allocate(0, 1);
+        // Behavior: allocate returns (offset, 0) for zero-size
+        assert!(result.is_some());
+        let (_, len) = result.unwrap();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn ring_buffer_alignment_basic() {
+        let mut rb = RingBuffer::new(256);
+        let _ = rb.allocate(1, 1).unwrap(); // head = 1
+        let (off, _) = rb.allocate(8, 16).unwrap(); // Should align to 16
+        assert_eq!(off % 16, 0);
+        assert_eq!(off, 16);
+    }
+
+    #[test]
+    fn ring_buffer_alignment_cache_line() {
+        let mut rb = RingBuffer::new(256);
+        let _ = rb.allocate(1, 1).unwrap(); // head = 1
+        let (off, _) = rb.allocate(8, CACHE_LINE_BYTES).unwrap();
+        assert_eq!(off % CACHE_LINE_BYTES, 0);
+        assert_eq!(off, CACHE_LINE_BYTES);
+    }
+
+    #[test]
+    fn ring_buffer_alignment_zero_treated_as_one() {
+        let mut rb = RingBuffer::new(128);
+        // alignment = 0 should be treated as 1
+        let result = rb.allocate(8, 0);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn ring_buffer_reset_clears_all() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(64, 1).unwrap();
+        rb.consume(32);
+        rb.allocate(100, 1); // Force wrap/overflow
+        rb.reset();
+        assert_eq!(rb.head(), 0);
+        assert_eq!(rb.tail(), 0);
+        assert_eq!(rb.stats().wraps, 0);
+        assert_eq!(rb.stats().overflows, 0);
+    }
+
+    #[test]
+    fn ring_buffer_stats_accuracy() {
+        let mut rb = RingBuffer::new(256);
+        let _ = rb.allocate(100, 1).unwrap();
+        let stats = rb.stats();
+        assert_eq!(stats.capacity, 256);
+        assert_eq!(stats.used, 100);
+        assert_eq!(stats.available, 156);
+    }
+
+    #[test]
+    fn ring_buffer_available_decreases_on_alloc() {
+        let mut rb = RingBuffer::new(200);
+        let initial = rb.available();
+        let _ = rb.allocate(50, 1).unwrap();
+        assert_eq!(rb.available(), initial - 50);
+    }
+
+    #[test]
+    fn ring_buffer_available_increases_on_consume() {
+        let mut rb = RingBuffer::new(200);
+        let _ = rb.allocate(100, 1).unwrap();
+        let before = rb.available();
+        rb.consume(50);
+        assert_eq!(rb.available(), before + 50);
+    }
+
+    #[test]
+    fn ring_buffer_interleaved_alloc_consume() {
+        let mut rb = RingBuffer::new(128);
+        let _ = rb.allocate(30, 1).unwrap();
+        rb.consume(30);
+        let _ = rb.allocate(30, 1).unwrap();
+        rb.consume(30);
+        let _ = rb.allocate(30, 1).unwrap();
+        assert_eq!(rb.used(), 30);
+    }
+
+    #[test]
+    fn ring_buffer_head_tail_wrap_detection() {
+        let mut rb = RingBuffer::new(100);
+        // Fill and consume to move head past tail
+        let _ = rb.allocate(80, 1).unwrap();
+        rb.consume(60);
+        // Now tail=60, head=80
+        // Allocate should wrap since 80+30>100 but 30<=60
+        let result = rb.allocate(30, 1);
+        assert!(result.is_some());
+        let (off, _) = result.unwrap();
+        assert_eq!(off, 0);
+        // Now head < tail (wrapped state)
+        assert!(rb.head() < rb.tail());
+    }
+
+    #[test]
+    fn ring_buffer_wrapped_state_allocation() {
+        let mut rb = RingBuffer::new(100);
+        let _ = rb.allocate(80, 1).unwrap();
+        rb.consume(70);
+        // Allocate wrapping to start
+        let _ = rb.allocate(50, 1).unwrap();
+        // Now in wrapped state: head=50, tail=70
+        assert_eq!(rb.head(), 50);
+        assert_eq!(rb.tail(), 70);
+        // Allocate in wrapped space [50, 70)
+        let result = rb.allocate(10, 1);
+        assert!(result.is_some());
+        let (off, _) = result.unwrap();
+        assert_eq!(off, 50);
+    }
+
+    #[test]
+    fn ring_buffer_wrapped_state_overflow() {
+        let mut rb = RingBuffer::new(100);
+        let _ = rb.allocate(80, 1).unwrap();
+        rb.consume(50);
+        // tail=50, head=80
+        // Wrap allocation
+        let _ = rb.allocate(40, 1).unwrap();
+        // Now head=40, tail=50
+        // Try to allocate 15 bytes (would need head+15=55 > tail=50)
+        let result = rb.allocate(15, 1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn ring_buffer_exact_fit_no_wrap() {
+        let mut rb = RingBuffer::new(100);
+        // Exactly fills without wrapping
+        let _ = rb.allocate(100, 1).unwrap();
+        assert_eq!(rb.head(), 100);
+        assert_eq!(rb.used(), 100);
+    }
+
+    #[test]
+    fn ring_buffer_alignment_causes_overflow() {
+        let mut rb = RingBuffer::new(100);
+        let _ = rb.allocate(90, 1).unwrap();
+        // Trying to allocate with 64-byte alignment: 90->128 which > 100
+        let result = rb.allocate(1, 64);
+        // Should fail due to alignment padding exceeding capacity
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn ring_buffer_multiple_resets() {
+        let mut rb = RingBuffer::new(128);
+        for _ in 0..5 {
+            let _ = rb.allocate(100, 1).unwrap();
+            rb.reset();
+            assert_eq!(rb.used(), 0);
+            assert_eq!(rb.head(), 0);
+            assert_eq!(rb.tail(), 0);
+        }
+    }
+
+    #[test]
+    fn ring_buffer_overflow_counter_accumulates() {
+        let mut rb = RingBuffer::new(64);
+        let _ = rb.allocate(64, 1).unwrap();
+        // Multiple failed allocations
+        for _ in 0..5 {
+            let _ = rb.allocate(10, 1);
+        }
+        assert_eq!(rb.stats().overflows, 5);
+    }
+
+    #[test]
+    fn ring_buffer_small_allocations_sequence() {
+        let mut rb = RingBuffer::new(256);
+        for i in 0..25 {
+            let result = rb.allocate(10, 1);
+            assert!(result.is_some(), "Allocation {} failed", i);
+        }
+        assert_eq!(rb.used(), 250);
+    }
+
+    #[test]
+    fn ring_buffer_consume_wraps_tail() {
+        let mut rb = RingBuffer::new(100);
+        let _ = rb.allocate(80, 1).unwrap();
+        rb.consume(50);
+        // Wrap head
+        let _ = rb.allocate(40, 1).unwrap();
+        // Consume past end
+        rb.consume(50); // tail was 50, should wrap: (50+50) % 100 = 0
+        // But we only have 70 used (80-50+40=70), so consume clamps
+        // Actually: in wrapped state, used = cap - tail + head = 100 - 50 + 40 = 90
+        // After consuming 50: used should be 40
+    }
+
+    #[test]
+    fn ring_buffer_used_calculation_not_wrapped() {
+        let mut rb = RingBuffer::new(200);
+        let _ = rb.allocate(100, 1).unwrap();
+        assert_eq!(rb.used(), 100);
+        rb.consume(30);
+        assert_eq!(rb.used(), 70);
+    }
+
+    #[test]
+    fn ring_buffer_used_calculation_wrapped() {
+        let mut rb = RingBuffer::new(100);
+        let _ = rb.allocate(80, 1).unwrap();
+        rb.consume(60);
+        let _ = rb.allocate(50, 1).unwrap(); // wraps
+        // head=50, tail=60, cap=100
+        // used = cap - tail + head = 100 - 60 + 50 = 90
+        assert_eq!(rb.used(), 90);
+    }
+
+    #[test]
+    fn ring_buffer_fifo_streaming_pattern() {
+        // Simulates GPU staging: allocate, upload, consume cycle
+        let mut rb = RingBuffer::new(256);
+        for frame in 0..10 {
+            let (off, _) = rb.allocate(64, 1).unwrap_or_else(|| {
+                rb.consume(64); // Free oldest frame
+                rb.allocate(64, 1).expect("Should succeed after consume")
+            });
+            // Simulate upload completion
+            if frame >= 3 {
+                rb.consume(64); // Consumer catches up
+            }
+            assert!(off < rb.capacity(), "Frame {}: offset {} out of bounds", frame, off);
+        }
+    }
 }

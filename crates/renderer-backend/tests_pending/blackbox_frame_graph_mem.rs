@@ -320,7 +320,7 @@ fn frame_graph_mem_150_compile_drop_export_cycles() {
         );
 
         // Verify compiler stats are populated.
-        let stats = compiled.compiler_stats();
+        let stats = &compiled.stats;
         assert!(
             stats.passes_total > 0,
             "Iteration {}: stats.passes_total must be > 0",

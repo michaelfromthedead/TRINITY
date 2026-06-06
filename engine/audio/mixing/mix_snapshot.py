@@ -32,7 +32,7 @@ from .config import (
     apply_curve,
     lerp,
 )
-from .mix_bus import BusState, FilterState, MixBus
+from .mix_bus import BusStateData, FilterParams, MixBus
 
 
 class SnapshotState(Enum):
@@ -71,7 +71,7 @@ class BusSnapshot:
     @classmethod
     def from_bus(cls, bus: MixBus) -> BusSnapshot:
         """Create a snapshot from a bus's current state."""
-        state = bus.get_state()
+        state = bus.get_snapshot()
         filters = state.filters
         return cls(
             bus_name=bus.name,
@@ -84,15 +84,15 @@ class BusSnapshot:
             high_pass_enabled=filters.high_pass_enabled,
         )
 
-    def to_bus_state(self) -> BusState:
-        """Convert to a BusState."""
-        filters = FilterState(
+    def to_bus_state(self) -> BusStateData:
+        """Convert to a BusStateData."""
+        filters = FilterParams(
             low_pass_freq=self.low_pass_freq,
             low_pass_enabled=self.low_pass_enabled,
             high_pass_freq=self.high_pass_freq,
             high_pass_enabled=self.high_pass_enabled,
         )
-        return BusState(
+        return BusStateData(
             volume_linear=self.volume_linear,
             pitch=self.pitch,
             muted=self.muted,
@@ -208,7 +208,7 @@ class MixSnapshot:
         """
         if bus.name in self.bus_states:
             state = self.bus_states[bus.name]
-            bus.set_state(state.to_bus_state())
+            bus.set_snapshot(state.to_bus_state())
 
     def apply_to_all(self, buses: dict[str, MixBus]) -> None:
         """
@@ -542,7 +542,7 @@ class SnapshotManager:
 
             # Apply blended state to bus
             if blended_state is not None and total_weight > 0:
-                bus.set_state(blended_state.to_bus_state())
+                bus.set_snapshot(blended_state.to_bus_state())
 
     # =========================================================================
     # Active Snapshot Queries

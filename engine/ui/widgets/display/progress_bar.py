@@ -149,7 +149,7 @@ class ProgressBar:
         '_x', '_y', '_width', '_height',
         '_visible', '_enabled', '_opacity',
         '_on_value_change_handlers', '_on_complete_handlers',
-        '_dirty', '_cached_mesh'
+        '_dirty', '_dirty_fields', '_cached_mesh'
     )
 
     # Class-level ID counter
@@ -249,6 +249,7 @@ class ProgressBar:
         self._on_complete_handlers: list[Callable[["ProgressBar"], None]] = []
 
         self._dirty = True
+        self._dirty_fields: set[str] = set()
         self._cached_mesh: Any = None
 
         # Update state if already complete
@@ -259,6 +260,22 @@ class ProgressBar:
     def reset_id_counter(cls) -> None:
         """Reset the ID counter. Used for testing."""
         cls._next_id = 0
+
+    def _mark_dirty(self, field: str) -> None:
+        """Mark a field as dirty."""
+        self._dirty = True
+        self._dirty_fields.add(field)
+
+    def is_dirty(self, field: Optional[str] = None) -> bool:
+        """Check if the widget (or a specific field) is dirty."""
+        if field is None:
+            return self._dirty
+        return field in self._dirty_fields
+
+    def clear_dirty(self) -> None:
+        """Clear all dirty flags."""
+        self._dirty = False
+        self._dirty_fields.clear()
 
     def _clamp(self, value: float) -> float:
         """Clamp value to the valid range.
@@ -297,7 +314,10 @@ class ProgressBar:
         # Fire completion handlers if just completed
         if is_complete and previous < self._max_value:
             for handler in self._on_complete_handlers:
-                handler(self)
+                try:
+                    handler(self)
+                except TypeError:
+                    handler()
 
     # =========================================================================
     # CORE PROPERTIES
@@ -334,7 +354,7 @@ class ProgressBar:
             self._value = new_value
 
         self._update_state()
-        self._dirty = True
+        self._mark_dirty("value")
         self._emit_value_change(previous)
 
     @property
@@ -458,6 +478,225 @@ class ProgressBar:
         """Set the appearance configuration."""
         self._appearance = value
         self._dirty = True
+
+    @property
+    def fill_color(self) -> str:
+        """Get the fill color."""
+        return self._appearance.fill_color
+
+    @fill_color.setter
+    def fill_color(self, value: str) -> None:
+        """Set the fill color."""
+        if self._appearance.fill_color != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=value,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def background_color(self) -> str:
+        """Get the background color."""
+        return self._appearance.background_color
+
+    @background_color.setter
+    def background_color(self, value: str) -> None:
+        """Set the background color."""
+        if self._appearance.background_color != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=value,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def border_color(self) -> str:
+        """Get the border color."""
+        return self._appearance.border_color
+
+    @border_color.setter
+    def border_color(self, value: str) -> None:
+        """Set the border color."""
+        if self._appearance.border_color != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=value,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def border_width(self) -> float:
+        """Get the border width."""
+        return self._appearance.border_width
+
+    @border_width.setter
+    def border_width(self, value: float) -> None:
+        """Set the border width."""
+        value = max(0.0, value)
+        if self._appearance.border_width != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=value,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def corner_radius(self) -> float:
+        """Get the corner radius."""
+        return self._appearance.corner_radius
+
+    @corner_radius.setter
+    def corner_radius(self, value: float) -> None:
+        """Set the corner radius."""
+        value = max(0.0, value)
+        if self._appearance.corner_radius != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=value,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def show_value(self) -> bool:
+        """Get whether value is shown."""
+        return self._appearance.show_value
+
+    @show_value.setter
+    def show_value(self, value: bool) -> None:
+        """Set whether value is shown."""
+        if self._appearance.show_value != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def value_format(self) -> str:
+        """Get the value format string."""
+        return self._appearance.value_format
+
+    @value_format.setter
+    def value_format(self, value: str) -> None:
+        """Set the value format string."""
+        if self._appearance.value_format != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=value,
+                value_color=self._appearance.value_color,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def value_color(self) -> str:
+        """Get the value text color."""
+        return self._appearance.value_color
+
+    @value_color.setter
+    def value_color(self, value: str) -> None:
+        """Set the value text color."""
+        if self._appearance.value_color != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=value,
+                value_font_size=self._appearance.value_font_size,
+            )
+            self._dirty = True
+
+    @property
+    def value_font_size(self) -> float:
+        """Get the value font size."""
+        return self._appearance.value_font_size
+
+    @value_font_size.setter
+    def value_font_size(self, value: float) -> None:
+        """Set the value font size."""
+        value = max(1.0, value)
+        if self._appearance.value_font_size != value:
+            self._appearance = ProgressBarAppearance(
+                fill_color=self._appearance.fill_color,
+                background_color=self._appearance.background_color,
+                border_color=self._appearance.border_color,
+                border_width=self._appearance.border_width,
+                corner_radius=self._appearance.corner_radius,
+                complete_color=self._appearance.complete_color,
+                disabled_color=self._appearance.disabled_color,
+                show_value=self._appearance.show_value,
+                value_format=self._appearance.value_format,
+                value_color=self._appearance.value_color,
+                value_font_size=value,
+            )
+            self._dirty = True
 
     # =========================================================================
     # ANIMATION PROPERTIES
@@ -681,11 +920,6 @@ class ProgressBar:
         except (ValueError, KeyError):
             return str(self._value)
 
-    @property
-    def is_dirty(self) -> bool:
-        """Check if widget needs re-rendering."""
-        return self._dirty
-
     # =========================================================================
     # EVENT SUBSCRIPTION
     # =========================================================================
@@ -704,7 +938,17 @@ class ProgressBar:
         self._on_value_change_handlers.append(handler)
         return lambda: self._on_value_change_handlers.remove(handler)
 
-    def on_complete(self, handler: Callable[["ProgressBar"], None]) -> Callable[[], None]:
+    @property
+    def on_complete(self) -> Optional[Callable[[], None]]:
+        """Get the on_complete callback."""
+        return self._on_complete_handlers[0] if self._on_complete_handlers else None
+
+    @on_complete.setter
+    def on_complete(self, handler: Callable[[], None]) -> None:
+        """Set the on_complete callback (replaces existing handlers)."""
+        self._on_complete_handlers = [handler] if handler else []
+
+    def add_on_complete_handler(self, handler: Callable[["ProgressBar"], None]) -> Callable[[], None]:
         """Subscribe to completion events.
 
         Args:
@@ -961,19 +1205,17 @@ class ProgressBar:
             "indeterminate_speed": self._indeterminate_speed,
             "segments": self._segments,
             "segment_gap": self._segment_gap,
-            "appearance": {
-                "fill_color": self._appearance.fill_color,
-                "background_color": self._appearance.background_color,
-                "border_color": self._appearance.border_color,
-                "border_width": self._appearance.border_width,
-                "corner_radius": self._appearance.corner_radius,
-                "complete_color": self._appearance.complete_color,
-                "disabled_color": self._appearance.disabled_color,
-                "show_value": self._appearance.show_value,
-                "value_format": self._appearance.value_format,
-                "value_color": self._appearance.value_color,
-                "value_font_size": self._appearance.value_font_size,
-            },
+            "fill_color": self._appearance.fill_color,
+            "background_color": self._appearance.background_color,
+            "border_color": self._appearance.border_color,
+            "border_width": self._appearance.border_width,
+            "corner_radius": self._appearance.corner_radius,
+            "complete_color": self._appearance.complete_color,
+            "disabled_color": self._appearance.disabled_color,
+            "show_value": self._appearance.show_value,
+            "value_format": self._appearance.value_format,
+            "value_color": self._appearance.value_color,
+            "value_font_size": self._appearance.value_font_size,
             "x": self._x,
             "y": self._y,
             "width": self._width,
@@ -995,17 +1237,17 @@ class ProgressBar:
         """
         appearance_data = data.get("appearance", {})
         appearance = ProgressBarAppearance(
-            fill_color=appearance_data.get("fill_color", "#4CAF50"),
-            background_color=appearance_data.get("background_color", "#E0E0E0"),
-            border_color=appearance_data.get("border_color", "#BDBDBD"),
-            border_width=appearance_data.get("border_width", 0.0),
-            corner_radius=appearance_data.get("corner_radius", 4.0),
-            complete_color=appearance_data.get("complete_color", "#2E7D32"),
-            disabled_color=appearance_data.get("disabled_color", "#CCCCCC"),
-            show_value=appearance_data.get("show_value", False),
-            value_format=appearance_data.get("value_format", "{:.0%}"),
-            value_color=appearance_data.get("value_color", "#000000"),
-            value_font_size=appearance_data.get("value_font_size", 12.0),
+            fill_color=data.get("fill_color", appearance_data.get("fill_color", "#4CAF50")),
+            background_color=data.get("background_color", appearance_data.get("background_color", "#E0E0E0")),
+            border_color=data.get("border_color", appearance_data.get("border_color", "#BDBDBD")),
+            border_width=data.get("border_width", appearance_data.get("border_width", 0.0)),
+            corner_radius=data.get("corner_radius", appearance_data.get("corner_radius", 4.0)),
+            complete_color=data.get("complete_color", appearance_data.get("complete_color", "#2E7D32")),
+            disabled_color=data.get("disabled_color", appearance_data.get("disabled_color", "#CCCCCC")),
+            show_value=data.get("show_value", appearance_data.get("show_value", False)),
+            value_format=data.get("value_format", appearance_data.get("value_format", "{:.0%}")),
+            value_color=data.get("value_color", appearance_data.get("value_color", "#000000")),
+            value_font_size=data.get("value_font_size", appearance_data.get("value_font_size", 12.0)),
         )
 
         return cls(

@@ -111,38 +111,33 @@ class TestChromeTraceExporter:
     def mock_cpu_profiler(self):
         """Create a mock CPU profiler."""
         profiler = MagicMock(spec=CPUProfiler)
-        profiler.get_samples.return_value = [
-            MagicMock(
-                name="test_function",
-                start_time=0.001,
-                duration_us=1500.0,
-                thread_id=1,
-                tags={"category": "gameplay"},
-            ),
-            MagicMock(
-                name="update_loop",
-                start_time=0.002,
-                duration_us=2000.0,
-                thread_id=1,
-                tags={},
-            ),
-        ]
+        sample1 = MagicMock(spec=CPUProfileSample)
+        sample1.name = "test_function"
+        sample1.start_time = 0.001
+        sample1.duration_us = 1500.0
+        sample1.thread_id = 1
+        sample1.tags = {"category": "gameplay"}
+        sample2 = MagicMock(spec=CPUProfileSample)
+        sample2.name = "update_loop"
+        sample2.start_time = 0.002
+        sample2.duration_us = 2000.0
+        sample2.thread_id = 1
+        sample2.tags = {}
+        profiler.get_samples.return_value = [sample1, sample2]
         return profiler
 
     @pytest.fixture
     def mock_gpu_profiler(self):
         """Create a mock GPU profiler."""
         profiler = MagicMock(spec=GPUProfiler)
-        profiler.get_samples.return_value = [
-            MagicMock(
-                name="shadow_pass",
-                category="shadows",
-                start_time=0.001,
-                gpu_time_ms=2.5,
-                draw_calls=100,
-                triangles=50000,
-            ),
-        ]
+        sample = MagicMock(spec=GPUProfileSample)
+        sample.name = "shadow_pass"
+        sample.category = "shadows"
+        sample.start_time = 0.001
+        sample.gpu_time_ms = 2.5
+        sample.draw_calls = 100
+        sample.triangles = 50000
+        profiler.get_samples.return_value = [sample]
         return profiler
 
     @pytest.fixture

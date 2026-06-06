@@ -773,7 +773,9 @@ class TestValidationContext:
 
     def test_validate_field_invalid(self, validation_context):
         """Test validating an invalid field."""
-        validation_context.add_validator("email", RequiredValidator())
+        validation_context.add_validator(
+            "email", RequiredValidator(trigger=ValidationTrigger.ON_CHANGE)
+        )
         result = validation_context.validate_field("email", "")
         assert not result.is_valid
 
@@ -837,7 +839,9 @@ class TestValidationContext:
 
     def test_errors_property(self, validation_context):
         """Test errors property."""
-        validation_context.add_validator("field", RequiredValidator())
+        validation_context.add_validator(
+            "field", RequiredValidator(trigger=ValidationTrigger.ON_CHANGE)
+        )
         validation_context.validate_field("field", "")
 
         errors = validation_context.errors

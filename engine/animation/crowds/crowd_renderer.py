@@ -14,7 +14,7 @@ from typing import Any, Iterator, Sequence
 from engine.core.math import Vec3, Vec4, Quat, Mat4, Transform
 
 from .animation_texture import AnimationTexture, AnimationTextureAtlas
-from .crowd_lod import CrowdLOD
+from .crowd_lod import CrowdLOD, LODTransition, LODTransitionMode
 from engine.animation.config import CROWD_RENDERER_CONFIG
 
 
@@ -46,6 +46,8 @@ class CrowdInstance:
         lod_level: Current LOD level (0 = highest detail)
         visible: Whether instance is visible
         instance_id: Unique identifier
+        lod_transition: Active LOD transition state (None if no transition)
+        lod_blend_factor: Current LOD blend factor for rendering (0-1)
     """
     position: Vec3 = field(default_factory=Vec3.zero)
     rotation: Quat = field(default_factory=Quat.identity)
@@ -57,6 +59,8 @@ class CrowdInstance:
     lod_level: int = 0
     visible: bool = True
     instance_id: int = 0
+    lod_transition: LODTransition | None = None
+    lod_blend_factor: float = 0.0
 
     _next_id: int = 0
 
@@ -87,6 +91,72 @@ class CrowdInstance:
     def distance_to(self, point: Vec3) -> float:
         """Calculate distance to a point."""
         return self.position.distance(point)
+
+    def start_lod_transition(self, new_lod: int, mode: LODTransitionMode = LODTransitionMode.BLEND, duration: float = 0.2) -> None:
+        """Start a LOD transition to a new level.
+
+        Args:
+            new_lod: Target LOD level
+            mode: Transition mode (INSTANT, BLEND, or DITHER)
+            duration: Transition duration in seconds (ignored for INSTANT)
+        """
+        if mode == LODTransitionMode.INSTANT:
+            self.lod_level = new_lod
+            self.lod_blend_factor = 0.0
+            self.lod_transition = None
+            return
+
+        if self.lod_level == new_lod:
+            return
+
+        self.lod_transition = LODTransition(
+            from_lod=self.lod_level,
+            to_lod=new_lod,
+            progress=0.0,
+            duration=duration,
+            mode=mode,
+            active=True,
+        )
+
+    def update_lod_transition(self, dt: float) -> bool:
+        """Update LOD transition state.
+
+        Args:
+            dt: Delta time in seconds
+
+        Returns:
+            True if transition completed this frame
+        """
+        if self.lod_transition is None or not self.lod_transition.active:
+            return False
+
+        completed = self.lod_transition.update(dt)
+        self.lod_blend_factor = self.lod_transition.get_blend_factor()
+
+        if completed:
+            self.lod_level = self.lod_transition.to_lod
+            self.lod_blend_factor = 0.0
+            self.lod_transition = None
+            return True
+
+        return False
+
+    def get_render_lod_info(self) -> tuple[int, int, float]:
+        """Get LOD rendering information for shaders.
+
+        Returns:
+            Tuple of (primary_lod, secondary_lod, blend_factor).
+            For INSTANT mode or no transition, secondary_lod equals primary_lod and blend_factor is 0.
+            For BLEND/DITHER modes during transition, returns both LODs and blend factor.
+        """
+        if self.lod_transition is None or not self.lod_transition.active:
+            return (self.lod_level, self.lod_level, 0.0)
+
+        return (
+            self.lod_transition.from_lod,
+            self.lod_transition.to_lod,
+            self.lod_blend_factor,
+        )
 
 
 @dataclass
@@ -139,9 +209,9 @@ class InstanceBuffer:
         Raises:
             InstanceBufferOverflowError: If count exceeds maximum capacity
         """
-        if count > self.max_instances:
+        if count > self.max_capacity:
             raise InstanceBufferOverflowError(
-                f"Cannot reserve {count} instances, maximum is {self.max_instances}"
+                f"Cannot reserve {count} instances, maximum is {self.max_capacity}"
             )
         self.capacity = count
         # Pre-allocate arrays with GPU alignment consideration
@@ -157,9 +227,9 @@ class InstanceBuffer:
             InstanceBufferOverflowError: If buffer at maximum capacity
         """
         # Check max capacity FIRST (independent of current capacity)
-        if self.instance_count >= self.max_instances:
+        if self.instance_count >= self.max_capacity:
             raise InstanceBufferOverflowError(
-                f"Instance buffer at maximum capacity ({self.max_instances})"
+                f"Instance buffer at maximum capacity ({self.max_capacity})"
             )
         # Then check if growth is needed
         if self.instance_count >= self.capacity:
@@ -237,7 +307,7 @@ class InstanceBuffer:
             CROWD_RENDERER_CONFIG.DEFAULT_BUFFER_CAPACITY
         )
         # Clamp to maximum
-        new_capacity = min(new_capacity, self.max_instances)
+        new_capacity = min(new_capacity, self.max_capacity)
 
         growth = new_capacity - self.capacity
         if growth > 0:
@@ -476,6 +546,71 @@ class CrowdRenderer:
             for instance in batch.instances:
                 dist = instance.distance_to(camera_pos)
                 instance.lod_level = lod_system.get_lod_for_distance(dist, instance.lod_level)
+
+    def update_lod_with_transitions(
+        self,
+        camera_pos: Vec3,
+        lod_system: CrowdLOD,
+        dt: float,
+        transition_mode: LODTransitionMode = LODTransitionMode.BLEND,
+        transition_duration: float = 0.2,
+    ) -> int:
+        """Update LOD levels with smooth transitions.
+
+        Combines LOD level selection (with hysteresis) and smooth transitions
+        between LOD levels using the specified transition mode.
+
+        Args:
+            camera_pos: Camera world position
+            lod_system: CrowdLOD instance managing LOD level definitions
+            dt: Delta time in seconds for transition updates
+            transition_mode: How to transition between LOD levels (INSTANT, BLEND, DITHER)
+            transition_duration: Duration of transitions in seconds
+
+        Returns:
+            Number of LOD transitions that completed this frame
+        """
+        completed_transitions = 0
+
+        for batch in self._batches.values():
+            for instance in batch.instances:
+                # Update any active transition
+                if instance.update_lod_transition(dt):
+                    completed_transitions += 1
+
+                # Determine target LOD based on distance with hysteresis
+                dist = instance.distance_to(camera_pos)
+                target_lod = lod_system.get_lod_for_distance(dist, instance.lod_level)
+
+                # Start new transition if LOD changed and no active transition
+                if target_lod != instance.lod_level:
+                    if instance.lod_transition is None or not instance.lod_transition.active:
+                        instance.start_lod_transition(target_lod, transition_mode, transition_duration)
+
+        return completed_transitions
+
+    def get_transition_stats(self) -> dict[str, int]:
+        """Get LOD transition statistics.
+
+        Returns:
+            Dictionary with transition counts by mode
+        """
+        stats = {
+            "active_blend": 0,
+            "active_dither": 0,
+            "no_transition": 0,
+        }
+
+        for batch in self._batches.values():
+            for instance in batch.instances:
+                if instance.lod_transition is None or not instance.lod_transition.active:
+                    stats["no_transition"] += 1
+                elif instance.lod_transition.mode == LODTransitionMode.BLEND:
+                    stats["active_blend"] += 1
+                elif instance.lod_transition.mode == LODTransitionMode.DITHER:
+                    stats["active_dither"] += 1
+
+        return stats
 
     def prepare_render_data(self) -> list[tuple[CrowdRenderBatch, InstanceBuffer]]:
         """Prepare render data for all batches.

@@ -615,6 +615,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_character_input(self, text_input_class):
         """Test character input."""
         text_input = text_input_class()
+        text_input.handle_focus_gained()
         text_input.handle_text_input("H")
         text_input.handle_text_input("i")
         assert text_input.text == "Hi"
@@ -622,6 +623,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_backspace_key(self, text_input_class):
         """Test backspace key handling."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 5
         text_input.handle_key_down("backspace")
         assert text_input.text == "Hell"
@@ -629,6 +631,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_delete_key(self, text_input_class):
         """Test delete key handling."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 0
         text_input.handle_key_down("delete")
         assert text_input.text == "ello"
@@ -636,6 +639,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_left_arrow(self, text_input_class):
         """Test left arrow key."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 3
         text_input.handle_key_down("left")
         assert text_input.cursor_position == 2
@@ -643,6 +647,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_right_arrow(self, text_input_class):
         """Test right arrow key."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 2
         text_input.handle_key_down("right")
         assert text_input.cursor_position == 3
@@ -650,6 +655,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_home_key(self, text_input_class):
         """Test home key."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 3
         text_input.handle_key_down("home")
         assert text_input.cursor_position == 0
@@ -657,6 +663,7 @@ class TestTextInputKeyboardHandling:
     def test_text_input_end_key(self, text_input_class):
         """Test end key."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 2
         text_input.handle_key_down("end")
         assert text_input.cursor_position == 5
@@ -664,12 +671,14 @@ class TestTextInputKeyboardHandling:
     def test_text_input_ctrl_a_select_all(self, text_input_class):
         """Test Ctrl+A selects all."""
         text_input = text_input_class(text="Hello World")
+        text_input.handle_focus_gained()
         text_input.handle_key_down("a", ctrl=True)
         assert text_input.selected_text == "Hello World"
 
     def test_text_input_shift_arrow_extends_selection(self, text_input_class):
         """Test Shift+Arrow extends selection."""
         text_input = text_input_class(text="Hello")
+        text_input.handle_focus_gained()
         text_input.cursor_position = 2
         text_input.handle_key_down("right", shift=True)
         text_input.handle_key_down("right", shift=True)

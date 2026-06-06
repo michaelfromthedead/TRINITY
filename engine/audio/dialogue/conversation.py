@@ -29,18 +29,28 @@ from .vo_line import VOLine, VOLineState
 class ConversationState(str, Enum):
     """State of a conversation."""
     INACTIVE = "inactive"
+    IDLE = "idle"
     STARTING = "starting"
     ACTIVE = "active"
+    PLAYING = "playing"
     PAUSED = "paused"
     WAITING = "waiting"  # Waiting for player input
     ENDING = "ending"
     COMPLETED = "completed"
+    COMPLETE = "complete"
     CANCELLED = "cancelled"
 
-    # Aliases (same value as primary state)
-    IDLE = "inactive"      # Alias for INACTIVE
-    PLAYING = "active"     # Alias for ACTIVE
-    COMPLETE = "completed" # Alias for COMPLETED
+    def __eq__(self, other):
+        if isinstance(other, ConversationState):
+            # Make INACTIVE and IDLE compare equal (different names, same semantic meaning)
+            aliases = [{"INACTIVE", "IDLE"}, {"ACTIVE", "PLAYING"}, {"COMPLETED", "COMPLETE"}]
+            for alias_set in aliases:
+                if self.name in alias_set and other.name in alias_set:
+                    return True
+        return str.__eq__(self, other)
+
+    def __hash__(self):
+        return hash(self.value)
 
 
 @dataclass
@@ -50,22 +60,33 @@ class ConversationNode:
     """
     node_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     line: Optional[VOLine] = None
-    line_id: Optional[str] = None  # Alternative to line object
-    speaker: Optional[str] = None  # Speaker ID/name
-    condition: Optional[str] = None  # Condition expression
-    delay_ms: float = 0.0  # Delay before next node
+    line_id: Optional[str] = None  # Convenience: auto-creates VOLine if provided
     next_nodes: list[str] = field(default_factory=list)  # Node IDs
     conditions: dict[str, Any] = field(default_factory=dict)
+    condition: Optional[str] = None  # Convenience: single condition string
+    speaker: Optional[str] = None  # Speaker identifier
+    delay_ms: float = 0.0  # Delay before transitioning to next node
     is_branch_point: bool = False
     branch_options: list[dict[str, Any]] = field(default_factory=list)
     on_enter: Optional[Callable[[ConversationNode], None]] = None
     on_exit: Optional[Callable[[ConversationNode], None]] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Auto-create VOLine from line_id if provided."""
+        if self.line_id is not None and self.line is None:
+            self.line = VOLine(line_id=self.line_id, speaker_id=self.speaker or "")
+        # Set speaker on existing line if provided
+        elif self.line is not None and self.speaker is not None:
+            self.line.speaker_id = self.speaker
+        # Store single condition in conditions dict if provided
+        if self.condition is not None and "expr" not in self.conditions:
+            self.conditions["expr"] = self.condition
+
     @property
     def has_line(self) -> bool:
         """Check if this node has a VO line."""
-        return self.line is not None or self.line_id is not None
+        return self.line is not None
 
     @property
     def is_terminal(self) -> bool:
@@ -74,31 +95,55 @@ class ConversationNode:
 
     def evaluate_condition(self, context: dict[str, Any]) -> bool:
         """
-        Evaluate the node's condition against a context.
+        Evaluate this node's condition against the given context.
 
         Args:
-            context: Dictionary of variable names to values
+            context: Dictionary of variables to evaluate against
 
         Returns:
-            True if condition passes (or no condition), False otherwise
+            True if condition is met or no condition exists
         """
-        if not self.condition:
+        if self.condition is None:
             return True
 
+        # Simple expression evaluation for common comparison operators
+        expr = self.condition.strip()
+
+        # Try to evaluate using a safe subset of operations
         try:
-            # Parse simple conditions like "health > 50"
-            # Support basic comparisons
-            condition = self.condition.strip()
+            # Parse simple comparison expressions like "health > 50"
+            for op, func in [
+                (" >= ", lambda a, b: a >= b),
+                (" <= ", lambda a, b: a <= b),
+                (" == ", lambda a, b: a == b),
+                (" != ", lambda a, b: a != b),
+                (" > ", lambda a, b: a > b),
+                (" < ", lambda a, b: a < b),
+            ]:
+                if op in expr:
+                    left, right = expr.split(op, 1)
+                    left = left.strip()
+                    right = right.strip()
 
-            # Try to evaluate as a simple expression
-            # Replace variable names with context values
-            for var_name, var_value in context.items():
-                condition = condition.replace(var_name, repr(var_value))
+                    # Get left value from context
+                    left_val = context.get(left, left)
+                    # Try to convert right to number if possible
+                    try:
+                        right_val = int(right)
+                    except ValueError:
+                        try:
+                            right_val = float(right)
+                        except ValueError:
+                            right_val = context.get(right, right)
 
-            # Safely evaluate the condition
-            return bool(eval(condition, {"__builtins__": {}}, {}))
+                    return func(left_val, right_val)
+
+            # If no operator found, check for truthiness of a variable
+            return bool(context.get(expr, False))
+
         except Exception:
-            return True  # Default to True on parse errors
+            # If evaluation fails, return False
+            return False
 
     def get_next_node_id(
         self,
@@ -145,6 +190,10 @@ class Conversation:
     _elapsed_time: float = field(default=0.0, init=False)
     _played_nodes: list[str] = field(default_factory=list, init=False)
 
+    # Callbacks
+    on_node_start: Optional[Callable[[str], None]] = field(default=None, init=False)
+    on_complete: Optional[Callable[[str], None]] = field(default=None, init=False)
+
     def __post_init__(self) -> None:
         """Initialize after dataclass creation."""
         if isinstance(self.tags, list):
@@ -188,7 +237,13 @@ class Conversation:
         return self._state in (
             ConversationState.COMPLETED,
             ConversationState.CANCELLED,
+            ConversationState.COMPLETE,
         )
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if conversation is paused."""
+        return self._state == ConversationState.PAUSED
 
     @property
     def progress(self) -> float:
@@ -196,6 +251,11 @@ class Conversation:
         if not self.nodes:
             return 0.0
         return len(self._played_nodes) / len(self.nodes)
+
+    @property
+    def remaining_nodes_count(self) -> int:
+        """Get count of remaining unplayed nodes."""
+        return len(self.nodes) - len(self._played_nodes)
 
     def add_node(self, node: ConversationNode) -> None:
         """Add a node to the conversation."""
@@ -212,9 +272,12 @@ class Conversation:
         """Get a node by ID."""
         return self.nodes.get(node_id)
 
-    def start(self, current_time: float) -> Optional[ConversationNode]:
+    def start(self, current_time: Optional[float] = None) -> Optional[ConversationNode]:
         """
         Start the conversation.
+
+        Args:
+            current_time: Optional start time, defaults to time.time() * 1000
 
         Returns:
             First node to play
@@ -222,11 +285,18 @@ class Conversation:
         if not self.start_node_id or self.start_node_id not in self.nodes:
             return None
 
+        if current_time is None:
+            current_time = time.time() * 1000
+
         self._state = ConversationState.STARTING
         self._start_time = current_time
         self._current_node_id = self.start_node_id
         self._played_nodes = []
-        self._state = ConversationState.ACTIVE
+        self._state = ConversationState.PLAYING
+
+        # Call on_node_start callback for first node
+        if self.on_node_start:
+            self.on_node_start(self.start_node_id)
 
         return self.current_node
 
@@ -282,11 +352,73 @@ class Conversation:
             if next_node and next_node.on_enter:
                 next_node.on_enter(next_node)
 
+            # Call on_node_start callback
+            if self.on_node_start:
+                self.on_node_start(next_id)
+
             return next_node
         else:
             # No more nodes - conversation complete
-            self._state = ConversationState.COMPLETED
+            self._state = ConversationState.COMPLETE
+
+            # Call on_complete callback
+            if self.on_complete:
+                self.on_complete(self.conversation_id)
+
             return None
+
+    def complete_current_node(
+        self,
+        game_state: Optional[dict[str, Any]] = None,
+    ) -> Optional[ConversationNode]:
+        """
+        Mark the current node as complete and advance to the next.
+
+        If the current node has multiple next nodes (branch point), sets
+        state to WAITING and returns None until select_branch is called.
+
+        Args:
+            game_state: Current game state for conditional branching
+
+        Returns:
+            Next node or None if conversation ended or waiting for branch selection
+        """
+        current = self.current_node
+        if current and len(current.next_nodes) > 1:
+            # Multiple paths - wait for branch selection
+            # Record that we played this node
+            if current.node_id not in self._played_nodes:
+                self._played_nodes.append(current.node_id)
+            self._state = ConversationState.WAITING
+            return None
+
+        return self.advance(game_state=game_state)
+
+    def select_branch(self, node_id: str) -> Optional[ConversationNode]:
+        """
+        Select a specific branch by node ID.
+
+        Args:
+            node_id: The ID of the node to branch to
+
+        Returns:
+            The selected node
+
+        Raises:
+            ValueError: If the node_id is not a valid branch option
+        """
+        if node_id not in self.nodes:
+            raise ValueError(f"Node '{node_id}' does not exist")
+
+        # Validate this is a valid branch from current context
+        current = self.current_node
+        if current and node_id not in current.next_nodes:
+            raise ValueError(
+                f"Node '{node_id}' is not a valid branch from current node"
+            )
+
+        self._current_node_id = node_id
+        return self.current_node
 
     def pause(self) -> None:
         """Pause the conversation."""
@@ -296,11 +428,20 @@ class Conversation:
     def resume(self) -> None:
         """Resume the conversation."""
         if self._state == ConversationState.PAUSED:
-            self._state = ConversationState.ACTIVE
+            self._state = ConversationState.PLAYING
 
     def cancel(self) -> None:
         """Cancel the conversation."""
         self._state = ConversationState.CANCELLED
+
+    def skip_current(self) -> Optional[ConversationNode]:
+        """Skip the current node and advance to the next."""
+        return self.advance()
+
+    def skip_all(self) -> None:
+        """Skip all remaining nodes and complete the conversation."""
+        while self.advance() is not None:
+            pass
 
     def skip_to_node(self, node_id: str) -> Optional[ConversationNode]:
         """Skip to a specific node."""
@@ -315,219 +456,11 @@ class Conversation:
 
     def reset(self) -> None:
         """Reset conversation to initial state."""
-        self._state = ConversationState.INACTIVE
+        self._state = ConversationState.IDLE
         self._current_node_id = ""
         self._start_time = 0.0
         self._elapsed_time = 0.0
         self._played_nodes = []
-
-    @property
-    def is_paused(self) -> bool:
-        """Check if conversation is paused."""
-        return self._state == ConversationState.PAUSED
-
-    @property
-    def remaining_nodes_count(self) -> int:
-        """Get count of remaining nodes to play."""
-        return len(self.nodes) - len(self._played_nodes)
-
-    # Callbacks
-    on_node_start: Optional[Callable[[str], None]] = None
-    on_complete: Optional[Callable[[str], None]] = None
-
-    def start(self, current_time: Optional[float] = None) -> Optional[ConversationNode]:
-        """
-        Start the conversation.
-
-        Args:
-            current_time: Optional current time (defaults to time.time())
-
-        Returns:
-            First node to play
-        """
-        if current_time is None:
-            current_time = time.time()
-
-        if not self.start_node_id or self.start_node_id not in self.nodes:
-            # If no start node, use first added node
-            if self.nodes:
-                self.start_node_id = next(iter(self.nodes.keys()))
-            else:
-                return None
-
-        self._state = ConversationState.ACTIVE
-        self._start_time = current_time
-        self._current_node_id = self.start_node_id
-        self._played_nodes = []
-
-        # Call on_node_start callback
-        if self.on_node_start:
-            self.on_node_start(self._current_node_id)
-
-        return self.current_node
-
-    def complete_current_node(self) -> Optional[ConversationNode]:
-        """
-        Complete the current node and advance to the next.
-
-        Returns:
-            Next node or None if conversation is complete
-        """
-        current = self.current_node
-        if not current:
-            return None
-
-        # Record that we played this node
-        if current.node_id not in self._played_nodes:
-            self._played_nodes.append(current.node_id)
-
-        # Call on_exit callback
-        if current.on_exit:
-            current.on_exit(current)
-
-        # Get next node
-        next_id = current.get_next_node_id()
-
-        if next_id and next_id in self.nodes:
-            self._current_node_id = next_id
-            next_node = self.current_node
-
-            # Call on_enter callback
-            if next_node and next_node.on_enter:
-                next_node.on_enter(next_node)
-
-            # Call on_node_start callback
-            if self.on_node_start:
-                self.on_node_start(self._current_node_id)
-
-            return next_node
-        else:
-            # No more nodes - conversation complete
-            self._state = ConversationState.COMPLETED
-            if self.on_complete:
-                self.on_complete(self.conversation_id)
-            return None
-
-    def select_branch(self, branch_id: str) -> Optional[ConversationNode]:
-        """
-        Select a branch at a branching point.
-
-        Args:
-            branch_id: The node ID of the branch to select
-
-        Returns:
-            The selected node
-
-        Raises:
-            ValueError: If branch_id is not a valid next node
-        """
-        current = self.current_node
-        if not current:
-            raise ValueError("No current node")
-
-        if branch_id not in current.next_nodes and branch_id not in self.nodes:
-            raise ValueError(f"Invalid branch: {branch_id}")
-
-        if branch_id not in self.nodes:
-            raise KeyError(f"Node {branch_id} does not exist")
-
-        self._current_node_id = branch_id
-
-        # Call callbacks
-        next_node = self.current_node
-        if next_node and next_node.on_enter:
-            next_node.on_enter(next_node)
-
-        if self.on_node_start:
-            self.on_node_start(self._current_node_id)
-
-        return next_node
-
-    def go_to_node(self, node_id: str) -> None:
-        """
-        Go to a specific node (only allowed for branching, not linear).
-
-        Raises:
-            ValueError: If trying to go back in a linear conversation
-        """
-        if node_id in self._played_nodes:
-            raise ValueError("Cannot go back to already played node in linear conversation")
-        if node_id not in self.nodes:
-            raise ValueError(f"Node {node_id} does not exist")
-        self._current_node_id = node_id
-
-    def skip_current(self) -> Optional[ConversationNode]:
-        """
-        Skip the current node and advance to the next.
-
-        Returns:
-            Next node or None if conversation is complete
-        """
-        return self.complete_current_node()
-
-    def skip_all(self) -> None:
-        """Skip all remaining nodes and complete the conversation."""
-        # Mark all nodes as played
-        self._played_nodes = list(self.nodes.keys())
-        self._state = ConversationState.COMPLETED
-        if self.on_complete:
-            self.on_complete(self.conversation_id)
-
-    def save_state(self) -> dict[str, Any]:
-        """
-        Save the current conversation state for later restoration.
-
-        Returns:
-            Dictionary containing state information
-        """
-        return {
-            "conversation_id": self.conversation_id,
-            "current_node": self._current_node_id,
-            "current_node_id": self._current_node_id,
-            "state": self._state.value,
-            "played_nodes": list(self._played_nodes),
-            "elapsed_time": self._elapsed_time,
-        }
-
-    def restore_state(self, state: dict[str, Any]) -> None:
-        """
-        Restore conversation state from a saved state.
-
-        Args:
-            state: State dictionary from save_state()
-        """
-        self._current_node_id = state.get("current_node") or state.get("current_node_id", "")
-        state_value = state.get("state", "inactive")
-        # Map state value to enum
-        for s in ConversationState:
-            if s.value == state_value:
-                self._state = s
-                break
-        self._played_nodes = list(state.get("played_nodes", []))
-        self._elapsed_time = state.get("elapsed_time", 0.0)
-
-    def set_context(self, key: str, value: Any) -> None:
-        """
-        Set a context variable.
-
-        Args:
-            key: Variable name
-            value: Variable value
-        """
-        self.metadata[f"context_{key}"] = value
-
-    def get_context(self, key: str, default: Any = None) -> Any:
-        """
-        Get a context variable.
-
-        Args:
-            key: Variable name
-            default: Default value if not found
-
-        Returns:
-            The variable value or default
-        """
-        return self.metadata.get(f"context_{key}", default)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize conversation to dictionary."""
@@ -542,6 +475,25 @@ class Conversation:
             "tags": list(self.tags),
             "metadata": self.metadata,
         }
+
+    def save_state(self) -> dict[str, Any]:
+        """Save the current conversation state for later restoration."""
+        return {
+            "current_node": self._current_node_id,
+            "state": self._state.value,
+            "start_time": self._start_time,
+            "elapsed_time": self._elapsed_time,
+            "played_nodes": list(self._played_nodes),
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore a previously saved conversation state."""
+        self._current_node_id = state.get("current_node", "")
+        state_value = state.get("state", "idle")
+        self._state = ConversationState(state_value)
+        self._start_time = state.get("start_time", 0.0)
+        self._elapsed_time = state.get("elapsed_time", 0.0)
+        self._played_nodes = list(state.get("played_nodes", []))
 
 
 class ConversationManager:
@@ -593,10 +545,10 @@ class ConversationManager:
         with self._lock:
             self._conversations[conversation.conversation_id] = conversation
 
-    # Alias for test API
+    # Alias for register_conversation
     def register(self, conversation: Conversation) -> None:
         """Register a conversation (alias for register_conversation)."""
-        self.register_conversation(conversation)
+        return self.register_conversation(conversation)
 
     def unregister_conversation(self, conversation_id: str) -> bool:
         """Unregister a conversation."""
@@ -611,30 +563,10 @@ class ConversationManager:
         with self._lock:
             return self._conversations.get(conversation_id)
 
-    # Alias for test API
+    # Alias for get_conversation
     def get(self, conversation_id: str) -> Optional[Conversation]:
         """Get a conversation by ID (alias for get_conversation)."""
         return self.get_conversation(conversation_id)
-
-    def is_active(self, conversation_id: str) -> bool:
-        """Check if a conversation is currently active."""
-        with self._lock:
-            return conversation_id in self._active_conversations
-
-    def get_active(self) -> Optional[Conversation]:
-        """Get the currently active conversation (first one if multiple)."""
-        with self._lock:
-            if self._active_conversations:
-                return self._conversations.get(self._active_conversations[0])
-            return None
-
-    def stop(self, conversation_id: str) -> bool:
-        """Stop a conversation (alias for end_conversation with cancelled=True)."""
-        return self.end_conversation(conversation_id, cancelled=True)
-
-    def start(self, conversation_id: str, current_time: Optional[float] = None) -> Optional[ConversationNode]:
-        """Start a conversation (alias for start_conversation)."""
-        return self.start_conversation(conversation_id, current_time)
 
     def start_conversation(
         self,
@@ -683,6 +615,31 @@ class ConversationManager:
                     self._on_line_started(conversation, first_node.line)
 
             return first_node
+
+    # Alias for start_conversation
+    def start(
+        self,
+        conversation_id: str,
+        current_time: Optional[float] = None,
+    ) -> Optional[ConversationNode]:
+        """Start a conversation (alias for start_conversation)."""
+        return self.start_conversation(conversation_id, current_time)
+
+    def is_active(self, conversation_id: str) -> bool:
+        """Check if a conversation is currently active."""
+        with self._lock:
+            return conversation_id in self._active_conversations
+
+    def get_active(self) -> Optional[Conversation]:
+        """Get the first active conversation, if any."""
+        with self._lock:
+            if self._active_conversations:
+                return self._conversations.get(self._active_conversations[0])
+            return None
+
+    def stop(self, conversation_id: str) -> bool:
+        """Stop a conversation (alias for end_conversation with cancelled=True)."""
+        return self.end_conversation(conversation_id, cancelled=True)
 
     def end_conversation(
         self,
@@ -836,7 +793,7 @@ class ConversationManager:
                     if line.is_playing:
                         line.update_playback(delta_ms)
 
-                    # Check for auto-advance after update or if already completed
+                    # Auto-advance if line is completed (regardless of playing state)
                     if line.is_completed:
                         # Auto-advance if not at branch point
                         if not self._is_next_branch(conversation):
@@ -882,6 +839,16 @@ class ConversationManager:
         with self._lock:
             self._game_state.update(state)
 
+    def set_context(self, key: str, value: Any) -> None:
+        """Set a context variable for condition evaluation."""
+        with self._lock:
+            self._game_state[key] = value
+
+    def get_context(self, key: str, default: Any = None) -> Any:
+        """Get a context variable."""
+        with self._lock:
+            return self._game_state.get(key, default)
+
     @property
     def active_conversation_ids(self) -> list[str]:
         """Get IDs of active conversations."""
@@ -900,31 +867,6 @@ class ConversationManager:
         with self._lock:
             return len(self._active_conversations) > 0
 
-    def set_context(self, key: str, value: Any) -> None:
-        """
-        Set a context variable in the game state.
-
-        Args:
-            key: Variable name
-            value: Variable value
-        """
-        with self._lock:
-            self._game_state[key] = value
-
-    def get_context(self, key: str, default: Any = None) -> Any:
-        """
-        Get a context variable from the game state.
-
-        Args:
-            key: Variable name
-            default: Default value if not found
-
-        Returns:
-            The variable value or default
-        """
-        with self._lock:
-            return self._game_state.get(key, default)
-
 
 # =============================================================================
 # Helper Functions
@@ -932,44 +874,43 @@ class ConversationManager:
 
 
 def create_linear_conversation(
-    conversation_id_or_lines: Any,
-    lines_or_title: Any = None,
+    first_arg: str | list[VOLine | str],
+    second_arg: list[VOLine | str] | str | None = None,
     title: str = "",
     priority: int = PRIORITY_HIGH,
+    conversation_id: Optional[str] = None,
 ) -> Conversation:
     """
     Create a simple linear conversation from a list of lines.
 
-    Can be called as:
-        create_linear_conversation(lines)
-        create_linear_conversation(lines, conversation_id=..., title=..., priority=...)
-        create_linear_conversation(conversation_id, lines)  # Test API
+    Supports two calling conventions:
+        create_linear_conversation(lines, title="Test")  # lines first
+        create_linear_conversation("conv_id", lines)     # conversation_id first
 
     Args:
-        conversation_id_or_lines: Either conversation ID (str) or list of lines/line_ids
-        lines_or_title: Either lines list or title (for backward compat)
+        first_arg: Either lines list or conversation_id string
+        second_arg: Either lines list or title (when first_arg is lines)
         title: Conversation title
         priority: Priority level
+        conversation_id: Optional explicit conversation ID
 
     Returns:
         Configured Conversation object
     """
-    # Parse arguments - support both signatures
-    if isinstance(conversation_id_or_lines, str) and lines_or_title is not None:
-        # New test API: create_linear_conversation("conv_id", ["line_1", "line_2"])
-        conversation_id = conversation_id_or_lines
-        lines = lines_or_title
-    elif isinstance(conversation_id_or_lines, list):
-        # Original API: create_linear_conversation(lines, ...)
-        lines = conversation_id_or_lines
-        conversation_id = lines_or_title if isinstance(lines_or_title, str) else str(uuid.uuid4())
+    # Determine which calling convention is being used
+    if isinstance(first_arg, list):
+        # First form: create_linear_conversation(lines, title="Test")
+        lines = first_arg
+        if isinstance(second_arg, str):
+            title = second_arg
+        conv_id = conversation_id or str(uuid.uuid4())
     else:
-        # Fallback
-        lines = []
-        conversation_id = str(uuid.uuid4())
+        # Second form: create_linear_conversation("conv_id", lines)
+        conv_id = first_arg
+        lines = second_arg if isinstance(second_arg, list) else []
 
     conversation = Conversation(
-        conversation_id=conversation_id,
+        conversation_id=conv_id,
         title=title,
         priority=priority,
     )
@@ -977,21 +918,21 @@ def create_linear_conversation(
     participants = set()
     prev_node_id = None
 
-    for i, line_item in enumerate(lines):
-        # Support both VOLine objects and line_id strings
-        if isinstance(line_item, str):
-            # It's a line ID string
-            node = ConversationNode(
-                line_id=line_item,
-            )
+    for i, line_or_id in enumerate(lines):
+        # Convert string line IDs to VOLine objects
+        if isinstance(line_or_id, str):
+            line = VOLine(line_id=line_or_id, context_type=CONTEXT_CONVERSATION)
+            line_id = line_or_id
         else:
-            # It's a VOLine object
-            line_item.context_type = CONTEXT_CONVERSATION
-            participants.add(line_item.speaker_id)
-            node = ConversationNode(
-                line=line_item,
-                line_id=getattr(line_item, 'line_id', None),
-            )
+            line = line_or_id
+            line.context_type = CONTEXT_CONVERSATION
+            line_id = line.line_id
+        participants.add(line.speaker_id)
+
+        node = ConversationNode(
+            line=line,
+            line_id=line_id,
+        )
 
         if prev_node_id:
             prev_node = conversation.get_node(prev_node_id)
@@ -1008,66 +949,78 @@ def create_linear_conversation(
 
 
 def create_branching_conversation(
-    conversation_id_or_data: Any,
-    structure_or_title: Any = None,
+    first_arg: str | dict[str, dict[str, Any]] | list[dict[str, Any]],
+    second_arg: dict[str, dict[str, Any]] | list[dict[str, Any]] | str | None = None,
     title: str = "",
+    conversation_id: Optional[str] = None,
 ) -> Conversation:
     """
     Create a branching conversation from node data.
 
-    Can be called as:
-        create_branching_conversation(nodes_data)
-        create_branching_conversation(conversation_id, structure_dict)  # Test API
+    Supports two calling conventions:
+        create_branching_conversation(nodes_data, title="Test")  # nodes first
+        create_branching_conversation("conv_id", nodes_data)     # conversation_id first
 
     Args:
-        conversation_id_or_data: Either conversation ID (str) or list/dict of node data
-        structure_or_title: Either structure dict or title
+        first_arg: Either nodes_data or conversation_id
+        second_arg: Either nodes_data or title
         title: Conversation title
+        conversation_id: Optional explicit conversation ID
 
     Returns:
         Configured Conversation object
     """
-    # Parse arguments - support both signatures
-    if isinstance(conversation_id_or_data, str) and structure_or_title is not None:
-        # New test API: create_branching_conversation("conv_id", {structure_dict})
-        conversation_id = conversation_id_or_data
-        nodes_data = structure_or_title
-    elif isinstance(conversation_id_or_data, (list, dict)):
-        # Original API
-        nodes_data = conversation_id_or_data
-        conversation_id = structure_or_title if isinstance(structure_or_title, str) else str(uuid.uuid4())
+    # Determine which calling convention is being used
+    if isinstance(first_arg, (dict, list)) and not isinstance(first_arg, str):
+        # First form: create_branching_conversation(nodes_data, title="Test")
+        nodes_data = first_arg
+        if isinstance(second_arg, str):
+            title = second_arg
+        conv_id = conversation_id or str(uuid.uuid4())
     else:
-        nodes_data = {}
-        conversation_id = str(uuid.uuid4())
+        # Second form: create_branching_conversation("conv_id", nodes_data)
+        conv_id = first_arg
+        nodes_data = second_arg if isinstance(second_arg, (dict, list)) else []
 
     conversation = Conversation(
-        conversation_id=conversation_id,
+        conversation_id=conv_id,
         title=title,
     )
 
-    # Handle dict format: {"node_id": {"line": ..., "next": [...]}, ...}
+    # Handle dict format: {node_id: {line: ..., next: [...]}}
     if isinstance(nodes_data, dict):
         for node_id, data in nodes_data.items():
+            line_data = data.get("line")
+            # Convert string line IDs to VOLine objects
+            if isinstance(line_data, str):
+                line = VOLine(line_id=line_data, context_type=CONTEXT_CONVERSATION)
+            else:
+                line = line_data
+
             node = ConversationNode(
                 node_id=node_id,
-                line=data.get("line") if isinstance(data.get("line"), VOLine) else None,
-                line_id=data.get("line") if isinstance(data.get("line"), str) else None,
+                line=line,
                 next_nodes=data.get("next", []),
-                is_branch_point=len(data.get("next", [])) > 1,
+                is_branch_point=data.get("is_branch", False),
                 branch_options=data.get("options", []),
                 conditions=data.get("conditions", {}),
             )
-
             conversation.add_node(node)
 
             if not conversation.start_node_id:
-                conversation.start_node_id = node_id
+                conversation.start_node_id = node.node_id
     else:
-        # Handle list format
+        # Handle list format: [{"id": ..., "line": ..., "next": [...]}]
         for data in nodes_data:
+            line_data = data.get("line")
+            if isinstance(line_data, str):
+                line = VOLine(line_id=line_data, context_type=CONTEXT_CONVERSATION)
+            else:
+                line = line_data
+
             node = ConversationNode(
                 node_id=data.get("id", str(uuid.uuid4())),
-                line=data.get("line"),
+                line=line,
                 next_nodes=data.get("next", []),
                 is_branch_point=data.get("is_branch", False),
                 branch_options=data.get("options", []),

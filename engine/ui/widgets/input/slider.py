@@ -218,7 +218,8 @@ class Slider:
 
         # Apply stepping if step > 0
         if self._step > 0:
-            steps = round((clamped - self._min_value) / self._step)
+            # Use floor(x + 0.5) for traditional rounding (round half up)
+            steps = int((clamped - self._min_value) / self._step + 0.5)
             stepped = self._min_value + steps * self._step
             # Ensure we don't exceed max due to rounding
             stepped = min(stepped, self._max_value)

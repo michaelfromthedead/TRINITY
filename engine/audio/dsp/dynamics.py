@@ -69,49 +69,6 @@ class StereoLink(Enum):
     MAXIMUM = auto()     # Maximum of channels
     SUM = auto()         # Sum of channels
 
-    # Aliases for convenience
-    INDEPENDENT = NONE   # Alias for NONE
-    LINKED = AVERAGE     # Alias for AVERAGE
-
-
-class GainReductionArray(np.ndarray):
-    """
-    Custom array subclass for gain reduction values.
-
-    Supports both array operations (shape, indexing) and scalar comparisons
-    (<=, >=, etc.) by returning True/False based on all() for comparisons.
-    This allows code like `assert gr <= 0.0` to work while maintaining
-    array behavior for `gr.shape`.
-    """
-
-    def __new__(cls, input_array):
-        obj = np.asarray(input_array).view(cls)
-        return obj
-
-    def __le__(self, other):
-        result = super().__le__(other)
-        return bool(np.all(result))
-
-    def __lt__(self, other):
-        result = super().__lt__(other)
-        return bool(np.all(result))
-
-    def __ge__(self, other):
-        result = super().__ge__(other)
-        return bool(np.all(result))
-
-    def __gt__(self, other):
-        result = super().__gt__(other)
-        return bool(np.all(result))
-
-    def __eq__(self, other):
-        # For equality, use element-wise to maintain numpy semantics
-        return np.ndarray.__eq__(self, other)
-
-    def __ne__(self, other):
-        # For inequality, use element-wise to maintain numpy semantics
-        return np.ndarray.__ne__(self, other)
-
 
 class EnvelopeFollower(DSPNode):
     """
@@ -196,12 +153,10 @@ class EnvelopeFollower(DSPNode):
             self._rms_buffer[channel, self._rms_index] = sample * sample
             self._rms_sum[channel] += sample * sample - old_sample
 
-            level = math.sqrt(max(0.0, self._rms_sum[channel] / self._rms_window_size))
+            # Advance RMS index
+            self._rms_index = (self._rms_index + 1) % self._rms_window_size
 
-            # Advance index after processing (for all channels if single-channel, or last channel)
-            # For simplicity, advance after each sample when processing channel 0
-            if channel == 0:
-                self._rms_index = (self._rms_index + 1) % self._rms_window_size
+            level = math.sqrt(max(0.0, self._rms_sum[channel] / self._rms_window_size))
         else:
             # Peak detection
             level = abs(sample)
@@ -214,27 +169,8 @@ class EnvelopeFollower(DSPNode):
 
         return self._envelope[channel]
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block and return envelope values.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-            self._process_block_internal_env(input_buffer, output_buffer)
-            return output_buffer[0] if was_1d else output_buffer
-
-        self._process_block_internal_env(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_env(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal envelope processing."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block and return envelope values."""
         num_channels, num_samples = input_buffer.shape
 
         for ch in range(num_channels):
@@ -243,6 +179,13 @@ class EnvelopeFollower(DSPNode):
             if self._detection_mode == DetectionMode.RMS:
                 rms_sum = self._rms_sum[ch]
                 rms_idx = self._rms_index
+
+                # If buffer hasn't been filled yet, initialize with first sample
+                if rms_sum == 0.0 and num_samples > 0:
+                    init_val = input_buffer[ch, 0] * input_buffer[ch, 0]
+                    self._rms_buffer[ch].fill(init_val)
+                    rms_sum = init_val * self._rms_window_size
+                    env = abs(input_buffer[ch, 0])  # Start envelope at initial level
 
                 for i in range(num_samples):
                     sample = input_buffer[ch, i]
@@ -319,16 +262,12 @@ class Compressor(DSPNode):
         release_ms: float = COMPRESSOR_DEFAULT_RELEASE_MS,
         knee_db: float = COMPRESSOR_DEFAULT_KNEE_DB,
         makeup_db: float = COMPRESSOR_DEFAULT_MAKEUP_DB,
-        makeup_gain_db: Optional[float] = None,  # Alias for makeup_db
-        detection_mode: DetectionMode = DetectionMode.PEAK,  # Peak for faster response
+        detection_mode: DetectionMode = DetectionMode.RMS,
         stereo_link: StereoLink = StereoLink.AVERAGE,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        # Handle makeup_gain_db alias
-        if makeup_gain_db is not None:
-            makeup_db = makeup_gain_db
         # Initialize state BEFORE calling super().__init__ which calls reset()
         self._envelope = EnvelopeFollower(
             attack_ms, release_ms, detection_mode,
@@ -443,61 +382,33 @@ class Compressor(DSPNode):
 
         return sample * gain
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block of samples.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-
-            # Check bypass
-            if self._state.is_bypassed:
-                np.copyto(output_buffer, input_buffer)
-            else:
-                self._process_block_internal_comp(input_buffer, output_buffer)
-
-            return output_buffer[0] if was_1d else output_buffer
-
-        # Check bypass
-        if self._state.is_bypassed:
-            np.copyto(output_buffer, input_buffer)
-        else:
-            self._process_block_internal_comp(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_comp(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal compressor block processing."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples."""
         num_channels, num_samples = input_buffer.shape
 
-        # Create temporary envelope buffer of correct size
-        env_buffer = np.zeros((num_channels, num_samples), dtype=np.float64)
+        # Ensure envelope buffer is large enough
+        if self._envelope_buffer.shape != (num_channels, num_samples):
+            self._envelope_buffer = self._allocate_aligned_buffer(num_samples, num_channels)
 
         # Get envelope for all channels
-        self._envelope._process_block_internal_env(input_buffer, env_buffer)
+        self._envelope.process_block(input_buffer, self._envelope_buffer)
 
         # Apply stereo linking if needed
         if self._stereo_link != StereoLink.NONE and num_channels >= 2:
             if self._stereo_link == StereoLink.AVERAGE:
-                linked = np.mean(env_buffer, axis=0)
+                linked = np.mean(self._envelope_buffer, axis=0)
             elif self._stereo_link == StereoLink.MAXIMUM:
-                linked = np.max(env_buffer, axis=0)
+                linked = np.max(self._envelope_buffer, axis=0)
             else:  # SUM
-                linked = np.sum(env_buffer, axis=0)
+                linked = np.sum(self._envelope_buffer, axis=0)
 
             for ch in range(num_channels):
-                env_buffer[ch] = linked
+                self._envelope_buffer[ch] = linked
 
         # Process each channel
         for ch in range(num_channels):
             for i in range(num_samples):
-                envelope = env_buffer[ch, i]
+                envelope = self._envelope_buffer[ch, i]
                 input_db = linear_to_db(envelope + 1e-10)
 
                 # Compute and apply gain
@@ -505,35 +416,11 @@ class Compressor(DSPNode):
                 gain = db_to_linear(gain_db)
                 output_buffer[ch, i] = input_buffer[ch, i] * gain
 
-                # Gain reduction is the applied gain (negative = reduction)
-                self._gain_reduction[ch] = gain_db - self._makeup_db.target
+                self._gain_reduction[ch] = -gain_db + self._makeup_db.target
 
-    def get_gain_reduction(self) -> GainReductionArray:
-        """Get current gain reduction in dB for all channels.
-
-        Returns:
-            GainReductionArray with gain reduction values per channel.
-            (Negative values indicate reduction.)
-
-            Supports both array operations (.shape, indexing) and scalar comparisons
-            (gr <= 0.0 returns True if ALL values satisfy the condition).
-        """
-        return GainReductionArray(self._gain_reduction.copy())
-
-    def get_gain_reduction_db(self) -> float:
-        """Get current gain reduction as a single scalar value.
-
-        Returns:
-            Gain reduction value in dB (negative values indicate reduction).
-            Returns the minimum (most negative = maximum reduction) across all channels.
-        """
-        if len(self._gain_reduction) == 0:
-            return 0.0
-        return float(np.min(self._gain_reduction))
-
-    def get_max_gain_reduction(self) -> float:
-        """Get maximum gain reduction across all channels."""
-        return float(-np.max(np.abs(self._gain_reduction)))
+    def get_gain_reduction(self) -> np.ndarray:
+        """Get current gain reduction in dB (positive values)."""
+        return self._gain_reduction.copy()
 
     def reset(self) -> None:
         """Reset compressor state."""
@@ -666,37 +553,8 @@ class Limiter(DSPNode):
 
         return output
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block with lookahead limiting.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-
-            # Check bypass
-            if self._state.is_bypassed:
-                np.copyto(output_buffer, input_buffer)
-            else:
-                self._process_block_internal_limit(input_buffer, output_buffer)
-
-            return output_buffer[0] if was_1d else output_buffer
-
-        # Check bypass
-        if self._state.is_bypassed:
-            np.copyto(output_buffer, input_buffer)
-        else:
-            self._process_block_internal_limit(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_limit(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal limiter block processing."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block with lookahead limiting."""
         num_channels, num_samples = input_buffer.shape
         ceiling = db_to_linear(self._ceiling_db.target)
 
@@ -799,13 +657,11 @@ class Gate(DSPNode):
             sample_rate, block_size, num_channels
         )
 
-        # Gate state - start closed (gain = range_gain)
+        # Gate state
         self._gate_open = np.zeros(num_channels, dtype=bool)
         self._hold_counter = np.zeros(num_channels, dtype=np.int32)
         self._hold_samples = ms_to_samples(hold_ms, sample_rate)
-        # Start with gate closed - gain equals range attenuation
-        initial_gain = db_to_linear(range_db)
-        self._gain = np.full(num_channels, initial_gain, dtype=np.float64)
+        self._gain = np.ones(num_channels, dtype=np.float64)
 
         # Now call parent init (which calls reset())
         super().__init__(sample_rate, block_size, num_channels)
@@ -886,37 +742,19 @@ class Gate(DSPNode):
 
         return sample * self._gain[channel]
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block through the gate.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-            self._process_block_internal_gate(input_buffer, output_buffer)
-            return output_buffer[0] if was_1d else output_buffer
-
-        self._process_block_internal_gate(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_gate(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal gate block processing."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block through the gate."""
         num_channels, num_samples = input_buffer.shape
+
+        # Ensure envelope buffer is large enough
+        if self._envelope_buffer.shape != (num_channels, num_samples):
+            self._envelope_buffer = self._allocate_aligned_buffer(num_samples, num_channels)
 
         threshold = db_to_linear(self._threshold_db.target)
         range_gain = db_to_linear(self._range_db.target)
 
-        # Create temporary envelope buffer of correct size
-        env_buffer = np.zeros((num_channels, num_samples), dtype=np.float64)
-
         # Get envelope
-        self._envelope._process_block_internal_env(input_buffer, env_buffer)
+        self._envelope.process_block(input_buffer, self._envelope_buffer)
 
         attack_coeff = self._envelope._attack_coeff
         release_coeff = self._envelope._release_coeff
@@ -926,7 +764,7 @@ class Gate(DSPNode):
             hold = self._hold_counter[ch]
 
             for i in range(num_samples):
-                envelope = env_buffer[ch, i]
+                envelope = self._envelope_buffer[ch, i]
 
                 # Gate logic
                 if envelope >= threshold:
@@ -954,14 +792,11 @@ class Gate(DSPNode):
         return bool(self._gate_open[channel])
 
     def reset(self) -> None:
-        """Reset gate state - start closed."""
+        """Reset gate state."""
         self._envelope.reset()
         self._gate_open.fill(False)
         self._hold_counter.fill(0)
-        # Start with gate closed - gain equals range attenuation
-        # Use stored value since _range_db may not exist yet (called from super init)
-        range_gain = db_to_linear(self._range_db_value)
-        self._gain.fill(range_gain)
+        self._gain.fill(1.0)
 
     def _on_sample_rate_changed(self) -> None:
         self._envelope.set_sample_rate(self._state.sample_rate)
@@ -977,9 +812,7 @@ class Gate(DSPNode):
         self._envelope.set_num_channels(self._state.num_channels)
         self._gate_open = np.zeros(self._state.num_channels, dtype=bool)
         self._hold_counter = np.zeros(self._state.num_channels, dtype=np.int32)
-        # Start with gate closed - gain equals range attenuation
-        range_gain = db_to_linear(self._range_db_value)
-        self._gain = np.full(self._state.num_channels, range_gain, dtype=np.float64)
+        self._gain = np.ones(self._state.num_channels, dtype=np.float64)
 
 
 class Expander(DSPNode):
@@ -1086,37 +919,15 @@ class Expander(DSPNode):
 
         return sample * gain
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block of samples.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-            self._process_block_internal_exp(input_buffer, output_buffer)
-            return output_buffer[0] if was_1d else output_buffer
-
-        self._process_block_internal_exp(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_exp(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal expander block processing."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples."""
         num_channels, num_samples = input_buffer.shape
 
-        # Create temporary envelope buffer of correct size
-        env_buffer = np.zeros((num_channels, num_samples), dtype=np.float64)
-
-        self._envelope._process_block_internal_env(input_buffer, env_buffer)
+        self._envelope.process_block(input_buffer, self._envelope_buffer)
 
         for ch in range(num_channels):
             for i in range(num_samples):
-                envelope = env_buffer[ch, i]
+                envelope = self._envelope_buffer[ch, i]
                 input_db = linear_to_db(envelope + 1e-10)
 
                 gain_db = self._compute_gain_db(input_db)
@@ -1151,44 +962,17 @@ class MultibandCompressor(DSPNode):
 
     def __init__(
         self,
-        num_bands: int = 3,
-        crossover_freqs: Optional[Tuple[float, ...]] = None,
+        crossover_freqs: Tuple[float, ...] = (200.0, 2000.0),
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
     ):
-        # Initialize lists before super().__init__() which calls reset()
-        self._band_filters: List[DSPNode] = []
-        self._compressors: List[Compressor] = []
-        self._band_buffers: List[np.ndarray] = []
-        self._num_bands = num_bands
-
         super().__init__(sample_rate, block_size, num_channels)
 
         from .filters import LowPassFilter, HighPassFilter, BandPassFilter
 
-        # If crossover_freqs not provided, generate defaults based on num_bands
-        if crossover_freqs is None:
-            # Generate logarithmically spaced crossover frequencies
-            # For 3 bands: ~200Hz, ~2000Hz
-            if num_bands <= 1:
-                crossover_freqs = ()
-            else:
-                # Crossovers from 100Hz to 10kHz logarithmically spaced
-                import math
-                low_freq = 100.0
-                high_freq = 10000.0
-                num_crossovers = num_bands - 1
-                crossover_freqs = tuple(
-                    low_freq * (high_freq / low_freq) ** (i / num_crossovers)
-                    for i in range(1, num_bands)
-                )
-
         self._crossover_freqs = crossover_freqs
-        self._num_bands = num_bands
-
-        # Band configuration: (crossover_low, crossover_high, threshold_db, ratio)
-        self._band_config: List[dict] = []
+        self._num_bands = len(crossover_freqs) + 1
 
         # Create band filters (Linkwitz-Riley crossover would be better but keeping it simple)
         self._band_filters: List[DSPNode] = []
@@ -1198,33 +982,16 @@ class MultibandCompressor(DSPNode):
         for i in range(self._num_bands):
             if i == 0:
                 # Low band
-                if len(crossover_freqs) > 0:
-                    filt = LowPassFilter(
-                        crossover_freqs[0], 0.707,
-                        sample_rate, block_size, num_channels
-                    )
-                    self._band_config.append({
-                        'crossover_low': 0,
-                        'crossover_high': crossover_freqs[0]
-                    })
-                else:
-                    # Only one band - passthrough
-                    from .dsp_node import PassthroughNode
-                    filt = PassthroughNode(sample_rate, block_size, num_channels)
-                    self._band_config.append({
-                        'crossover_low': 0,
-                        'crossover_high': 20000
-                    })
+                filt = LowPassFilter(
+                    crossover_freqs[0], 0.707,
+                    sample_rate, block_size, num_channels
+                )
             elif i == self._num_bands - 1:
                 # High band
                 filt = HighPassFilter(
                     crossover_freqs[-1], 0.707,
                     sample_rate, block_size, num_channels
                 )
-                self._band_config.append({
-                    'crossover_low': crossover_freqs[-1],
-                    'crossover_high': 20000
-                })
             else:
                 # Mid band
                 filt = BandPassFilter(
@@ -1232,10 +999,6 @@ class MultibandCompressor(DSPNode):
                     crossover_freqs[i] / (crossover_freqs[i] - crossover_freqs[i-1]),
                     sample_rate, block_size, num_channels
                 )
-                self._band_config.append({
-                    'crossover_low': crossover_freqs[i-1],
-                    'crossover_high': crossover_freqs[i]
-                })
 
             self._band_filters.append(filt)
             self._compressors.append(
@@ -1267,40 +1030,6 @@ class MultibandCompressor(DSPNode):
         if release_ms is not None:
             comp.release_ms = release_ms
 
-    def set_band(
-        self,
-        band_index: int,
-        crossover_low: Optional[float] = None,
-        crossover_high: Optional[float] = None,
-        threshold_db: Optional[float] = None,
-        ratio: Optional[float] = None,
-        attack_ms: Optional[float] = None,
-        release_ms: Optional[float] = None,
-    ) -> None:
-        """Configure a specific band's parameters.
-
-        This is the primary API for setting band parameters.
-        crossover_low and crossover_high are stored but do not dynamically
-        reconfigure the filters (would require filter recreation).
-        """
-        if band_index >= self._num_bands:
-            raise IndexError(f"Band index {band_index} out of range")
-
-        # Store crossover info (for informational purposes)
-        if crossover_low is not None:
-            self._band_config[band_index]['crossover_low'] = crossover_low
-        if crossover_high is not None:
-            self._band_config[band_index]['crossover_high'] = crossover_high
-
-        # Apply compression settings
-        self.set_band_compression(
-            band_index,
-            threshold_db=threshold_db,
-            ratio=ratio,
-            attack_ms=attack_ms,
-            release_ms=release_ms,
-        )
-
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample."""
         result = 0.0
@@ -1309,52 +1038,27 @@ class MultibandCompressor(DSPNode):
             result += self._compressors[i].process_sample(band_sample, channel)
         return result
 
-    def process_block(self, input_buffer: np.ndarray, output_buffer: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-        """Process a block through multiband compression.
-
-        If output_buffer is None, creates output buffer and returns it.
-        """
-        # Handle 1D input
-        was_1d = input_buffer.ndim == 1
-        if was_1d:
-            input_buffer = input_buffer.reshape(1, -1)
-
-        if output_buffer is None:
-            # Create output buffer
-            output_buffer = np.zeros_like(input_buffer)
-            self._process_block_internal_mb(input_buffer, output_buffer)
-            return output_buffer[0] if was_1d else output_buffer
-
-        self._process_block_internal_mb(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal_mb(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal multiband block processing."""
-        num_channels, num_samples = input_buffer.shape
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block through multiband compression."""
         output_buffer.fill(0.0)
 
         for i in range(self._num_bands):
-            # Create temporary buffers for this size
-            band_buffer = np.zeros((num_channels, num_samples), dtype=np.float32)
-            temp = np.zeros((num_channels, num_samples), dtype=np.float32)
-
-            # Filter to band - use process() which handles arbitrary sizes
-            filtered = self._band_filters[i].process(input_buffer)
-            band_buffer[:] = filtered
-
+            # Filter to band
+            self._band_filters[i].process_block(input_buffer, self._band_buffers[i])
             # Compress band
-            compressed = self._compressors[i].process_block(band_buffer)
-            temp[:] = compressed
-
+            temp = self._allocate_aligned_buffer(self._state.block_size, self._state.num_channels)
+            self._compressors[i].process_block(self._band_buffers[i], temp)
             # Sum to output
             output_buffer += temp
 
     def reset(self) -> None:
         """Reset all bands."""
-        for filt in self._band_filters:
-            filt.reset()
-        for comp in self._compressors:
-            comp.reset()
+        if hasattr(self, '_band_filters'):
+            for filt in self._band_filters:
+                filt.reset()
+        if hasattr(self, '_compressors'):
+            for comp in self._compressors:
+                comp.reset()
 
     def _on_sample_rate_changed(self) -> None:
         for filt in self._band_filters:
@@ -1379,43 +1083,10 @@ class MultibandCompressor(DSPNode):
             comp.set_num_channels(self._state.num_channels)
 
 
-class KeySourceType(Enum):
-    """Key signal source enum values."""
+class KeySource(Enum):
+    """Key signal source for sidechain processing."""
     SELF = auto()        # Use the input signal itself (standard compression)
     EXTERNAL = auto()    # Use an externally provided key signal
-
-
-class KeySource:
-    """
-    Key signal source for sidechain processing.
-
-    Can be used as:
-    - KeySource.SELF - use input signal itself
-    - KeySource.EXTERNAL - use external key signal
-    - KeySource() - creates default instance (EXTERNAL)
-    """
-    SELF = KeySourceType.SELF
-    EXTERNAL = KeySourceType.EXTERNAL
-
-    def __init__(self, value: KeySourceType = KeySourceType.EXTERNAL):
-        self._value = value if isinstance(value, KeySourceType) else KeySourceType.EXTERNAL
-
-    @property
-    def value(self) -> KeySourceType:
-        return self._value
-
-    def __eq__(self, other):
-        if isinstance(other, KeySource):
-            return self._value == other._value
-        if isinstance(other, KeySourceType):
-            return self._value == other
-        return False
-
-    def __hash__(self):
-        return hash(self._value)
-
-    def __repr__(self):
-        return f"KeySource({self._value.name})"
 
 
 class SidechainCompressor(DSPNode):
@@ -1444,7 +1115,7 @@ class SidechainCompressor(DSPNode):
         makeup_db: float = SIDECHAIN_DEFAULT_MAKEUP_DB,
         mix: float = SIDECHAIN_DEFAULT_MIX,
         key_source: KeySource = KeySource.EXTERNAL,
-        detection_mode: DetectionMode = DetectionMode.PEAK,  # PEAK for faster sidechain response
+        detection_mode: DetectionMode = DetectionMode.RMS,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         num_channels: int = 2,
@@ -1614,18 +1285,12 @@ class SidechainCompressor(DSPNode):
                 x = input_db - knee_start
                 return (1.0 / ratio - 1.0) * (x * x) / (2.0 * knee)
 
-    def _is_external_key(self) -> bool:
-        """Check if using external key source."""
-        if isinstance(self._key_source, KeySource):
-            return self._key_source._value == KeySourceType.EXTERNAL
-        return self._key_source == KeySource.EXTERNAL or self._key_source == KeySourceType.EXTERNAL
-
     def process_sample(self, sample: float, channel: int = 0) -> float:
         """Process a single sample through the sidechain compressor."""
         mix_ratio = self._mix.target
 
         # Determine key signal for envelope detection
-        if self._is_external_key() and channel in self._key_samples:
+        if self._key_source == KeySource.EXTERNAL and channel in self._key_samples:
             key_signal = self._key_samples[channel]
         else:
             key_signal = sample  # Fall back to self-detection
@@ -1651,78 +1316,24 @@ class SidechainCompressor(DSPNode):
 
         return output
 
-    def process_block(
-        self,
-        input_buffer: np.ndarray,
-        output_buffer: Optional[np.ndarray] = None,
-        key_input: Optional[np.ndarray] = None
-    ) -> Optional[np.ndarray]:
-        """Process a block of samples through the sidechain compressor.
-
-        Args:
-            input_buffer: Main input signal to compress
-            output_buffer: If None, uses DSPNode.process() for convenience API
-            key_input: External key signal for sidechain detection (optional)
-
-        Returns:
-            Processed output if output_buffer is None, else None
-        """
-        # Handle 1D input for convenience API
-        if output_buffer is None:
-            # Convert to 2D if needed
-            was_1d = input_buffer.ndim == 1
-            if was_1d:
-                input_2d = input_buffer.reshape(1, -1)
-            else:
-                input_2d = input_buffer
-
-            # Handle key_input conversion
-            if key_input is not None:
-                if key_input.ndim == 1:
-                    key_2d = key_input.reshape(1, -1)
-                else:
-                    key_2d = key_input
-                # Temporarily set key buffer
-                old_key = self._key_buffer
-                self._key_buffer = key_2d
-
-            # Process using convenience API internally
-            num_channels, num_samples = input_2d.shape
-            output_2d = self._allocate_aligned_buffer(num_samples, num_channels)
-            self._process_block_internal(input_2d, output_2d)
-
-            # Restore key buffer
-            if key_input is not None:
-                self._key_buffer = old_key
-
-            if was_1d:
-                return output_2d[0].copy()
-            return output_2d.copy()
-
-        self._process_block_internal(input_buffer, output_buffer)
-        return None
-
-    def _process_block_internal(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
-        """Internal block processing implementation."""
+    def process_block(self, input_buffer: np.ndarray, output_buffer: np.ndarray) -> None:
+        """Process a block of samples through the sidechain compressor."""
         num_channels, num_samples = input_buffer.shape
         mix_ratio = self._mix.target
 
         # Determine key signal source
-        if self._is_external_key() and self._key_buffer is not None:
+        if self._key_source == KeySource.EXTERNAL and self._key_buffer is not None:
             key_signal = self._key_buffer
         else:
             key_signal = input_buffer  # Fall back to self-detection
 
-        # Create temporary envelope buffer of correct size
-        env_buffer = np.zeros((num_channels, num_samples), dtype=np.float64)
-
         # Get envelope from key signal
-        self._envelope._process_block_internal_env(key_signal, env_buffer)
+        self._envelope.process_block(key_signal, self._envelope_buffer)
 
         # Process each channel
         for ch in range(num_channels):
             for i in range(num_samples):
-                envelope = env_buffer[ch, i]
+                envelope = self._envelope_buffer[ch, i]
                 input_db = linear_to_db(envelope + 1e-10)
 
                 # Compute gain reduction
@@ -1733,8 +1344,7 @@ class SidechainCompressor(DSPNode):
                 compressed = input_buffer[ch, i] * gain
                 output_buffer[ch, i] = compressed * mix_ratio + input_buffer[ch, i] * (1.0 - mix_ratio)
 
-                # Gain reduction is the applied gain (negative = reduction)
-                self._gain_reduction[ch] = gain_db - self._makeup_db.target
+                self._gain_reduction[ch] = -gain_db + self._makeup_db.target
 
     def reset(self) -> None:
         """Reset sidechain compressor state."""

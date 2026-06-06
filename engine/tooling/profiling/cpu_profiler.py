@@ -439,6 +439,7 @@ class CPUProfiler:
         """
         root = CallTreeNode(name="[root]", depth=-1)
         samples = self.get_samples(thread_id=thread_id)
+        samples = sorted(samples, key=lambda s: s.sample_id)
 
         # Sort samples by start_time to ensure parents are processed before children
         samples = sorted(samples, key=lambda s: s.start_time)

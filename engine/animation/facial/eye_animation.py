@@ -552,9 +552,18 @@ class EyeController:
             return
 
         # Calculate direction to target
-        dx = self._look_at_target[0] - self._head_position[0]
-        dy = self._look_at_target[1] - self._head_position[1]
-        dz = self._look_at_target[2] - self._head_position[2]
+        # Support both tuple (x, y, z) and Vec3 objects (.x, .y, .z)
+        target = self._look_at_target
+        head = self._head_position
+        tx = target.x if hasattr(target, 'x') else target[0]
+        ty = target.y if hasattr(target, 'y') else target[1]
+        tz = target.z if hasattr(target, 'z') else target[2]
+        hx = head.x if hasattr(head, 'x') else head[0]
+        hy = head.y if hasattr(head, 'y') else head[1]
+        hz = head.z if hasattr(head, 'z') else head[2]
+        dx = tx - hx
+        dy = ty - hy
+        dz = tz - hz
 
         distance = math.sqrt(dx * dx + dy * dy + dz * dz)
         if distance < 0.001:
@@ -603,9 +612,18 @@ class EyeController:
             return
 
         # Calculate distance to target
-        dx = self._look_at_target[0] - self._head_position[0]
-        dy = self._look_at_target[1] - self._head_position[1]
-        dz = self._look_at_target[2] - self._head_position[2]
+        # Support both tuple (x, y, z) and Vec3 objects (.x, .y, .z)
+        target = self._look_at_target
+        head = self._head_position
+        tx = target.x if hasattr(target, 'x') else target[0]
+        ty = target.y if hasattr(target, 'y') else target[1]
+        tz = target.z if hasattr(target, 'z') else target[2]
+        hx = head.x if hasattr(head, 'x') else head[0]
+        hy = head.y if hasattr(head, 'y') else head[1]
+        hz = head.z if hasattr(head, 'z') else head[2]
+        dx = tx - hx
+        dy = ty - hy
+        dz = tz - hz
         distance = math.sqrt(dx * dx + dy * dy + dz * dz)
 
         if distance < 0.1:

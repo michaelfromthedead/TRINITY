@@ -378,7 +378,7 @@ class RichTextParser:
         Returns:
             Plain text without markup
         """
-        # Handle <br> tags BEFORE the regex removes them
+        # Handle <br> tags before stripping all tags
         result = text.replace("<br>", "\n").replace("<br/>", "\n")
         result = self._TAG_PATTERN.sub("", result)
         return result

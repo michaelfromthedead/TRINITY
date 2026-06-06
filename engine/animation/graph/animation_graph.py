@@ -26,6 +26,28 @@ from .config import get_config
 
 
 # =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
+
+class CycleDetectedError(Exception):
+    """Raised when a cycle is detected in the animation graph during evaluation.
+
+    The animation graph must be a directed acyclic graph (DAG). When a cycle
+    is detected, evaluation cannot proceed safely as it would result in
+    infinite recursion.
+
+    Attributes:
+        cycles: List of cycle descriptions found in the graph.
+    """
+
+    def __init__(self, cycles: List[str]) -> None:
+        self.cycles = cycles
+        cycle_list = "; ".join(cycles)
+        super().__init__(f"Animation graph contains cycles: {cycle_list}")
+
+
+# =============================================================================
 # SLOT TYPE SYSTEM
 # =============================================================================
 
@@ -33,12 +55,13 @@ from .config import get_config
 class SlotType(Enum):
     """Types for typed input/output slots on animation nodes."""
 
-    POSE = auto()     # Pose (bone transforms)
-    FLOAT = auto()    # Float value
-    BOOL = auto()     # Boolean value
-    INT = auto()      # Integer value
-    TRIGGER = auto()  # Trigger (fire-and-forget)
-    ENUM = auto()     # Enum value
+    POSE = auto()      # Pose (bone transforms)
+    FLOAT = auto()     # Float value
+    BOOL = auto()      # Boolean value
+    INT = auto()       # Integer value
+    TRANSFORM = auto() # Single transform (position, rotation, scale)
+    TRIGGER = auto()   # Trigger (fire-and-forget)
+    ENUM = auto()      # Enum value
 
 
 @dataclass
@@ -783,6 +806,22 @@ class GraphContext:
             return bool(value)
         return default
 
+    def set_parameter(self, name: str, value: Any) -> bool:
+        """Set a parameter value by name.
+
+        Args:
+            name: The name of the parameter to set.
+            value: The value to assign to the parameter.
+
+        Returns:
+            True if the parameter exists and was set, False otherwise.
+        """
+        param = self.parameters.get(name)
+        if param is not None:
+            param.value = value
+            return True
+        return False
+
     def get_bone_mask(self, name: str) -> Optional[BoneMask]:
         """Get a bone mask by name."""
         return self.bone_masks.get(name)
@@ -1208,6 +1247,52 @@ class AnimationGraph:
         self._dirty = True
         return True
 
+    def connect_nodes(self, source: str, target: str, slot: str) -> bool:
+        """Connect two nodes using a single slot name for both output and input.
+
+        This is a convenience method that uses the same slot name for both the
+        source output and target input. For asymmetric connections (different
+        output/input names), use :meth:`connect` instead.
+
+        Args:
+            source: The source node ID.
+            target: The target node ID.
+            slot: The slot name (used for both source output and target input).
+
+        Returns:
+            True if the connection was made successfully, False otherwise.
+        """
+        return self.connect(source, slot, target, slot)
+
+    def disconnect_nodes(self, source: str, target: str) -> bool:
+        """Disconnect all connections between two nodes.
+
+        Removes all connections where *source* feeds into *target*, regardless
+        of which slots are involved.
+
+        Args:
+            source: The source node ID.
+            target: The target node ID.
+
+        Returns:
+            True if any connections were removed, False otherwise.
+        """
+        removed = False
+        to_remove = [
+            c for c in self.connections
+            if c.source_node_id == source and c.target_node_id == target
+        ]
+        for conn in to_remove:
+            self.connections.discard(conn)
+            target_node = self.nodes.get(target)
+            if target_node:
+                target_node.set_input(conn.target_input, None)
+            removed = True
+
+        if removed:
+            self._dirty = True
+        return removed
+
     def disconnect(self, source_node_id: str, source_output: str,
                    target_node_id: str, target_input: str) -> bool:
         """Disconnect two nodes."""
@@ -1289,8 +1374,9 @@ class AnimationGraph:
         # -- Cycle detection ---------------------------------------------------
         cfg = get_config()
         if cfg.graph.CYCLE_DETECTION_ENABLED:
-            if self._has_cycle():
-                return Pose()
+            cycles = detect_cycles(self)
+            if cycles:
+                raise CycleDetectedError(cycles)
 
         # -- Build evaluation context ------------------------------------------
         if context is None:

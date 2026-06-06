@@ -44,46 +44,26 @@ class AnimationPriority(Enum):
     OVERRIDE = 4
 
 
-# =============================================================================
-# Layer Priority Constants (Numeric Values)
-# =============================================================================
-
-
 class LayerPriority:
     """
-    Numeric priority values for facial animation layers.
+    Numeric priority levels for facial animation layers.
 
-    Used for explicit numeric priority comparison.
-    Higher values override lower values.
+    Higher priority values indicate higher priority layers.
+    Override layers with higher priority replace lower priority layers
+    (unless the higher layer is additive).
+
+    Standard levels:
+        BASE = 0        - Default idle state
+        EMOTION = 10    - Emotional expressions
+        LIP_SYNC = 20   - Speech/dialogue animations
+        PROCEDURAL = 30 - Procedural/runtime generated animations
+
+    Custom priorities can be any integer value.
     """
     BASE: int = 0
     EMOTION: int = 10
     LIP_SYNC: int = 20
     PROCEDURAL: int = 30
-
-
-# =============================================================================
-# Rig Layer
-# =============================================================================
-
-
-@dataclass
-class RigLayer:
-    """
-    A rig layer with numeric priority and blend settings.
-
-    Attributes:
-        name: Layer name
-        priority: Numeric priority (higher = overrides lower)
-        weight: Master weight for this layer (0-1)
-        additive: If True, add to lower layers; if False, override
-        blend_shapes: Blend shape weights for this layer
-    """
-    name: str
-    priority: int
-    weight: float = 1.0
-    additive: bool = False
-    blend_shapes: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -93,8 +73,8 @@ class AnimationLayer:
 
     Attributes:
         name: Layer name
-        priority: Animation priority
-        weight: Layer weight (0-1)
+        priority: Animation priority (AnimationPriority enum)
+        weight: Layer master weight (0-1), scales all blend shape contributions
         blend_shapes: Blend shape weights for this layer
         is_additive: If True, add to lower layers; if False, override
     """
@@ -103,6 +83,28 @@ class AnimationLayer:
     weight: float = 1.0
     blend_shapes: dict[str, float] = field(default_factory=dict)
     is_additive: bool = False
+
+
+@dataclass
+class RigLayer:
+    """
+    A numeric-priority animation layer for the enhanced FaceRig layer system.
+
+    Supports both override and additive blending modes with explicit
+    numeric priority values for fine-grained control.
+
+    Attributes:
+        name: Layer name (unique identifier)
+        priority: Numeric priority (higher values override lower)
+        weight: Master weight (0-1), scales all blend shape contributions
+        blend_shapes: Per-blend-shape weights for this layer
+        additive: If True, accumulates with lower layers; if False, overrides
+    """
+    name: str
+    priority: int
+    weight: float = 1.0
+    blend_shapes: dict[str, float] = field(default_factory=dict)
+    additive: bool = False
 
 
 # =============================================================================
@@ -168,11 +170,11 @@ class FaceRig:
 
         self._on_weights_changed = on_weights_changed
 
-        # Animation layers (AnimationLayer system)
+        # Animation layers (legacy AnimationPriority-based system)
         self._layers: dict[str, AnimationLayer] = {}
         self._init_default_layers()
 
-        # Rig layers (RigLayer system with numeric priority)
+        # Enhanced layer system (numeric priority-based)
         self._rig_layers: dict[str, RigLayer] = {}
         self._init_default_rig_layers()
 
@@ -271,210 +273,53 @@ class FaceRig:
             ),
         }
 
-    def _init_default_rig_layers(self) -> None:
-        """Initialize default rig layers with numeric priorities."""
-        self._rig_layers = {
-            "idle": RigLayer(
-                name="idle",
-                priority=LayerPriority.BASE,
-                weight=1.0,
-                additive=False,
-            ),
-            "emotion": RigLayer(
-                name="emotion",
-                priority=LayerPriority.EMOTION,
-                weight=1.0,
-                additive=False,
-            ),
-            "lip_sync": RigLayer(
-                name="lip_sync",
-                priority=LayerPriority.LIP_SYNC,
-                weight=1.0,
-                additive=True,
-            ),
-            "procedural": RigLayer(
-                name="procedural",
-                priority=LayerPriority.PROCEDURAL,
-                weight=1.0,
-                additive=True,
-            ),
-        }
-
     def add_layer(
         self,
         name: str,
-        priority: AnimationPriority | int,
+        priority: AnimationPriority,
         weight: float = 1.0,
         is_additive: bool = False,
-        additive: bool = False,
-    ) -> AnimationLayer | RigLayer:
+    ) -> AnimationLayer:
         """
         Add a custom animation layer.
 
         Args:
             name: Layer name
-            priority: Animation priority (enum) or numeric priority (int)
+            priority: Animation priority
             weight: Layer weight
-            is_additive: Whether layer is additive (for AnimationLayer)
-            additive: Whether layer is additive (for RigLayer)
+            is_additive: Whether layer is additive
 
         Returns:
             The created layer
         """
-        if isinstance(priority, int):
-            # Use RigLayer with numeric priority
-            rig_layer = RigLayer(
-                name=name,
-                priority=priority,
-                weight=weight,
-                additive=additive,
-            )
-            self._rig_layers[name] = rig_layer
-            return rig_layer
-        else:
-            # Use AnimationLayer with enum priority
-            layer = AnimationLayer(
-                name=name,
-                priority=priority,
-                weight=weight,
-                is_additive=is_additive,
-            )
-            self._layers[name] = layer
-            return layer
+        layer = AnimationLayer(
+            name=name,
+            priority=priority,
+            weight=weight,
+            is_additive=is_additive,
+        )
+        self._layers[name] = layer
+        return layer
 
     def get_layer(self, name: str) -> Optional[AnimationLayer]:
-        """Get an animation layer by name."""
+        """Get a layer by name."""
         return self._layers.get(name)
 
-    def get_rig_layer(self, name: str) -> Optional[RigLayer]:
-        """Get a rig layer by name."""
-        return self._rig_layers.get(name)
-
-    def set_layer_weight(self, name: str, shape_or_weight: str | float, weight: Optional[float] = None) -> bool:
+    def set_layer_weight(self, name: str, weight: float) -> bool:
         """
-        Set layer weight or blend shape weight.
-
-        Can be called as:
-            set_layer_weight("layer", 0.5)  - Sets layer master weight
-            set_layer_weight("layer", "shape", 0.5) - Sets shape weight in layer
+        Set layer weight.
 
         Args:
             name: Layer name
-            shape_or_weight: Shape name (str) or weight value (float)
-            weight: Weight value when setting a shape
-
-        Returns:
-            True if operation succeeded
-        """
-        if isinstance(shape_or_weight, str):
-            # Setting a blend shape weight in a rig layer
-            shape_name = shape_or_weight
-            if weight is None:
-                return False
-            # Clamp weight to [0, 1]
-            clamped_weight = max(0.0, min(1.0, weight))
-            if name in self._rig_layers:
-                self._rig_layers[name].blend_shapes[shape_name] = clamped_weight
-                return True
-            elif name in self._layers:
-                self._layers[name].blend_shapes[shape_name] = clamped_weight
-                return True
-            return False
-        else:
-            # Setting layer master weight (original behavior)
-            weight_value = shape_or_weight
-            if name in self._layers:
-                self._layers[name].weight = max(0.0, min(1.0, weight_value))
-                return True
-            elif name in self._rig_layers:
-                self._rig_layers[name].weight = max(0.0, min(1.0, weight_value))
-                return True
-            return False
-
-    def set_rig_layer_master_weight(self, name: str, weight: float) -> bool:
-        """
-        Set the master weight for a rig layer.
-
-        Args:
-            name: Layer name
-            weight: Weight value (0-1, clamped)
+            weight: New weight (0-1)
 
         Returns:
             True if layer exists
         """
-        if name in self._rig_layers:
-            self._rig_layers[name].weight = max(0.0, min(1.0, weight))
+        if name in self._layers:
+            self._layers[name].weight = max(0.0, min(1.0, weight))
             return True
         return False
-
-    def clear_rig_layer(self, name: str) -> bool:
-        """
-        Clear all blend shapes from a rig layer.
-
-        Args:
-            name: Layer name
-
-        Returns:
-            True if layer exists
-        """
-        if name in self._rig_layers:
-            self._rig_layers[name].blend_shapes.clear()
-            return True
-        return False
-
-    def remove_rig_layer(self, name: str) -> bool:
-        """
-        Remove a rig layer.
-
-        Args:
-            name: Layer name
-
-        Returns:
-            True if layer existed and was removed
-        """
-        if name in self._rig_layers:
-            del self._rig_layers[name]
-            return True
-        return False
-
-    def evaluate(self) -> dict[str, float]:
-        """
-        Evaluate all rig layers and return final blend shape weights.
-
-        Layers are evaluated in priority order. Override layers replace
-        lower priority values, additive layers accumulate.
-
-        Returns:
-            Dictionary of blend shape names to final weights
-        """
-        # Sort layers by priority
-        sorted_layers = sorted(
-            self._rig_layers.values(),
-            key=lambda l: l.priority,
-        )
-
-        result: dict[str, float] = {}
-
-        for layer in sorted_layers:
-            # Skip layers with very small weight
-            if layer.weight <= 0.001:
-                continue
-
-            for shape_name, shape_weight in layer.blend_shapes.items():
-                weighted_value = shape_weight * layer.weight
-
-                if layer.additive:
-                    # Add to existing value
-                    result[shape_name] = result.get(shape_name, 0.0) + weighted_value
-                else:
-                    # Override - replace existing value
-                    result[shape_name] = weighted_value
-
-        # Clamp all values to [0, 1]
-        for name in result:
-            result[name] = max(0.0, min(1.0, result[name]))
-
-        return result
 
     def set_layer_blend_shapes(
         self,
@@ -494,8 +339,258 @@ class FaceRig:
         if name in self._layers:
             self._layers[name].blend_shapes = blend_shapes
             return True
-        if name in self._rig_layers:
-            self._rig_layers[name].blend_shapes = blend_shapes
+        return False
+
+    # =========================================================================
+    # Enhanced Rig Layer Management (Numeric Priority System)
+    # =========================================================================
+
+    def _init_default_rig_layers(self) -> None:
+        """Initialize default rig layers with numeric priorities."""
+        self._rig_layers = {
+            "idle": RigLayer(
+                name="idle",
+                priority=LayerPriority.BASE,
+                weight=1.0,
+                additive=False,
+            ),
+            "emotion": RigLayer(
+                name="emotion",
+                priority=LayerPriority.EMOTION,
+                weight=1.0,
+                additive=False,
+            ),
+            "lip_sync": RigLayer(
+                name="lip_sync",
+                priority=LayerPriority.LIP_SYNC,
+                weight=1.0,
+                additive=True,  # Lip sync adds to emotion
+            ),
+            "procedural": RigLayer(
+                name="procedural",
+                priority=LayerPriority.PROCEDURAL,
+                weight=1.0,
+                additive=True,
+            ),
+        }
+
+    def add_layer(
+        self,
+        name: str,
+        priority: int | AnimationPriority,
+        weight: float = 1.0,
+        additive: bool = False,
+        is_additive: bool | None = None,
+    ) -> RigLayer | AnimationLayer:
+        """
+        Add a custom animation layer.
+
+        This method supports both the enhanced numeric priority system
+        and the legacy AnimationPriority enum system.
+
+        Args:
+            name: Layer name (must be unique)
+            priority: Numeric priority (int) or AnimationPriority enum
+            weight: Layer master weight (0-1)
+            additive: Whether layer is additive (for numeric priority)
+            is_additive: Legacy parameter, alias for additive
+
+        Returns:
+            The created layer (RigLayer for int priority, AnimationLayer for enum)
+
+        Example:
+            # Using numeric priority
+            rig.add_layer("procedural", priority=LayerPriority.PROCEDURAL, additive=True)
+
+            # Using custom priority value
+            rig.add_layer("custom", priority=15, additive=False)
+        """
+        # Handle legacy is_additive parameter
+        if is_additive is not None:
+            additive = is_additive
+
+        if isinstance(priority, int):
+            # Enhanced numeric priority system
+            layer = RigLayer(
+                name=name,
+                priority=priority,
+                weight=weight,
+                additive=additive,
+            )
+            self._rig_layers[name] = layer
+            return layer
+        else:
+            # Legacy AnimationPriority enum system
+            anim_layer = AnimationLayer(
+                name=name,
+                priority=priority,
+                weight=weight,
+                is_additive=additive,
+            )
+            self._layers[name] = anim_layer
+            return anim_layer
+
+    def get_rig_layer(self, name: str) -> RigLayer | None:
+        """
+        Get a rig layer by name.
+
+        Args:
+            name: Layer name
+
+        Returns:
+            The layer or None if not found
+        """
+        return self._rig_layers.get(name)
+
+    def set_layer_weight(
+        self,
+        layer_name: str,
+        blend_shape_name_or_weight: str | float,
+        weight: float | None = None,
+    ) -> bool:
+        """
+        Set a blend shape weight within a layer, or set the layer's master weight.
+
+        This method supports two calling conventions:
+        1. set_layer_weight(layer_name, blend_shape_name, weight) - Set specific blend shape
+        2. set_layer_weight(layer_name, weight) - Set layer master weight (legacy)
+
+        Args:
+            layer_name: Name of the layer
+            blend_shape_name_or_weight: Either blend shape name (str) or layer weight (float)
+            weight: Blend shape weight value (0-1) when using 3-arg form
+
+        Returns:
+            True if operation succeeded, False if layer not found
+
+        Example:
+            # Set specific blend shape weight in layer
+            rig.set_layer_weight("emotion", "mouthSmileL", 1.0)
+
+            # Set layer master weight (legacy)
+            rig.set_layer_weight("emotion", 0.5)
+        """
+        # Determine which calling convention is being used
+        if weight is not None and isinstance(blend_shape_name_or_weight, str):
+            # 3-arg form: set_layer_weight(layer, blend_shape, weight)
+            blend_shape_name = blend_shape_name_or_weight
+            blend_weight = max(0.0, min(1.0, weight))
+
+            # Try rig layers first
+            if layer_name in self._rig_layers:
+                self._rig_layers[layer_name].blend_shapes[blend_shape_name] = blend_weight
+                return True
+            # Fall back to legacy layers
+            elif layer_name in self._layers:
+                self._layers[layer_name].blend_shapes[blend_shape_name] = blend_weight
+                return True
+            return False
+        else:
+            # 2-arg form: set_layer_weight(layer, weight) - legacy master weight
+            if isinstance(blend_shape_name_or_weight, (int, float)):
+                master_weight = max(0.0, min(1.0, float(blend_shape_name_or_weight)))
+
+                if layer_name in self._rig_layers:
+                    self._rig_layers[layer_name].weight = master_weight
+                    return True
+                elif layer_name in self._layers:
+                    self._layers[layer_name].weight = master_weight
+                    return True
+            return False
+
+    def set_rig_layer_master_weight(self, layer_name: str, weight: float) -> bool:
+        """
+        Set a rig layer's master weight.
+
+        The master weight scales all blend shape contributions from this layer.
+
+        Args:
+            layer_name: Name of the layer
+            weight: Master weight (0-1)
+
+        Returns:
+            True if layer exists
+        """
+        if layer_name in self._rig_layers:
+            self._rig_layers[layer_name].weight = max(0.0, min(1.0, weight))
+            return True
+        return False
+
+    def evaluate(self) -> dict[str, float]:
+        """
+        Evaluate all rig layers and return blended blend shape weights.
+
+        This method blends all layers according to their priority and additive settings:
+        - Override layers (additive=False): Higher priority layers replace lower priority
+        - Additive layers: Accumulate with the current blended value
+        - Layer master weight scales all blend shape contributions from that layer
+
+        Returns:
+            Dictionary mapping blend shape names to their final blended weights (0-1)
+
+        Example:
+            result = rig.evaluate()
+            jaw_open = result.get("jawOpen", 0.0)
+        """
+        # Sort layers by priority (ascending, so we process low to high)
+        sorted_layers = sorted(
+            self._rig_layers.values(),
+            key=lambda layer: layer.priority,
+        )
+
+        result: dict[str, float] = {}
+
+        # Track which blend shapes have been set by override layers at each priority
+        # For override layers, higher priority completely replaces lower priority
+        for layer in sorted_layers:
+            if layer.weight <= 0.001:
+                continue
+
+            for shape_name, shape_weight in layer.blend_shapes.items():
+                # Apply layer's master weight to the blend shape weight
+                weighted_value = shape_weight * layer.weight
+
+                if layer.additive:
+                    # Additive layers: accumulate with existing value
+                    result[shape_name] = result.get(shape_name, 0.0) + weighted_value
+                else:
+                    # Override layers: replace existing value
+                    # Higher priority layer's value completely replaces lower priority
+                    result[shape_name] = weighted_value
+
+        # Clamp all values to valid range [0, 1]
+        for name in result:
+            result[name] = max(0.0, min(1.0, result[name]))
+
+        return result
+
+    def clear_rig_layer(self, layer_name: str) -> bool:
+        """
+        Clear all blend shapes from a rig layer.
+
+        Args:
+            layer_name: Name of the layer
+
+        Returns:
+            True if layer exists
+        """
+        if layer_name in self._rig_layers:
+            self._rig_layers[layer_name].blend_shapes.clear()
+            return True
+        return False
+
+    def remove_rig_layer(self, layer_name: str) -> bool:
+        """
+        Remove a rig layer entirely.
+
+        Args:
+            layer_name: Name of the layer to remove
+
+        Returns:
+            True if layer was removed
+        """
+        if layer_name in self._rig_layers:
+            del self._rig_layers[layer_name]
             return True
         return False
 

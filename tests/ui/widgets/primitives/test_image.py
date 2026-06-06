@@ -66,18 +66,20 @@ class TestUVCoordinates:
             UVCoordinates(v0=1.1)
 
     def test_uv_validation_u1_below_u0(self):
-        """Test u1 must be >= u0."""
+        """Test u1 < u0 is allowed (flipped UVs for texture mirroring)."""
         from engine.ui.widgets.primitives.image import UVCoordinates
 
-        with pytest.raises(ValueError, match="u1.*must be >= u0"):
-            UVCoordinates(u0=0.5, u1=0.3)
+        uv = UVCoordinates(u0=0.5, u1=0.3)
+        assert uv.u0 == 0.5
+        assert uv.u1 == 0.3
 
     def test_uv_validation_v1_below_v0(self):
-        """Test v1 must be >= v0."""
+        """Test v1 < v0 is allowed (flipped UVs for texture mirroring)."""
         from engine.ui.widgets.primitives.image import UVCoordinates
 
-        with pytest.raises(ValueError, match="v1.*must be >= v0"):
-            UVCoordinates(v0=0.5, v1=0.3)
+        uv = UVCoordinates(v0=0.5, v1=0.3)
+        assert uv.v0 == 0.5
+        assert uv.v1 == 0.3
 
     def test_uv_flip_horizontal(self):
         """Test horizontal flip swaps u0 and u1."""

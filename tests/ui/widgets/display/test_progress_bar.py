@@ -92,6 +92,7 @@ class TestProgressBarValue:
     def test_set_min_value(self):
         """Test setting min value."""
         pb = ProgressBar()
+        pb.max_value = 100.0  # Set max first so min can be set to 10
         pb.min_value = 10.0
         assert pb.min_value == 10.0
 

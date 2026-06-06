@@ -68,10 +68,26 @@ class AuxSend:
         """Get send level as linear amplitude (alias for send_level_linear)."""
         return self.send_level_linear
 
+    @level.setter
+    def level(self, value: float) -> None:
+        """Set send level as linear amplitude."""
+        if value > 0:
+            self.send_level_db = 20.0 * (value if value >= 1.0 else -1.0 / value) if value != 1.0 else 0.0
+            # Simplified: use logarithm
+            import math
+            self.send_level_db = 20.0 * math.log10(max(0.0001, value))
+        else:
+            self.send_level_db = MIN_VOLUME_DB
+
     @property
     def pre_fader(self) -> bool:
         """Check if this is a pre-fader send."""
         return self.mode == RoutingMode.PRE_FADER
+
+    @pre_fader.setter
+    def pre_fader(self, value: bool) -> None:
+        """Set pre-fader mode."""
+        self.mode = RoutingMode.PRE_FADER if value else RoutingMode.POST_FADER
 
     def set_level(self, level_db: float) -> None:
         """Set the send level in dB."""

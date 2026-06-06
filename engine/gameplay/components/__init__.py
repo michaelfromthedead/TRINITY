@@ -48,6 +48,10 @@ from engine.gameplay.components.stats import (
     ModifierType,
     ModifierSource,
 )
+from engine.gameplay.components.state_machine import (
+    StateMachine,
+    StateMachineError,
+)
 
 
 __all__ = [
@@ -89,4 +93,7 @@ __all__ = [
     "StatModifier",
     "ModifierType",
     "ModifierSource",
+    # State Machine
+    "StateMachine",
+    "StateMachineError",
 ]

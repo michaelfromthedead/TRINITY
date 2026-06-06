@@ -555,7 +555,8 @@ class HealthBar:
             return None
 
         # Preview starts at new value and extends to old value
-        new_percent = self.fill_percent
+        # Use actual_percent (current_value) not fill_percent (animated display_value)
+        new_percent = self.actual_percent
         damage_percent = min(self._pending_damage / self._max_value, 1.0 - new_percent)
 
         if damage_percent <= 0:
