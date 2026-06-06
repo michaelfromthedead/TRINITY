@@ -290,15 +290,91 @@ pub fn cmd_update_from_results(
     }
 }
 
+/// Scan source directories and build the code graph.
+pub fn cmd_scan(paths: &[String]) -> CommandResult {
+    use std::path::Path;
+    use crate::graph::ScanStats;
+    use crate::parsers::Language;
+
+    if paths.is_empty() {
+        return CommandResult::err("Usage: scan <path> [path...]");
+    }
+
+    let registry = ParserRegistry::new();
+    let builder = GraphBuilder::new(&registry);
+    let mut total_stats = ScanStats::default();
+    let mut all_graphs = Vec::new();
+
+    for path in paths {
+        match builder.full_scan(Path::new(path)) {
+            Ok((graph, stats)) => {
+                total_stats.files_scanned += stats.files_scanned;
+                total_stats.files_skipped += stats.files_skipped;
+                total_stats.total_nodes += stats.total_nodes;
+                for (lang, count) in stats.nodes_per_language {
+                    *total_stats.nodes_per_language.entry(lang).or_insert(0) += count;
+                }
+                all_graphs.push(graph);
+            }
+            Err(e) => {
+                return CommandResult::err(format!("Scan error for {}: {:?}", path, e));
+            }
+        }
+    }
+
+    // Merge graphs (for now just use the last one if multiple)
+    let graph = if all_graphs.len() == 1 {
+        all_graphs.pop().unwrap()
+    } else {
+        // TODO: merge multiple graphs
+        all_graphs.pop().unwrap_or_else(|| crate::graph::CodeGraph::new())
+    };
+
+    // Persist to database
+    let db_path = ".harness/state.db";
+    std::fs::create_dir_all(".harness").ok();
+
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            return CommandResult::err(format!("Failed to open database: {:?}", e));
+        }
+    };
+
+    match crate::graph::persist_graph_to_db(&graph, &db) {
+        Ok(_) => {}
+        Err(e) => {
+            return CommandResult::err(format!("Failed to persist graph: {:?}", e));
+        }
+    }
+
+    let rust_count = total_stats.nodes_per_language.get(&Language::Rust).unwrap_or(&0);
+    let python_count = total_stats.nodes_per_language.get(&Language::Python).unwrap_or(&0);
+    let wgsl_count = total_stats.nodes_per_language.get(&Language::Wgsl).unwrap_or(&0);
+
+    let msg = format!(
+        "Scanned {} files, created {} nodes\n  Rust: {}\n  Python: {}\n  WGSL: {}\n  Skipped: {}\nPersisted to {}",
+        total_stats.files_scanned,
+        total_stats.total_nodes,
+        rust_count,
+        python_count,
+        wgsl_count,
+        total_stats.files_skipped,
+        db_path
+    );
+    CommandResult::ok(msg)
+}
+
 /// Parse and execute a CLI command.
 pub fn execute_command(args: &[String]) -> CommandResult {
     if args.is_empty() {
-        return CommandResult::err("No command specified. Use: daemon, query, run-stale, update");
+        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>   Scan source directories\n  daemon            Start file watcher\n  query needs-testing   List tests that need to run\n  run-stale         Run only stale tests\n  update [file]     Update state from test results");
     }
 
     let config = CliConfig::default();
 
     match args[0].as_str() {
+        "scan" => cmd_scan(&args[1..].to_vec()),
         "daemon" => cmd_daemon(&config),
         "query" => {
             if args.len() > 1 && args[1] == "needs-testing" {
@@ -312,6 +388,6 @@ pub fn execute_command(args: &[String]) -> CommandResult {
             let path = args.get(1).map(|s| s.as_str());
             cmd_update_from_results(&config, path)
         }
-        _ => CommandResult::err(format!("Unknown command: {}", args[0])),
+        _ => CommandResult::err(format!("Unknown command: {}. Use: scan, daemon, query, run-stale, update", args[0])),
     }
 }
