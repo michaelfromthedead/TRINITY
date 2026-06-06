@@ -36,10 +36,10 @@
 - [x] Generate compile-time size/align checks
 - [x] Link to WGSL struct mirrors
 
-### T-CONT-6.7: Algebraic properties
-- [ ] Parse #![property(commutative)]
-- [ ] Generate specialized tests
-- [ ] Integrate with synth for input generation
+### T-CONT-6.7: Algebraic properties ✓
+- [x] Parse #![property(commutative)]
+- [x] Generate specialized tests
+- [x] Integrate with synth for input generation
 
 ### T-CONT-6.8: Incremental rollout
 - [ ] Start with 10 high-value functions

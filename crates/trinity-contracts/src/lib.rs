@@ -5,11 +5,16 @@
 //! - Property-based test generation
 //! - Contract schema extraction
 
+pub mod algebra;
 pub mod layout;
 pub mod proptest;
 pub mod runtime;
 pub mod schema;
 
+pub use algebra::{
+    verify_associative, verify_commutative, verify_idempotent, verify_identity, verify_involutory,
+    Property, PropertySpec, PropertyTestGenerator,
+};
 pub use layout::{
     check_layout, get_layout, gpu_sizes, LayoutError, LayoutResult, LayoutSpec, MirrorRegistry,
     WgslMirror,
