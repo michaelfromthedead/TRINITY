@@ -294,8 +294,11 @@ impl<'a> DbStateTracker<'a> {
 
     /// Mark all tests as passed for nodes matching a test name pattern.
     ///
-    /// First tries to find via test edges. If that fails, directly matches
-    /// nodes whose names appear in the test name (e.g., test_foo tests foo).
+    /// Uses smart matching:
+    /// 1. Test edges from graph
+    /// 2. Name patterns: test_foo, should_foo, it_foo → foo
+    /// 3. Compound names: test_foo_bar → foo_bar, foo, bar
+    /// 4. Module paths: module::test_func → module::func
     pub fn mark_test_passed(&self, test_name: &str) -> Result<usize, String> {
         let conn = self.db.connection();
 
@@ -320,13 +323,11 @@ impl<'a> DbStateTracker<'a> {
             return Ok(affected);
         }
 
-        // Try 2: Direct name matching - extract function name from test name
-        // e.g., "tests::test_add" → look for node named "add"
-        let parts: Vec<&str> = test_name.split("::").collect();
-        if let Some(test_fn) = parts.last() {
-            // Strip "test_" prefix if present
-            let target_name = test_fn.strip_prefix("test_").unwrap_or(test_fn);
+        // Try 2: Smart name matching with multiple candidates
+        let candidates = extract_test_candidates(test_name);
+        let mut total_affected = 0;
 
+        for candidate in candidates {
             let affected = conn.execute(
                 r#"
                 UPDATE code_nodes
@@ -334,16 +335,17 @@ impl<'a> DbStateTracker<'a> {
                     updated_at = datetime('now'),
                     last_tested_at = datetime('now')
                 WHERE name = ?1
-                AND kind IN ('rust_function', 'python_function', 'method')
+                AND kind IN ('rust_function', 'python_function', 'method', 'rust_struct', 'rust_enum', 'rust_impl', 'python_class', 'module')
+                AND current_state != 'tested_green'
                 "#,
-                rusqlite::params![target_name],
+                rusqlite::params![candidate],
             )
             .map_err(|e| e.to_string())?;
 
-            return Ok(affected);
+            total_affected += affected;
         }
 
-        Ok(0)
+        Ok(total_affected)
     }
 
     /// Mark test as failed for nodes matching a test name pattern.
@@ -371,11 +373,11 @@ impl<'a> DbStateTracker<'a> {
             return Ok(affected);
         }
 
-        // Try 2: Direct name matching
-        let parts: Vec<&str> = test_name.split("::").collect();
-        if let Some(test_fn) = parts.last() {
-            let target_name = test_fn.strip_prefix("test_").unwrap_or(test_fn);
+        // Try 2: Smart name matching with multiple candidates
+        let candidates = extract_test_candidates(test_name);
+        let mut total_affected = 0;
 
+        for candidate in candidates {
             let affected = conn.execute(
                 r#"
                 UPDATE code_nodes
@@ -383,18 +385,95 @@ impl<'a> DbStateTracker<'a> {
                     updated_at = datetime('now'),
                     last_tested_at = datetime('now')
                 WHERE name = ?1
-                AND kind IN ('rust_function', 'python_function', 'method')
+                AND kind IN ('rust_function', 'python_function', 'method', 'rust_struct', 'rust_enum', 'rust_impl', 'python_class', 'module')
                 "#,
-                rusqlite::params![target_name],
+                rusqlite::params![candidate],
             )
             .map_err(|e| e.to_string())?;
 
-            return Ok(affected);
+            total_affected += affected;
         }
 
-        Ok(0)
+        Ok(total_affected)
+    }
+}
+
+/// Extract candidate function names from a test name.
+///
+/// Examples:
+/// - "test_foo" → ["foo", "Foo"]
+/// - "test_foo_bar" → ["foo_bar", "FooBar", "foo", "bar"]
+/// - "test_state_tracker_new" → ["state_tracker_new", "StateTracker", "state_tracker", "new"]
+fn extract_test_candidates(test_name: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    // Extract the function name part (after last ::)
+    let fn_name = test_name.split("::").last().unwrap_or(test_name);
+
+    // Strip common test prefixes
+    let base = fn_name
+        .strip_prefix("test_")
+        .or_else(|| fn_name.strip_prefix("should_"))
+        .or_else(|| fn_name.strip_prefix("it_"))
+        .or_else(|| fn_name.strip_prefix("when_"))
+        .or_else(|| fn_name.strip_prefix("given_"))
+        .unwrap_or(fn_name);
+
+    if base.is_empty() {
+        return candidates;
     }
 
+    // Add the full base name (snake_case)
+    candidates.push(base.to_string());
+
+    // Add PascalCase version
+    candidates.push(to_pascal_case(base));
+
+    // Split by underscore
+    let parts: Vec<&str> = base.split('_').collect();
+    if parts.len() > 1 {
+        // Add each individual word
+        for part in &parts {
+            if !part.is_empty() && part.len() > 2 {
+                candidates.push(part.to_string());
+            }
+        }
+
+        // Add progressively longer prefixes in both cases
+        // e.g., state_tracker_new → state, state_tracker, StateTracker
+        for i in 0..parts.len() {
+            let snake: String = parts[..=i].join("_");
+            let pascal = to_pascal_case(&snake);
+            if !candidates.contains(&snake) {
+                candidates.push(snake);
+            }
+            if !candidates.contains(&pascal) {
+                candidates.push(pascal);
+            }
+        }
+    }
+
+    // Deduplicate while preserving order
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|x| seen.insert(x.clone()));
+
+    candidates
+}
+
+/// Convert snake_case to PascalCase
+fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect()
+}
+
+impl<'a> DbStateTracker<'a> {
     /// Get summary of all node states from database.
     pub fn summary(&self) -> StateSummary {
         let conn = self.db.connection();
