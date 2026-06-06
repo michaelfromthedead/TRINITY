@@ -1,3 +1,9 @@
 [workspace]
-members = ["omega", "crates/renderer-backend", "crates/trinity-harness"]
+members = [
+    "omega",
+    "crates/renderer-backend",
+    "crates/trinity-harness",
+    "crates/trinity-contracts",
+    "crates/trinity-contracts-macros",
+]
 resolver = "2"

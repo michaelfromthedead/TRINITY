@@ -6,10 +6,10 @@
 
 ## Tasks
 
-### T-CONT-6.1: Create trinity_contracts crate
-- [ ] Create `crates/trinity-contracts/Cargo.toml`
-- [ ] Add dependencies: proc-macro2, syn, quote, proptest, synth-core
-- [ ] Create macro crate: `crates/trinity-contracts-macros/`
+### T-CONT-6.1: Create trinity_contracts crate ✓
+- [x] Create `crates/trinity-contracts/Cargo.toml`
+- [x] Add dependencies: proc-macro2, syn, quote, proptest
+- [x] Create macro crate: `crates/trinity-contracts-macros/`
 
 ### T-CONT-6.2: Parse #[contract] attribute
 - [ ] Implement proc macro entry point
