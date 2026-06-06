@@ -16,10 +16,10 @@
 - [x] Parse function signature
 - [x] Extract inner attributes (#![requires], #![ensures], etc.)
 
-### T-CONT-6.3: Runtime check generation
-- [ ] Generate debug_assert! for requires
-- [ ] Generate debug_assert! for ensures
-- [ ] Preserve original function body
+### T-CONT-6.3: Runtime check generation ✓
+- [x] Generate debug_assert! for requires
+- [x] Generate debug_assert! for ensures
+- [x] Preserve original function body
 
 ### T-CONT-6.4: Property test generation
 - [ ] Generate test module

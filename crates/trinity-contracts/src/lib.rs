@@ -5,6 +5,12 @@
 //! - Property-based test generation
 //! - Contract schema extraction
 
+pub mod runtime;
+
+pub use runtime::{
+    check_ensures, check_invariant, check_requires, debug_ensures, debug_invariant,
+    debug_requires, CheckKind, CheckResult, ContractChecker, InvariantGuard,
+};
 pub use trinity_contracts_macros::contract;
 
 use serde::{Deserialize, Serialize};

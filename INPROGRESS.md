@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.3 — GREEN_LIGHT ✓
+
+**Task:** Runtime check generation  
+**Branch:** `task/T-CONT-6.3` (merged, deleted)  
+**Phase:** 6 — Contract Annotation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Generate debug_assert! for requires
+- [x] Generate debug_assert! for ensures
+- [x] Preserve original function body
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- check_requires/ensures/invariant: runtime check functions
+- debug_requires/ensures/invariant: debug-only checks
+- ContractChecker: builder for collecting violations
+- CheckResult, CheckKind: result types
+- InvariantGuard: RAII guard for exit invariants
+
+**WHITEBOX** — COMPLETE
+- 21 new tests (whitebox_runtime.rs)
+
+**BLACKBOX** — COMPLETE
+- 9 new tests (blackbox_runtime.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1222 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.2 — GREEN_LIGHT ✓
 
 **Task:** Parse #[contract] attribute  
