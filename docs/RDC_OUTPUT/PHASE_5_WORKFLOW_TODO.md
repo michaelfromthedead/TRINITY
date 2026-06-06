@@ -16,10 +16,10 @@
 - [x] Send events to main loop
 - [x] Debounce rapid file changes
 
-### T-WORK-5.3: Event processor
-- [ ] Process file change events
-- [ ] Trigger state transitions
-- [ ] Propagate staleness
+### T-WORK-5.3: Event processor ✓
+- [x] Process file change events
+- [x] Trigger state transitions
+- [x] Propagate staleness
 
 ### T-WORK-5.4: CLI commands
 - [ ] `trinity-harness daemon` — start daemon

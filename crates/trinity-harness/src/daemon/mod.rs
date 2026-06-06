@@ -2,6 +2,7 @@
 //!
 //! Provides a daemon that monitors file changes and maintains test state.
 
+mod processor;
 mod watcher;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,9 @@ use std::time::{Duration, Instant};
 use crate::graph::NodeId;
 use crate::runners::{StateTracker, NodeState, TestEvent};
 
+pub use processor::{
+    process_batch, BatchResult, EventProcessor, ProcessorConfig, ProcessResult,
+};
 pub use watcher::{
     ChangeKind, Debouncer, FileChange, FileWatcher, WatcherConfig,
 };
