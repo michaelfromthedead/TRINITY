@@ -197,8 +197,8 @@ impl std::error::Error for CargoTestError {}
 
 /// Run cargo test and parse results.
 ///
-/// Uses `cargo test -- -Z unstable-options --format json` for JSON output,
-/// falling back to standard output parsing if JSON is unavailable.
+/// Uses standard `cargo test` output parsing. JSON format requires nightly
+/// Rust and is not used by default.
 pub fn run_cargo_test(config: &CargoTestConfig) -> Result<CargoTestResult, CargoTestError> {
     let mut cmd = Command::new("cargo");
     cmd.arg("test");
@@ -207,8 +207,8 @@ pub fn run_cargo_test(config: &CargoTestConfig) -> Result<CargoTestResult, Cargo
         cmd.arg("-p").arg(pkg);
     }
 
-    // Add JSON format args
-    cmd.arg("--").arg("--format").arg("json").arg("-Z").arg("unstable-options");
+    // Use -- to separate cargo args from test args
+    cmd.arg("--");
 
     if let Some(ref test) = config.test_name {
         cmd.arg(test);

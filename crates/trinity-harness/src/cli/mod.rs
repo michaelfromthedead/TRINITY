@@ -178,7 +178,7 @@ pub fn cmd_query_needs_testing(config: &CliConfig) -> CommandResult {
 }
 
 /// Run only stale tests.
-pub fn cmd_run_stale(config: &CliConfig) -> CommandResult {
+pub fn cmd_run_stale(config: &CliConfig, package: Option<&str>) -> CommandResult {
     use crate::runners::DbStateTracker;
 
     // Open database
@@ -196,7 +196,12 @@ pub fn cmd_run_stale(config: &CliConfig) -> CommandResult {
     }
 
     let project_root = config.project_root.to_string_lossy().to_string();
-    let exec_config = ExecutorConfig::new(&project_root);
+    let mut exec_config = ExecutorConfig::new(&project_root);
+
+    // If package specified, only test that package
+    if let Some(pkg) = package {
+        exec_config = exec_config.package(pkg);
+    }
 
     let result = run_all_tests(&exec_config);
 
@@ -434,7 +439,7 @@ pub fn cmd_status() -> CommandResult {
 /// Parse and execute a CLI command.
 pub fn execute_command(args: &[String]) -> CommandResult {
     if args.is_empty() {
-        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>       Scan source directories and build graph\n  status                Show current state summary\n  query needs-testing   List tests that need to run\n  run-stale             Run only stale tests\n  update [file]         Update state from test results\n  daemon                Start file watcher");
+        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>       Scan source directories and build graph\n  status                Show current state summary\n  query needs-testing   List tests that need to run\n  run-stale [-p pkg]    Run only stale tests (optionally for specific package)\n  update [file]         Update state from test results\n  daemon                Start file watcher");
     }
 
     let config = CliConfig::default();
@@ -450,7 +455,15 @@ pub fn execute_command(args: &[String]) -> CommandResult {
                 CommandResult::err("Unknown query. Use: query needs-testing")
             }
         }
-        "run-stale" => cmd_run_stale(&config),
+        "run-stale" => {
+            // Check for -p package argument
+            let package = if args.len() > 2 && args[1] == "-p" {
+                Some(args[2].as_str())
+            } else {
+                None
+            };
+            cmd_run_stale(&config, package)
+        }
         "update" | "update-from-results" => {
             let path = args.get(1).map(|s| s.as_str());
             cmd_update_from_results(&config, path)
