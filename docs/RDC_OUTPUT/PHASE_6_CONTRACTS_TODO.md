@@ -11,10 +11,10 @@
 - [x] Add dependencies: proc-macro2, syn, quote, proptest
 - [x] Create macro crate: `crates/trinity-contracts-macros/`
 
-### T-CONT-6.2: Parse #[contract] attribute
-- [ ] Implement proc macro entry point
-- [ ] Parse function signature
-- [ ] Extract inner attributes (#![requires], #![ensures], etc.)
+### T-CONT-6.2: Parse #[contract] attribute ✓
+- [x] Implement proc macro entry point
+- [x] Parse function signature
+- [x] Extract inner attributes (#![requires], #![ensures], etc.)
 
 ### T-CONT-6.3: Runtime check generation
 - [ ] Generate debug_assert! for requires
