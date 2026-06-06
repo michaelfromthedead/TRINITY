@@ -36,10 +36,10 @@
 - [x] Store per-node state
 - [x] Store any test failures for triage
 
-### T-BASE-4.7: Validation
-- [ ] Verify all nodes have state != UNKNOWN
-- [ ] Count GREEN vs RED vs UNTESTED
-- [ ] Report summary
+### T-BASE-4.7: Validation ✓
+- [x] Verify all nodes have state != UNKNOWN
+- [x] Count GREEN vs RED vs UNTESTED
+- [x] Report summary
 
 ---
 

@@ -7,6 +7,7 @@
 //! - State transitions based on test results
 //! - Unified test execution
 //! - Baseline recording
+//! - Validation and reporting
 
 mod baseline;
 mod cargo;
@@ -14,6 +15,7 @@ mod executor;
 mod mapper;
 mod pytest;
 mod transitions;
+mod validation;
 
 pub use baseline::{
     compare_baselines, record_baseline, Baseline, BaselineComparison, BaselineSummary,
@@ -29,4 +31,8 @@ pub use mapper::{
 pub use pytest::{run_pytest, PytestConfig, PytestError, PytestResult};
 pub use transitions::{
     NodeState, StateTracker, StateSummary, StateTransition, TestEvent,
+};
+pub use validation::{
+    generate_summary, validate_and_summarize, validate_baseline, validate_tracker,
+    ValidationResult,
 };
