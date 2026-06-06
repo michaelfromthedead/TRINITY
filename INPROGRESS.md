@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.4 — GREEN_LIGHT ✓
+
+**Task:** State transitions  
+**Branch:** `task/T-BASE-4.4` (merged, deleted)  
+**Phase:** 4 — Baseline Run  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Implement TestsPassed event handling
+- [x] Implement TestsFailed event handling
+- [x] Update current_state in code_nodes
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- NodeState: enum (Untested, Green, Red, Dirty)
+- TestEvent: enum for state transitions
+- StateTracker: tracks all node states
+- apply_results(): updates states from test results
+- StateSummary: health metrics
+
+**WHITEBOX** — COMPLETE
+- 18 new tests (whitebox_transitions.rs)
+
+**BLACKBOX** — COMPLETE
+- 5 new tests (blackbox_transitions.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 937 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-BASE-4.3 — GREEN_LIGHT ✓
 
 **Task:** Result mapping  

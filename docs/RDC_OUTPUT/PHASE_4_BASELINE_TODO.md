@@ -21,10 +21,10 @@
 - [x] Get target nodes via Tests edges
 - [x] Aggregate results per target
 
-### T-BASE-4.4: State transitions
-- [ ] Implement TestsPassed event handling
-- [ ] Implement TestsFailed event handling
-- [ ] Update current_state in code_nodes
+### T-BASE-4.4: State transitions ✓
+- [x] Implement TestsPassed event handling
+- [x] Implement TestsFailed event handling
+- [x] Update current_state in code_nodes
 
 ### T-BASE-4.5: Run all tests
 - [ ] Execute cargo test (may take 10+ minutes)
