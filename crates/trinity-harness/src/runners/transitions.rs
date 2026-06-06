@@ -293,10 +293,13 @@ impl<'a> DbStateTracker<'a> {
     }
 
     /// Mark all tests as passed for nodes matching a test name pattern.
+    ///
+    /// First tries to find via test edges. If that fails, directly matches
+    /// nodes whose names appear in the test name (e.g., test_foo tests foo).
     pub fn mark_test_passed(&self, test_name: &str) -> Result<usize, String> {
         let conn = self.db.connection();
 
-        // Find nodes that have tests matching this name
+        // Try 1: Find nodes via test edges
         let affected = conn.execute(
             r#"
             UPDATE code_nodes
@@ -313,13 +316,41 @@ impl<'a> DbStateTracker<'a> {
         )
         .map_err(|e| e.to_string())?;
 
-        Ok(affected)
+        if affected > 0 {
+            return Ok(affected);
+        }
+
+        // Try 2: Direct name matching - extract function name from test name
+        // e.g., "tests::test_add" → look for node named "add"
+        let parts: Vec<&str> = test_name.split("::").collect();
+        if let Some(test_fn) = parts.last() {
+            // Strip "test_" prefix if present
+            let target_name = test_fn.strip_prefix("test_").unwrap_or(test_fn);
+
+            let affected = conn.execute(
+                r#"
+                UPDATE code_nodes
+                SET current_state = 'tested_green',
+                    updated_at = datetime('now'),
+                    last_tested_at = datetime('now')
+                WHERE name = ?1
+                AND kind IN ('rust_function', 'python_function', 'method')
+                "#,
+                rusqlite::params![target_name],
+            )
+            .map_err(|e| e.to_string())?;
+
+            return Ok(affected);
+        }
+
+        Ok(0)
     }
 
     /// Mark test as failed for nodes matching a test name pattern.
     pub fn mark_test_failed(&self, test_name: &str) -> Result<usize, String> {
         let conn = self.db.connection();
 
+        // Try 1: Find nodes via test edges
         let affected = conn.execute(
             r#"
             UPDATE code_nodes
@@ -336,7 +367,32 @@ impl<'a> DbStateTracker<'a> {
         )
         .map_err(|e| e.to_string())?;
 
-        Ok(affected)
+        if affected > 0 {
+            return Ok(affected);
+        }
+
+        // Try 2: Direct name matching
+        let parts: Vec<&str> = test_name.split("::").collect();
+        if let Some(test_fn) = parts.last() {
+            let target_name = test_fn.strip_prefix("test_").unwrap_or(test_fn);
+
+            let affected = conn.execute(
+                r#"
+                UPDATE code_nodes
+                SET current_state = 'tested_red',
+                    updated_at = datetime('now'),
+                    last_tested_at = datetime('now')
+                WHERE name = ?1
+                AND kind IN ('rust_function', 'python_function', 'method')
+                "#,
+                rusqlite::params![target_name],
+            )
+            .map_err(|e| e.to_string())?;
+
+            return Ok(affected);
+        }
+
+        Ok(0)
     }
 
     /// Get summary of all node states from database.
