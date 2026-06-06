@@ -121,9 +121,13 @@ pub fn cmd_daemon(config: &CliConfig) -> CommandResult {
 pub fn cmd_query_needs_testing(config: &CliConfig) -> CommandResult {
     use crate::runners::DbStateTracker;
 
-    // Open database
-    let db_path = ".harness/state.db";
-    let db = match crate::db::HarnessDb::open(db_path) {
+    // Check for database relative to project root
+    let db_path = config.project_root.join(".harness/state.db");
+    if !db_path.exists() {
+        return CommandResult::ok("Nodes needing testing: 0/0\n\nNo database found. Run 'scan' first.".to_string());
+    }
+
+    let db = match crate::db::HarnessDb::open(db_path.to_str().unwrap_or(".harness/state.db")) {
         Ok(db) => db,
         Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
     };
@@ -181,9 +185,13 @@ pub fn cmd_query_needs_testing(config: &CliConfig) -> CommandResult {
 pub fn cmd_run_stale(config: &CliConfig, package: Option<&str>, test_filter: Option<&str>) -> CommandResult {
     use crate::runners::DbStateTracker;
 
-    // Open database
-    let db_path = ".harness/state.db";
-    let db = match crate::db::HarnessDb::open(db_path) {
+    // Check for database relative to project root
+    let db_path = config.project_root.join(".harness/state.db");
+    if !db_path.exists() {
+        return CommandResult::ok("No stale tests. Run 'scan' first to build database.".to_string());
+    }
+
+    let db = match crate::db::HarnessDb::open(db_path.to_str().unwrap_or(".harness/state.db")) {
         Ok(db) => db,
         Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
     };

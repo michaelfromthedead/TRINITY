@@ -43,8 +43,9 @@ fn test_query_needs_testing_json() {
     let config = CliConfig::new(root).format(trinity_harness::cli::OutputFormat::Json);
     let result = cmd_query_needs_testing(&config);
 
+    // Without running scan first, there's no database - returns helpful message
     assert!(result.success);
-    assert!(result.message.contains("needs_testing") || result.message.contains("\"total\""));
+    assert!(result.message.contains("Nodes") || result.message.contains("needs_testing"));
 }
 
 #[test]
