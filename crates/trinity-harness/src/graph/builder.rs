@@ -457,6 +457,83 @@ pub fn persist_graph_to_db(graph: &CodeGraph, db: &HarnessDb) -> Result<usize, P
     Ok(count)
 }
 
+/// Persist all edges from a graph to the database.
+///
+/// Inserts edges into `code_edges` table. Existing edges are replaced.
+pub fn persist_edges_to_db(graph: &CodeGraph, db: &HarnessDb) -> Result<usize, PersistError> {
+    use super::EdgeType;
+
+    let conn = db.connection();
+    let mut count = 0;
+
+    // Build node_id lookup: NodeId -> string ID used in database
+    let mut node_id_map: HashMap<super::NodeId, String> = HashMap::new();
+    for node in graph.nodes() {
+        let db_id = format!("{}:{}:{}", node.file_path, node.unit.start_line, node.name());
+        node_id_map.insert(node.id, db_id);
+    }
+
+    let mut stmt = conn
+        .prepare(
+            r#"
+            INSERT OR REPLACE INTO code_edges (
+                edge_id, from_node, to_node, kind
+            ) VALUES (?1, ?2, ?3, ?4)
+            "#,
+        )
+        .map_err(|e| PersistError::DatabaseError(e.to_string()))?;
+
+    for edge in graph.edges() {
+        let Some(from_id) = node_id_map.get(&edge.source) else {
+            continue; // Skip edges with missing source
+        };
+        let Some(to_id) = node_id_map.get(&edge.target) else {
+            continue; // Skip edges with missing target
+        };
+
+        let kind_str = match edge.edge_type {
+            EdgeType::Calls => "calls",
+            EdgeType::Uses => "references",
+            EdgeType::Extends => "inherits",
+            EdgeType::Imports => "imports",
+            EdgeType::Binds => "pyo3_call",
+            EdgeType::MirrorsLayout => "mirrors_layout",
+            EdgeType::Tests => "tests",
+        };
+
+        let edge_id = format!("{}->{}:{}", from_id, to_id, kind_str);
+
+        stmt.execute(rusqlite::params![edge_id, from_id, to_id, kind_str])
+            .map_err(|e| PersistError::DatabaseError(e.to_string()))?;
+
+        count += 1;
+    }
+
+    Ok(count)
+}
+
+/// Persist the full graph (nodes + edges) to the database.
+///
+/// This is the main entry point for persistence. It:
+/// 1. Persists all nodes
+/// 2. Persists all edges
+/// 3. Returns combined statistics
+pub fn persist_full_graph(graph: &CodeGraph, db: &HarnessDb) -> Result<PersistStats, PersistError> {
+    let nodes = persist_graph_to_db(graph, db)?;
+    let edges = persist_edges_to_db(graph, db)?;
+
+    Ok(PersistStats { nodes, edges })
+}
+
+/// Statistics from graph persistence.
+#[derive(Debug, Clone, Default)]
+pub struct PersistStats {
+    /// Number of nodes persisted.
+    pub nodes: usize,
+    /// Number of edges persisted.
+    pub edges: usize,
+}
+
 /// Convert Language enum to database string.
 fn language_to_str(lang: Language) -> &'static str {
     match lang {

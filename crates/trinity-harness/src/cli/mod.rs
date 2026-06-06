@@ -119,66 +119,56 @@ pub fn cmd_daemon(config: &CliConfig) -> CommandResult {
 
 /// Query nodes that need testing.
 pub fn cmd_query_needs_testing(config: &CliConfig) -> CommandResult {
-    let registry = ParserRegistry::new();
-    let builder = GraphBuilder::new(&registry);
+    use crate::runners::DbStateTracker;
 
-    let (graph, _) = match builder.full_scan(&config.project_root) {
-        Ok(result) => result,
-        Err(e) => return CommandResult::err(format!("Scan failed: {}", e)),
+    // Open database
+    let db_path = ".harness/state.db";
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
     };
 
-    let tracker = StateTracker::new();
-    let all_nodes: Vec<NodeId> = graph.nodes().iter().map(|n| n.id).collect();
-
-    let needs_testing: Vec<_> = all_nodes
-        .iter()
-        .filter(|&&id| {
-            let state = tracker.get_state(id);
-            matches!(state, NodeState::Dirty | NodeState::Untested | NodeState::Red)
-        })
-        .collect();
+    let tracker = DbStateTracker::new(&db);
+    let needs_testing = tracker.nodes_needing_tests();
+    let summary = tracker.summary();
 
     let mut output = String::new();
 
     match config.format {
         OutputFormat::Text => {
             output.push_str(&format!(
-                "Nodes needing testing: {}/{}\n",
+                "Nodes needing testing: {}/{}\n\n",
                 needs_testing.len(),
-                all_nodes.len()
+                summary.total
             ));
 
-            for &id in &needs_testing {
-                if let Some(node) = graph.nodes().get(id.0) {
-                    let state = tracker.get_state(*id);
-                    output.push_str(&format!(
-                        "  {:?} {} ({})\n",
-                        state,
-                        node.name(),
-                        node.file_path
-                    ));
+            output.push_str(&format!("State summary:\n"));
+            output.push_str(&format!("  GREEN:    {}\n", summary.green));
+            output.push_str(&format!("  RED:      {}\n", summary.red));
+            output.push_str(&format!("  DIRTY:    {}\n", summary.dirty));
+            output.push_str(&format!("  UNTESTED: {}\n", summary.untested));
+
+            if !needs_testing.is_empty() {
+                output.push_str(&format!("\nFirst 20 nodes needing tests:\n"));
+                for node_id in needs_testing.iter().take(20) {
+                    output.push_str(&format!("  {}\n", node_id));
+                }
+                if needs_testing.len() > 20 {
+                    output.push_str(&format!("  ... and {} more\n", needs_testing.len() - 20));
                 }
             }
         }
         OutputFormat::Json => {
-            let nodes: Vec<_> = needs_testing
-                .iter()
-                .filter_map(|&&id| {
-                    graph.nodes().get(id.0).map(|node| {
-                        serde_json::json!({
-                            "id": id.0,
-                            "name": node.name(),
-                            "file": node.file_path,
-                            "state": format!("{:?}", tracker.get_state(id))
-                        })
-                    })
-                })
-                .collect();
-
             output = serde_json::to_string_pretty(&serde_json::json!({
                 "needs_testing": needs_testing.len(),
-                "total": all_nodes.len(),
-                "nodes": nodes
+                "total": summary.total,
+                "summary": {
+                    "green": summary.green,
+                    "red": summary.red,
+                    "dirty": summary.dirty,
+                    "untested": summary.untested
+                },
+                "nodes": needs_testing
             }))
             .unwrap_or_else(|_| "{}".to_string());
         }
@@ -189,26 +179,19 @@ pub fn cmd_query_needs_testing(config: &CliConfig) -> CommandResult {
 
 /// Run only stale tests.
 pub fn cmd_run_stale(config: &CliConfig) -> CommandResult {
-    let registry = ParserRegistry::new();
-    let builder = GraphBuilder::new(&registry);
+    use crate::runners::DbStateTracker;
 
-    let (graph, _) = match builder.full_scan(&config.project_root) {
-        Ok(result) => result,
-        Err(e) => return CommandResult::err(format!("Scan failed: {}", e)),
+    // Open database
+    let db_path = ".harness/state.db";
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
     };
 
-    let tracker = StateTracker::new();
-    let all_nodes: Vec<NodeId> = graph.nodes().iter().map(|n| n.id).collect();
+    let tracker = DbStateTracker::new(&db);
+    let needs_testing = tracker.nodes_needing_tests();
 
-    let stale_count = all_nodes
-        .iter()
-        .filter(|&&id| {
-            let state = tracker.get_state(id);
-            matches!(state, NodeState::Dirty | NodeState::Untested | NodeState::Red)
-        })
-        .count();
-
-    if stale_count == 0 {
+    if needs_testing.is_empty() {
         return CommandResult::ok("No stale tests to run");
     }
 
@@ -216,12 +199,40 @@ pub fn cmd_run_stale(config: &CliConfig) -> CommandResult {
     let exec_config = ExecutorConfig::new(&project_root);
 
     let result = run_all_tests(&exec_config);
+
+    // Update state in database based on test results
+    let mut passed_count = 0;
+    let mut failed_count = 0;
+
+    if let Some(ref cargo) = result.cargo {
+        for test in &cargo.tests {
+            match test.outcome {
+                crate::runners::TestOutcome::Passed => {
+                    if tracker.mark_test_passed(&test.name).is_ok() {
+                        passed_count += 1;
+                    }
+                }
+                crate::runners::TestOutcome::Failed => {
+                    if tracker.mark_test_failed(&test.name).is_ok() {
+                        failed_count += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let summary = tracker.summary();
     let msg = format!(
-        "Tests completed:\n  Cargo: {} passed, {} failed\n  Pytest: {} passed, {} failed",
+        "Tests completed:\n  Cargo: {} passed, {} failed\n  Pytest: {} passed, {} failed\n\nState updated:\n  GREEN: {}\n  RED: {}\n  DIRTY: {}\n  UNTESTED: {}",
         result.cargo.as_ref().map(|r| r.passed).unwrap_or(0),
         result.cargo.as_ref().map(|r| r.failed).unwrap_or(0),
         result.pytest.as_ref().map(|r| r.passed).unwrap_or(0),
         result.pytest.as_ref().map(|r| r.failed).unwrap_or(0),
+        summary.green,
+        summary.red,
+        summary.dirty,
+        summary.untested,
     );
     CommandResult::ok(msg)
 }
@@ -231,18 +242,16 @@ pub fn cmd_update_from_results(
     config: &CliConfig,
     results_path: Option<&str>,
 ) -> CommandResult {
-    let registry = ParserRegistry::new();
-    let builder = GraphBuilder::new(&registry);
+    use crate::runners::DbStateTracker;
 
-    let (graph, _) = match builder.full_scan(&config.project_root) {
-        Ok(result) => result,
-        Err(e) => return CommandResult::err(format!("Scan failed: {}", e)),
+    // Open database
+    let db_path = ".harness/state.db";
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
     };
 
-    let mut tracker = StateTracker::new();
-    let proc_config = ProcessorConfig::default();
-    let mut processor = EventProcessor::new(proc_config);
-    processor.build_from_graph(&graph);
+    let tracker = DbStateTracker::new(&db);
 
     // If results path provided, load and process
     if let Some(path) = results_path {
@@ -258,32 +267,30 @@ pub fn cmd_update_from_results(
             Err(e) => CommandResult::err(format!("Failed to load results: {}", e)),
         }
     } else {
-        // Run tests and update
+        // Run tests and update database
         let project_root = config.project_root.to_string_lossy().to_string();
         let exec_config = ExecutorConfig::new(&project_root);
 
         let result = run_all_tests(&exec_config);
 
-        // Apply results to tracker using proper test-to-node mapping
+        // Update state in database based on test results
         if let Some(ref cargo) = result.cargo {
             for test in &cargo.tests {
-                if let Some(node_id) = crate::runners::lookup_test_node(&graph, &test.name) {
-                    match test.outcome {
-                        crate::runners::TestOutcome::Passed => {
-                            tracker.set_state(node_id, NodeState::Green);
-                        }
-                        crate::runners::TestOutcome::Failed => {
-                            tracker.set_state(node_id, NodeState::Red);
-                        }
-                        _ => {}
+                match test.outcome {
+                    crate::runners::TestOutcome::Passed => {
+                        let _ = tracker.mark_test_passed(&test.name);
                     }
+                    crate::runners::TestOutcome::Failed => {
+                        let _ = tracker.mark_test_failed(&test.name);
+                    }
+                    _ => {}
                 }
             }
         }
 
         let summary = tracker.summary();
         let msg = format!(
-            "State updated:\n  Green: {}\n  Red: {}\n  Dirty: {}\n  Untested: {}",
+            "State updated:\n  GREEN: {}\n  RED: {}\n  DIRTY: {}\n  UNTESTED: {}",
             summary.green, summary.red, summary.dirty, summary.untested
         );
         CommandResult::ok(msg)
@@ -293,7 +300,7 @@ pub fn cmd_update_from_results(
 /// Scan source directories and build the code graph.
 pub fn cmd_scan(paths: &[String]) -> CommandResult {
     use std::path::Path;
-    use crate::graph::ScanStats;
+    use crate::graph::{ScanStats, create_test_edges, CombinedMapper};
     use crate::parsers::Language;
 
     if paths.is_empty() {
@@ -303,18 +310,23 @@ pub fn cmd_scan(paths: &[String]) -> CommandResult {
     let registry = ParserRegistry::new();
     let builder = GraphBuilder::new(&registry);
     let mut total_stats = ScanStats::default();
-    let mut all_graphs = Vec::new();
+
+    // Phase 1: Scan all paths into a single graph
+    let mut graph = crate::graph::CodeGraph::new();
 
     for path in paths {
         match builder.full_scan(Path::new(path)) {
-            Ok((graph, stats)) => {
+            Ok((partial_graph, stats)) => {
                 total_stats.files_scanned += stats.files_scanned;
                 total_stats.files_skipped += stats.files_skipped;
                 total_stats.total_nodes += stats.total_nodes;
                 for (lang, count) in stats.nodes_per_language {
                     *total_stats.nodes_per_language.entry(lang).or_insert(0) += count;
                 }
-                all_graphs.push(graph);
+                // Merge nodes into main graph
+                for node in partial_graph.nodes() {
+                    graph.add_node(node.clone());
+                }
             }
             Err(e) => {
                 return CommandResult::err(format!("Scan error for {}: {:?}", path, e));
@@ -322,15 +334,30 @@ pub fn cmd_scan(paths: &[String]) -> CommandResult {
         }
     }
 
-    // Merge graphs (for now just use the last one if multiple)
-    let graph = if all_graphs.len() == 1 {
-        all_graphs.pop().unwrap()
-    } else {
-        // TODO: merge multiple graphs
-        all_graphs.pop().unwrap_or_else(|| crate::graph::CodeGraph::new())
-    };
+    // Phase 2: Analyze dependencies and create edges
+    let mut dep_edges = 0;
+    let mut test_edges = 0;
 
-    // Persist to database
+    for path in paths {
+        // Analyze code dependencies (imports, calls)
+        match builder.analyze_dependencies(Path::new(path), &mut graph) {
+            Ok(stats) => {
+                dep_edges += stats.deps_resolved;
+            }
+            Err(e) => {
+                eprintln!("Warning: dependency analysis failed for {}: {:?}", path, e);
+            }
+        }
+    }
+
+    // Phase 3: Create test mappings
+    let mapper = CombinedMapper::convention_only();
+    // Use first path as root for test mapping
+    let root = Path::new(&paths[0]);
+    let (mappings, _mapping_stats) = mapper.map_tests(&graph, root);
+    test_edges = create_test_edges(&mut graph, &mappings);
+
+    // Phase 4: Persist to database
     let db_path = ".harness/state.db";
     std::fs::create_dir_all(".harness").ok();
 
@@ -341,21 +368,24 @@ pub fn cmd_scan(paths: &[String]) -> CommandResult {
         }
     };
 
-    match crate::graph::persist_graph_to_db(&graph, &db) {
-        Ok(_) => {}
+    let persist_stats = match crate::graph::persist_full_graph(&graph, &db) {
+        Ok(stats) => stats,
         Err(e) => {
             return CommandResult::err(format!("Failed to persist graph: {:?}", e));
         }
-    }
+    };
 
     let rust_count = total_stats.nodes_per_language.get(&Language::Rust).unwrap_or(&0);
     let python_count = total_stats.nodes_per_language.get(&Language::Python).unwrap_or(&0);
     let wgsl_count = total_stats.nodes_per_language.get(&Language::Wgsl).unwrap_or(&0);
 
     let msg = format!(
-        "Scanned {} files, created {} nodes\n  Rust: {}\n  Python: {}\n  WGSL: {}\n  Skipped: {}\nPersisted to {}",
+        "Scanned {} files, created {} nodes, {} edges ({} deps, {} tests)\n  Rust: {}\n  Python: {}\n  WGSL: {}\n  Skipped: {}\nPersisted to {}",
         total_stats.files_scanned,
-        total_stats.total_nodes,
+        persist_stats.nodes,
+        persist_stats.edges,
+        dep_edges,
+        test_edges,
         rust_count,
         python_count,
         wgsl_count,
@@ -365,16 +395,53 @@ pub fn cmd_scan(paths: &[String]) -> CommandResult {
     CommandResult::ok(msg)
 }
 
+/// Show current state summary from database.
+pub fn cmd_status() -> CommandResult {
+    use crate::runners::DbStateTracker;
+
+    let db_path = ".harness/state.db";
+
+    if !std::path::Path::new(db_path).exists() {
+        return CommandResult::err("No state.db found. Run 'scan' first.");
+    }
+
+    let db = match crate::db::HarnessDb::open(db_path) {
+        Ok(db) => db,
+        Err(e) => return CommandResult::err(format!("Failed to open database: {:?}", e)),
+    };
+
+    let tracker = DbStateTracker::new(&db);
+    let summary = tracker.summary();
+
+    let health = if summary.total > 0 {
+        (summary.green as f64 / summary.total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    let msg = format!(
+        "=== Trinity Harness Status ===\n\nTotal nodes: {}\n\n  GREEN:    {:>5} nodes\n  RED:      {:>5} nodes\n  DIRTY:    {:>5} nodes\n  UNTESTED: {:>5} nodes\n\nHealth: {:.1}%",
+        summary.total,
+        summary.green,
+        summary.red,
+        summary.dirty,
+        summary.untested,
+        health
+    );
+    CommandResult::ok(msg)
+}
+
 /// Parse and execute a CLI command.
 pub fn execute_command(args: &[String]) -> CommandResult {
     if args.is_empty() {
-        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>   Scan source directories\n  daemon            Start file watcher\n  query needs-testing   List tests that need to run\n  run-stale         Run only stale tests\n  update [file]     Update state from test results");
+        return CommandResult::err("Usage: trinity-harness <command> [args]\n\nCommands:\n  scan <paths...>       Scan source directories and build graph\n  status                Show current state summary\n  query needs-testing   List tests that need to run\n  run-stale             Run only stale tests\n  update [file]         Update state from test results\n  daemon                Start file watcher");
     }
 
     let config = CliConfig::default();
 
     match args[0].as_str() {
         "scan" => cmd_scan(&args[1..].to_vec()),
+        "status" => cmd_status(),
         "daemon" => cmd_daemon(&config),
         "query" => {
             if args.len() > 1 && args[1] == "needs-testing" {
@@ -388,6 +455,6 @@ pub fn execute_command(args: &[String]) -> CommandResult {
             let path = args.get(1).map(|s| s.as_str());
             cmd_update_from_results(&config, path)
         }
-        _ => CommandResult::err(format!("Unknown command: {}. Use: scan, daemon, query, run-stale, update", args[0])),
+        _ => CommandResult::err(format!("Unknown command: {}. Use: scan, status, query, run-stale, update, daemon", args[0])),
     }
 }

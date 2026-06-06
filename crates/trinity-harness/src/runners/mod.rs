@@ -30,7 +30,7 @@ pub use mapper::{
 };
 pub use pytest::{run_pytest, PytestConfig, PytestError, PytestResult};
 pub use transitions::{
-    NodeState, StateTracker, StateSummary, StateTransition, TestEvent,
+    DbStateTracker, NodeState, StateTracker, StateSummary, StateTransition, TestEvent,
 };
 pub use validation::{
     generate_summary, validate_and_summarize, validate_baseline, validate_tracker,

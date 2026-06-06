@@ -235,3 +235,217 @@ impl StateSummary {
         self.red > 0
     }
 }
+
+// =============================================================================
+// Database-backed State Tracker
+// =============================================================================
+
+use crate::db::HarnessDb;
+
+/// Database-backed state tracker that persists state to SQLite.
+pub struct DbStateTracker<'a> {
+    db: &'a HarnessDb,
+}
+
+impl<'a> DbStateTracker<'a> {
+    /// Create a new database-backed state tracker.
+    pub fn new(db: &'a HarnessDb) -> Self {
+        Self { db }
+    }
+
+    /// Get state of a node by its database ID (file:line:name format).
+    pub fn get_state_by_id(&self, node_id: &str) -> NodeState {
+        let conn = self.db.connection();
+        let result: Result<String, _> = conn.query_row(
+            "SELECT current_state FROM code_nodes WHERE node_id = ?1",
+            [node_id],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(state_str) => db_state_to_enum(&state_str),
+            Err(_) => NodeState::Untested,
+        }
+    }
+
+    /// Set state of a node by its database ID.
+    pub fn set_state_by_id(&self, node_id: &str, state: NodeState) -> Result<(), String> {
+        let conn = self.db.connection();
+        let state_str = enum_to_db_state(state);
+
+        conn.execute(
+            "UPDATE code_nodes SET current_state = ?1, updated_at = datetime('now') WHERE node_id = ?2",
+            rusqlite::params![state_str, node_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Also log to history
+        conn.execute(
+            r#"
+            INSERT INTO code_state_history (node_id, state, valid_from, caused_by_event_type)
+            VALUES (?1, ?2, datetime('now'), 'state_change')
+            "#,
+            rusqlite::params![node_id, state_str],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    /// Mark all tests as passed for nodes matching a test name pattern.
+    pub fn mark_test_passed(&self, test_name: &str) -> Result<usize, String> {
+        let conn = self.db.connection();
+
+        // Find nodes that have tests matching this name
+        let affected = conn.execute(
+            r#"
+            UPDATE code_nodes
+            SET current_state = 'tested_green',
+                updated_at = datetime('now'),
+                last_tested_at = datetime('now')
+            WHERE node_id IN (
+                SELECT to_node FROM code_edges
+                WHERE kind = 'tests'
+                AND from_node LIKE ?1
+            )
+            "#,
+            rusqlite::params![format!("%{}%", test_name)],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(affected)
+    }
+
+    /// Mark test as failed for nodes matching a test name pattern.
+    pub fn mark_test_failed(&self, test_name: &str) -> Result<usize, String> {
+        let conn = self.db.connection();
+
+        let affected = conn.execute(
+            r#"
+            UPDATE code_nodes
+            SET current_state = 'tested_red',
+                updated_at = datetime('now'),
+                last_tested_at = datetime('now')
+            WHERE node_id IN (
+                SELECT to_node FROM code_edges
+                WHERE kind = 'tests'
+                AND from_node LIKE ?1
+            )
+            "#,
+            rusqlite::params![format!("%{}%", test_name)],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(affected)
+    }
+
+    /// Get summary of all node states from database.
+    pub fn summary(&self) -> StateSummary {
+        let conn = self.db.connection();
+
+        let mut stmt = conn
+            .prepare("SELECT current_state, COUNT(*) FROM code_nodes GROUP BY current_state")
+            .unwrap();
+
+        let mut green = 0;
+        let mut red = 0;
+        let mut dirty = 0;
+        let mut untested = 0;
+        let mut total = 0;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let state: String = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok((state, count as usize))
+            })
+            .unwrap();
+
+        for row in rows.flatten() {
+            let (state, count) = row;
+            total += count;
+            match state.as_str() {
+                "tested_green" => green += count,
+                "tested_red" => red += count,
+                "stale_direct" | "stale_transitive" | "stale_deep" | "changed" => dirty += count,
+                "unknown" | "untouched" => untested += count,
+                _ => untested += count,
+            }
+        }
+
+        StateSummary {
+            green,
+            red,
+            dirty,
+            untested,
+            total,
+        }
+    }
+
+    /// Get all nodes in a specific state.
+    pub fn nodes_in_state(&self, state: NodeState) -> Vec<String> {
+        let conn = self.db.connection();
+        let state_str = enum_to_db_state(state);
+
+        let mut stmt = conn
+            .prepare("SELECT node_id FROM code_nodes WHERE current_state = ?1")
+            .unwrap();
+
+        stmt.query_map([state_str], |row| row.get(0))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    /// Get nodes that need testing (dirty, untested, or red).
+    pub fn nodes_needing_tests(&self) -> Vec<String> {
+        let conn = self.db.connection();
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT node_id FROM code_nodes
+                WHERE current_state IN ('unknown', 'untouched', 'changed',
+                    'stale_direct', 'stale_transitive', 'stale_deep', 'tested_red')
+                "#,
+            )
+            .unwrap();
+
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    /// Initialize all unknown nodes to untested state.
+    pub fn init_unknown_to_untested(&self) -> Result<usize, String> {
+        let conn = self.db.connection();
+        let affected = conn
+            .execute(
+                "UPDATE code_nodes SET current_state = 'untouched' WHERE current_state = 'unknown'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(affected)
+    }
+}
+
+/// Convert database state string to NodeState enum.
+fn db_state_to_enum(state: &str) -> NodeState {
+    match state {
+        "tested_green" | "qa_approved" => NodeState::Green,
+        "tested_red" | "qa_flagged" => NodeState::Red,
+        "stale_direct" | "stale_transitive" | "stale_deep" | "changed" => NodeState::Dirty,
+        _ => NodeState::Untested,
+    }
+}
+
+/// Convert NodeState enum to database state string.
+fn enum_to_db_state(state: NodeState) -> &'static str {
+    match state {
+        NodeState::Green => "tested_green",
+        NodeState::Red => "tested_red",
+        NodeState::Dirty => "stale_direct",
+        NodeState::Untested => "untouched",
+    }
+}

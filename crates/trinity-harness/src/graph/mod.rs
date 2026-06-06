@@ -9,7 +9,7 @@ mod edges;
 mod nodes;
 mod testmap;
 
-pub use builder::{persist_graph_to_db, GraphBuilder, PersistError, ScanError, ScanStats};
+pub use builder::{persist_edges_to_db, persist_full_graph, persist_graph_to_db, GraphBuilder, PersistError, PersistStats, ScanError, ScanStats};
 pub use crosslang::{
     create_crosslang_edges, detect_struct_mirrors, BindingType, CrossLangBinding,
     CrossLangStats, Pyo3Analyzer, ReprCAnalyzer,
