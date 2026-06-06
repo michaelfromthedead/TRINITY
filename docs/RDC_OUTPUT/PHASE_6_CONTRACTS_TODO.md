@@ -31,10 +31,10 @@
 - [x] Convert to synth schema JSON
 - [x] Store in contracts table
 
-### T-CONT-6.6: Layout contracts
-- [ ] Parse #[layout(size = N, align = M)]
-- [ ] Generate compile-time size/align checks
-- [ ] Link to WGSL struct mirrors
+### T-CONT-6.6: Layout contracts ✓
+- [x] Parse #[layout(size = N, align = M)]
+- [x] Generate compile-time size/align checks
+- [x] Link to WGSL struct mirrors
 
 ### T-CONT-6.7: Algebraic properties
 - [ ] Parse #![property(commutative)]

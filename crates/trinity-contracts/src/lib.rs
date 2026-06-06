@@ -5,10 +5,15 @@
 //! - Property-based test generation
 //! - Contract schema extraction
 
+pub mod layout;
 pub mod proptest;
 pub mod runtime;
 pub mod schema;
 
+pub use layout::{
+    check_layout, get_layout, gpu_sizes, LayoutError, LayoutResult, LayoutSpec, MirrorRegistry,
+    WgslMirror,
+};
 pub use proptest::{
     parse_ensures, parse_requires, ParsedConstraint, PropertyTest, RangeHint, StrategyHint,
     TestModuleGenerator,

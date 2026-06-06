@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.6 — GREEN_LIGHT ✓
+
+**Task:** Layout contracts  
+**Branch:** `task/T-CONT-6.6` (merged, deleted)  
+**Phase:** 6 — Contract Annotation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Parse #[layout(size = N, align = M)]
+- [x] Generate compile-time size/align checks
+- [x] Link to WGSL struct mirrors
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- LayoutSpec: size/align/packed specifications
+- LayoutResult: Ok/Mismatch with error messages
+- WgslMirror: Rust-to-WGSL type mapping
+- MirrorRegistry: registry with verify_all
+- gpu_sizes: common GPU type sizes
+- assert_layout!: compile-time checks
+- check_layout/get_layout: runtime utilities
+
+**WHITEBOX** — COMPLETE
+- 22 new tests (whitebox_layout.rs)
+
+**BLACKBOX** — COMPLETE
+- 7 new tests (blackbox_layout.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1311 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.5 — GREEN_LIGHT ✓
 
 **Task:** synth schema extraction  
