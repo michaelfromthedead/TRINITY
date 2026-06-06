@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-06-06 — QA Audit Fix: 4 Issues Resolved
+
+**Task:** Fix source and tests for QA findings  
+**Branch:** `master`  
+**Status:** COMPLETE ★
+
+### Issues Fixed
+
+| File | Line | Issue | Fix |
+|------|------|-------|-----|
+| cli/mod.rs | 270 | **CRITICAL** fake test mapping | Use `lookup_test_node()` |
+| runners/executor.rs | 36-37 | Magic numbers | Use constants |
+| parsers/rust.rs | 147 | Silent `"?"` fallback | Add eprintln warning |
+| graph/deps.rs | 323-325 | Silent `"?"` fallback | Add eprintln warning |
+
+### Tests
+- Added `test_config_uses_constants()` to whitebox_executor.rs
+- All 1378 tests pass
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.8 — GREEN_LIGHT ✓ (PHASE 6 COMPLETE)
 
 **Task:** Incremental rollout  
