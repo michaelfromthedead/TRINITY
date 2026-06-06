@@ -294,15 +294,15 @@ impl<'a> DbStateTracker<'a> {
 
     /// Mark all tests as passed for nodes matching a test name pattern.
     ///
-    /// Uses smart matching:
-    /// 1. Test edges from graph
-    /// 2. Name patterns: test_foo, should_foo, it_foo → foo
-    /// 3. Compound names: test_foo_bar → foo_bar, foo, bar
-    /// 4. Module paths: module::test_func → module::func
+    /// Uses three strategies:
+    /// 1. Test edges from graph (explicit test→code mappings)
+    /// 2. Call graph traversal (mark all functions the test calls)
+    /// 3. Smart name matching (test_foo → Foo, foo, etc.)
     pub fn mark_test_passed(&self, test_name: &str) -> Result<usize, String> {
         let conn = self.db.connection();
+        let mut total_affected = 0;
 
-        // Try 1: Find nodes via test edges
+        // Strategy 1: Find nodes via explicit test edges
         let affected = conn.execute(
             r#"
             UPDATE code_nodes
@@ -318,14 +318,37 @@ impl<'a> DbStateTracker<'a> {
             rusqlite::params![format!("%{}%", test_name)],
         )
         .map_err(|e| e.to_string())?;
+        total_affected += affected;
 
-        if affected > 0 {
-            return Ok(affected);
-        }
+        // Strategy 2: Follow call graph from test nodes
+        // Find all functions that the test calls (directly or transitively)
+        let affected = conn.execute(
+            r#"
+            UPDATE code_nodes
+            SET current_state = 'tested_green',
+                updated_at = datetime('now'),
+                last_tested_at = datetime('now')
+            WHERE current_state != 'tested_green'
+            AND node_id IN (
+                -- Direct calls from test
+                SELECT to_node FROM code_edges
+                WHERE kind = 'calls'
+                AND from_node LIKE ?1
+                UNION
+                -- Transitive calls (one level deep)
+                SELECT e2.to_node FROM code_edges e1
+                JOIN code_edges e2 ON e1.to_node = e2.from_node
+                WHERE e1.kind = 'calls' AND e2.kind = 'calls'
+                AND e1.from_node LIKE ?1
+            )
+            "#,
+            rusqlite::params![format!("%{}%", test_name)],
+        )
+        .map_err(|e| e.to_string())?;
+        total_affected += affected;
 
-        // Try 2: Smart name matching with multiple candidates
+        // Strategy 3: Smart name matching with multiple candidates
         let candidates = extract_test_candidates(test_name);
-        let mut total_affected = 0;
 
         for candidate in candidates {
             let affected = conn.execute(
