@@ -5,8 +5,13 @@
 //! - Property-based test generation
 //! - Contract schema extraction
 
+pub mod proptest;
 pub mod runtime;
 
+pub use proptest::{
+    parse_ensures, parse_requires, ParsedConstraint, PropertyTest, RangeHint, StrategyHint,
+    TestModuleGenerator,
+};
 pub use runtime::{
     check_ensures, check_invariant, check_requires, debug_ensures, debug_invariant,
     debug_requires, CheckKind, CheckResult, ContractChecker, InvariantGuard,

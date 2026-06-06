@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.4 — GREEN_LIGHT ✓
+
+**Task:** Property test generation  
+**Branch:** `task/T-CONT-6.4` (merged, deleted)  
+**Phase:** 6 — Contract Annotation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Generate test module
+- [x] Convert requires to proptest strategies
+- [x] Convert ensures to prop_assert!
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- StrategyHint: Any, Range, Positive, Negative, NonZero, NonEmpty, OneOf, Custom
+- ParsedConstraint: constraint with inferred strategy
+- PropertyTest: test specification with params and postconditions
+- TestModuleGenerator: generates complete test modules
+- parse_requires/parse_ensures: helpers
+
+**WHITEBOX** — COMPLETE
+- 21 new tests (whitebox_proptest.rs)
+
+**BLACKBOX** — COMPLETE
+- 7 new tests (blackbox_proptest.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1250 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.3 — GREEN_LIGHT ✓
 
 **Task:** Runtime check generation  

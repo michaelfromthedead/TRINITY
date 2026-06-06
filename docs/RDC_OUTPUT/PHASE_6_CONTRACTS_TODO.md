@@ -21,10 +21,10 @@
 - [x] Generate debug_assert! for ensures
 - [x] Preserve original function body
 
-### T-CONT-6.4: Property test generation
-- [ ] Generate test module
-- [ ] Convert requires to proptest strategies
-- [ ] Convert ensures to prop_assert!
+### T-CONT-6.4: Property test generation ✓
+- [x] Generate test module
+- [x] Convert requires to proptest strategies
+- [x] Convert ensures to prop_assert!
 
 ### T-CONT-6.5: synth schema extraction
 - [ ] Parse requires constraints
