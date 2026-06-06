@@ -11,13 +11,14 @@ impl HarnessDb {
     /// Open a database connection at the given path.
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(
+        conn.execute_batch(&format!(
             r#"
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
-            PRAGMA cache_size = -64000;
+            PRAGMA cache_size = {};
         "#,
-        )?;
+            crate::constants::SQLITE_CACHE_SIZE
+        ))?;
         Self::init_schema(&conn)?;
         Ok(Self { conn })
     }

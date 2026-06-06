@@ -110,7 +110,7 @@ impl NotifyService {
         Self {
             subscribers: Arc::new(Mutex::new(HashMap::new())),
             log: Arc::new(Mutex::new(Vec::new())),
-            max_log_size: 1000,
+            max_log_size: crate::constants::MAX_LOG_SIZE,
             webhook_url: None,
         }
     }
@@ -236,7 +236,7 @@ impl TransitionLogger {
     pub fn new() -> Self {
         Self {
             transitions: Arc::new(Mutex::new(Vec::new())),
-            max_size: 10000,
+            max_size: crate::constants::MAX_BUFFER_SIZE,
         }
     }
 

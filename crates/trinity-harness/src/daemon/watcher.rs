@@ -42,8 +42,8 @@ impl Default for WatcherConfig {
                 "__pycache__".to_string(),
                 ".venv".to_string(),
             ],
-            debounce_ms: 100,
-            poll_interval_ms: 500,
+            debounce_ms: crate::constants::DEFAULT_DEBOUNCE_MS,
+            poll_interval_ms: crate::constants::DEFAULT_WATCHER_POLL_INTERVAL_MS,
         }
     }
 }
@@ -331,6 +331,11 @@ impl Debouncer {
 
         self.last_events.insert(change.path.clone(), now);
         true
+    }
+
+    /// Get the debounce time in milliseconds.
+    pub fn debounce_ms(&self) -> u64 {
+        self.debounce.as_millis() as u64
     }
 
     /// Clean up old entries.

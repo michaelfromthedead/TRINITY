@@ -160,7 +160,10 @@ impl Pyo3Analyzer {
                 .map(|s| s.ident.to_string())
                 .collect::<Vec<_>>()
                 .join("::"),
-            _ => "?".to_string(),
+            _ => {
+                eprintln!("[crosslang] Unexpected type path format (non-path type)");
+                "?".to_string()
+            }
         }
     }
 }

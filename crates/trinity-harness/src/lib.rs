@@ -5,6 +5,7 @@
 
 pub mod ci;
 pub mod cli;
+pub mod constants;
 pub mod daemon;
 pub mod db;
 pub mod docs;

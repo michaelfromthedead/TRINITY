@@ -2,7 +2,6 @@
 //!
 //! Executes `pytest` with JSON report and parses results.
 
-use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
@@ -30,7 +29,7 @@ impl Default for PytestConfig {
             working_dir: ".".to_string(),
             test_path: None,
             test_name: None,
-            timeout_secs: 1800, // 30 minutes
+            timeout_secs: crate::constants::DEFAULT_PYTEST_TIMEOUT_SECS,
             extra_args: vec![],
         }
     }
@@ -237,7 +236,10 @@ fn parse_json_report(content: &str) -> Result<PytestResult, PytestError> {
             "failed" => TestOutcome::Failed,
             "skipped" => TestOutcome::Ignored,
             "error" => TestOutcome::Failed,
-            _ => TestOutcome::Unknown,
+            other => {
+                eprintln!("[pytest] Unknown test outcome: {}", other);
+                TestOutcome::Unknown
+            }
         };
 
         let test_result = TestResult {

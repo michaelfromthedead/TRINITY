@@ -3,7 +3,6 @@
 //! Processes file events and triggers appropriate state changes.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use crate::graph::{CodeGraph, NodeId};
 use crate::runners::{NodeState, StateTracker, TestEvent};
@@ -23,7 +22,7 @@ impl Default for ProcessorConfig {
     fn default() -> Self {
         Self {
             propagate_staleness: true,
-            max_propagation_depth: 10,
+            max_propagation_depth: crate::constants::MAX_PROPAGATION_DEPTH,
         }
     }
 }

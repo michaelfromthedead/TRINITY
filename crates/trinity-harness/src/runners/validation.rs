@@ -2,7 +2,7 @@
 //!
 //! Validates that all nodes have proper states and generates summary reports.
 
-use super::{Baseline, BaselineSummary, NodeState, StateTracker};
+use super::{Baseline, NodeState, StateTracker};
 use crate::graph::NodeId;
 
 /// Result of validating a baseline.

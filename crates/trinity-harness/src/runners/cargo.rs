@@ -2,10 +2,7 @@
 //!
 //! Executes `cargo test` with JSON output and parses results.
 
-use std::collections::HashMap;
-use std::path::Path;
 use std::process::{Command, Output};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +27,7 @@ impl Default for CargoTestConfig {
             working_dir: ".".to_string(),
             package: None,
             test_name: None,
-            timeout_secs: 600, // 10 minutes
+            timeout_secs: crate::constants::DEFAULT_CARGO_TIMEOUT_SECS,
             extra_args: vec![],
         }
     }

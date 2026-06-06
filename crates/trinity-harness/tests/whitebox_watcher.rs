@@ -140,8 +140,7 @@ fn test_watcher_start_stop() {
 #[test]
 fn test_debouncer_new() {
     let debouncer = Debouncer::new(100);
-    // Just verify it creates successfully
-    assert!(true);
+    assert_eq!(debouncer.debounce_ms(), 100);
 }
 
 #[test]

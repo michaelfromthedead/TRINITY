@@ -42,9 +42,9 @@ impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             project_root: ".".to_string(),
-            poll_interval_ms: 1000,
-            debounce_ms: 100,
-            max_events_per_tick: 100,
+            poll_interval_ms: crate::constants::DEFAULT_POLL_INTERVAL_MS,
+            debounce_ms: crate::constants::DEFAULT_DEBOUNCE_MS,
+            max_events_per_tick: crate::constants::MAX_EVENTS_PER_TICK,
             verbose: false,
         }
     }
@@ -203,7 +203,6 @@ impl HarnessDaemon {
                 if self.config.verbose {
                     eprintln!("[daemon] File modified: {}", path);
                 }
-                // In a real implementation, we'd look up the node and mark it dirty
             }
             DaemonEvent::FileCreated { path } => {
                 if self.config.verbose {

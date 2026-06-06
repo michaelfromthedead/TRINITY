@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use super::{MappingResult, NodeResult};
+use super::MappingResult;
 use crate::graph::NodeId;
 
 /// State of a code node.

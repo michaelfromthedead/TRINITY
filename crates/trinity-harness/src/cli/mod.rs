@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use crate::daemon::{DaemonConfig, EventProcessor, HarnessDaemon, ProcessorConfig};
-use crate::graph::{CodeGraph, GraphBuilder, NodeId};
+use crate::graph::{GraphBuilder, NodeId};
 use crate::parsers::ParserRegistry;
 use crate::runners::{
     run_all_tests, ExecutorConfig, NodeState, StateTracker,
