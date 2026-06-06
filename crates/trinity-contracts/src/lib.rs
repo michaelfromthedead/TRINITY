@@ -7,6 +7,7 @@
 
 pub mod proptest;
 pub mod runtime;
+pub mod schema;
 
 pub use proptest::{
     parse_ensures, parse_requires, ParsedConstraint, PropertyTest, RangeHint, StrategyHint,
@@ -15,6 +16,10 @@ pub use proptest::{
 pub use runtime::{
     check_ensures, check_invariant, check_requires, debug_ensures, debug_invariant,
     debug_requires, CheckKind, CheckResult, ContractChecker, InvariantGuard,
+};
+pub use schema::{
+    infer_type, parse_constraint, Constraint as SchemaConstraint, ConstraintKind,
+    ConstraintSchema, ContractTable, ParamSchema, SchemaType,
 };
 pub use trinity_contracts_macros::contract;
 

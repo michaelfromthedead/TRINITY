@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.5 — GREEN_LIGHT ✓
+
+**Task:** synth schema extraction  
+**Branch:** `task/T-CONT-6.5` (merged, deleted)  
+**Phase:** 6 — Contract Annotation  
+**Status:** COMPLETE
+
+### Deliverables
+- [x] Parse requires constraints
+- [x] Convert to synth schema JSON
+- [x] Store in contracts table
+
+### Pipeline
+- [x] DEV
+- [x] WHITEBOX ∥ BLACKBOX
+- [x] JUNIOR_QA → SENIOR_QA → ACCEPTANCE
+- [x] VERDICT
+
+### Worker Log
+
+**DEV** — COMPLETE
+- ConstraintSchema: schema for contracts
+- ParamSchema: parameter schemas with constraints
+- SchemaType: Integer, Float, String, Boolean, Array, Object, Any
+- Constraint: Min, Max, NonZero, NonEmpty, OneOf, Pattern
+- ContractTable: storage for contract schemas
+- parse_constraint: extract constraints from expressions
+- infer_type: Rust type to schema type
+
+**WHITEBOX** — COMPLETE
+- 26 new tests (whitebox_schema.rs)
+
+**BLACKBOX** — COMPLETE
+- 6 new tests (blackbox_schema.rs)
+- Cleanroom: ✓
+
+**QA_UNIT** — COMPLETE
+- 1282 tests passing
+- 0 REAL findings
+- **VERDICT: GREEN_LIGHT**
+
+---
+
 ## 2026-06-05 — SDLC_WORKFLOW: T-CONT-6.4 — GREEN_LIGHT ✓
 
 **Task:** Property test generation  

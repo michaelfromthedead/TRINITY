@@ -26,10 +26,10 @@
 - [x] Convert requires to proptest strategies
 - [x] Convert ensures to prop_assert!
 
-### T-CONT-6.5: synth schema extraction
-- [ ] Parse requires constraints
-- [ ] Convert to synth schema JSON
-- [ ] Store in contracts table
+### T-CONT-6.5: synth schema extraction ✓
+- [x] Parse requires constraints
+- [x] Convert to synth schema JSON
+- [x] Store in contracts table
 
 ### T-CONT-6.6: Layout contracts
 - [ ] Parse #[layout(size = N, align = M)]
