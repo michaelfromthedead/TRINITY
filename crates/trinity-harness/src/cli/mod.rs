@@ -264,18 +264,19 @@ pub fn cmd_update_from_results(
 
         let result = run_all_tests(&exec_config);
 
-        // Apply results to tracker
+        // Apply results to tracker using proper test-to-node mapping
         if let Some(ref cargo) = result.cargo {
             for test in &cargo.tests {
-                let node_id = NodeId(test.name.len() % graph.nodes().len().max(1));
-                match test.outcome {
-                    crate::runners::TestOutcome::Passed => {
-                        tracker.set_state(node_id, NodeState::Green);
+                if let Some(node_id) = crate::runners::lookup_test_node(&graph, &test.name) {
+                    match test.outcome {
+                        crate::runners::TestOutcome::Passed => {
+                            tracker.set_state(node_id, NodeState::Green);
+                        }
+                        crate::runners::TestOutcome::Failed => {
+                            tracker.set_state(node_id, NodeState::Red);
+                        }
+                        _ => {}
                     }
-                    crate::runners::TestOutcome::Failed => {
-                        tracker.set_state(node_id, NodeState::Red);
-                    }
-                    _ => {}
                 }
             }
         }

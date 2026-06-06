@@ -33,8 +33,8 @@ impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
             project_root: ".".to_string(),
-            cargo_timeout_secs: 600,  // 10 minutes
-            pytest_timeout_secs: 1800, // 30 minutes
+            cargo_timeout_secs: crate::constants::DEFAULT_CARGO_TIMEOUT_SECS,
+            pytest_timeout_secs: crate::constants::DEFAULT_PYTEST_TIMEOUT_SECS,
             run_cargo: true,
             run_pytest: true,
             cargo_package: None,

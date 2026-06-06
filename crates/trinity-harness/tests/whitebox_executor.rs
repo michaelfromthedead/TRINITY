@@ -12,10 +12,19 @@ use trinity_harness::runners::{
 fn test_config_default() {
     let config = ExecutorConfig::default();
     assert_eq!(config.project_root, ".");
-    assert_eq!(config.cargo_timeout_secs, 600);
-    assert_eq!(config.pytest_timeout_secs, 1800);
+    // Verify timeouts use constants (not magic numbers)
+    assert_eq!(config.cargo_timeout_secs, trinity_harness::constants::DEFAULT_CARGO_TIMEOUT_SECS);
+    assert_eq!(config.pytest_timeout_secs, trinity_harness::constants::DEFAULT_PYTEST_TIMEOUT_SECS);
     assert!(config.run_cargo);
     assert!(config.run_pytest);
+}
+
+#[test]
+fn test_config_uses_constants() {
+    // Explicitly verify the config defaults match the defined constants
+    let config = ExecutorConfig::default();
+    assert_eq!(config.cargo_timeout_secs, 600); // DEFAULT_CARGO_TIMEOUT_SECS
+    assert_eq!(config.pytest_timeout_secs, 1800); // DEFAULT_PYTEST_TIMEOUT_SECS
 }
 
 #[test]

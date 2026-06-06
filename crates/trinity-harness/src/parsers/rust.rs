@@ -144,7 +144,10 @@ impl RustParser {
                     .collect::<Vec<_>>()
                     .join("::")
             }
-            _ => "?".to_string(),
+            _ => {
+                eprintln!("[rust_parser] Unexpected type format (non-path type) — returning placeholder");
+                "?".to_string()
+            }
         }
     }
 

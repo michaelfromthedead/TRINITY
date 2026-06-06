@@ -320,7 +320,10 @@ impl RustDepAnalyzer {
                 .map(|s| s.ident.to_string())
                 .collect::<Vec<_>>()
                 .join("::"),
-            _ => "?".to_string(),
+            _ => {
+                eprintln!("[dep_analyzer] Unexpected type format (non-path type) — returning placeholder");
+                "?".to_string()
+            }
         }
     }
 }
