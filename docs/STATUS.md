@@ -1,6 +1,6 @@
 # TRINITY Engine Status
 
-**Last Updated:** 2026-05-24  
+**Last Updated:** 2026-06-05  
 **Quick Reference:** Single source of truth for implementation state
 
 ---
@@ -12,7 +12,42 @@ Python Algorithms  ████████████████████ 
 Rust Backend       ███░░░░░░░░░░░░░░░░░  18% (140K lines, wiring incomplete)
 Bridge             ████████████████████ 100% (GAPSET_3 complete)
 Rendering Pipeline ██░░░░░░░░░░░░░░░░░░   5% (subsystems not wired)
+Test Harness       ████████████████████ 100% (6 phases, 1370 tests)
+Contracts          ████████████████████ 100% (8 tasks, ready for rollout)
 ```
+
+---
+
+## Infrastructure Status (NEW)
+
+| Crate | Tests | Status | Purpose |
+|-------|-------|--------|---------|
+| **trinity-harness** | 1147 | ✅ Complete | Multi-language test orchestration |
+| **trinity-contracts** | 223 | ✅ Complete | Design-by-contract framework |
+
+### trinity-harness Modules
+
+| Module | Description | Status |
+|--------|-------------|--------|
+| code | CodeUnit, Language, Span | ✅ |
+| graph | CodeGraph, GraphBuilder | ✅ |
+| parsers | Rust, Python parsing | ✅ |
+| mapping | Auto/manual test mapping | ✅ |
+| runners | cargo test, pytest | ✅ |
+| daemon | Continuous testing | ✅ |
+| ci | GitHub Actions generation | ✅ |
+| docs | Documentation generation | ✅ |
+
+### trinity-contracts Modules
+
+| Module | Description | Status |
+|--------|-------------|--------|
+| runtime | check_requires/ensures | ✅ |
+| proptest | Property test generation | ✅ |
+| schema | Constraint JSON schemas | ✅ |
+| layout | GPU struct verification | ✅ |
+| algebra | 8 algebraic properties | ✅ |
+| rollout | Adoption tracking | ✅ |
 
 ---
 

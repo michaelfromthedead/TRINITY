@@ -1,8 +1,8 @@
 # TRINITY Design Documents Index
 
 **Total Design Docs:** 464 architecture/design files  
-**Total All Docs:** 886 markdown files  
-**Updated:** 2026-05-24
+**Total All Docs:** 886+ markdown files  
+**Updated:** 2026-06-05
 
 ---
 
@@ -11,9 +11,22 @@
 | Document | Purpose |
 |----------|---------|
 | **[STATUS.md](STATUS.md)** | Current implementation state — single source of truth |
+| **[PROGRESS_REPORT_2026_06_05.md](PROGRESS_REPORT_2026_06_05.md)** | Latest progress report with test metrics |
+| **[SDLC_METHODOLOGY.md](SDLC_METHODOLOGY.md)** | Development methodology and pipeline |
 | **[ARCHITECTURE_INVESTIGATION_REPORT.md](ARCHITECTURE_INVESTIGATION_REPORT.md)** | Complete architectural analysis (2026-05-24) |
 
-**Summary:** Python 100% complete (600K lines). Rust 18% functional (140K lines exist). Bridge 100% complete. Rendering subsystems blocked on GAPSET_1_CORE completion.
+**Summary:** Python 100% complete (600K lines). Rust 18% functional (140K lines exist). Bridge 100% complete. **Infrastructure complete (1370 tests): trinity-harness + trinity-contracts.** Rendering subsystems blocked on GAPSET_1_CORE completion.
+
+---
+
+## Infrastructure Crates (NEW)
+
+| Crate | Tests | Purpose |
+|-------|-------|---------|
+| **trinity-harness** | 1147 | Multi-language test orchestration |
+| **trinity-contracts** | 223 | Design-by-contract framework |
+
+See `crates/trinity-harness/` and `crates/trinity-contracts/` for implementation.
 
 ---
 
